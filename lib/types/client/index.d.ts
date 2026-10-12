@@ -2,9 +2,12 @@
  * Client entry for dsh-cool-git.
  *
  * Contributes exactly one 'conversation.view' entry, which is what turns into
- * a tab in the session's tab bar. No optional collaborators: the page renders
- * a placeholder until Git behaviour lands, and the stylesheet below takes the
- * shell's composer and width handles away while this tab is mounted.
+ * a tab in the session's tab bar. The page reads the session's repository over
+ * this package's own same-origin routes (see the Host half), so there are no
+ * optional collaborators here. The shell's composer seat and transcript width
+ * handles step aside while this tab is mounted — the handles through the root's
+ * composer-overlay hook, the seat through the View itself plus the stylesheet
+ * below.
  */
 export declare const name = "dsh-cool-git/client";
 export declare const inject: string[];
