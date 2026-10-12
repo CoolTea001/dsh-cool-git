@@ -1,0 +1,8 @@
+# dsh-cool-git bundle patch: mount the host half.
+#
+# The host half is a placeholder for now (Git operations come later); the
+# browser half is loaded from this package's `dsh.client` manifest and owns
+# the session Git tab.
+- insert:
+    - id: dsh-cool-git
+      name: dsh-cool-git

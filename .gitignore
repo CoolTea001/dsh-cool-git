@@ -1,0 +1,21 @@
+node_modules/
+.pnpm-store/
+dist/
+# `lib/` is build output, but it is committed on purpose so the plugin can be
+# installed straight from a git checkout without a separate build step.
+# `prepublishOnly` still rebuilds it before packing. Only `src/` is source of truth.
+*.tsbuildinfo
+*.log
+pnpm-debug.log
+.tmp/
+.cache/
+coverage/
+# Pack artifacts (`pnpm pack` / `npm pack`).
+*.tgz
+.DS_Store
+.env
+.env.*
+.agents/
+.vscode/
+.idea/
+*.orig
