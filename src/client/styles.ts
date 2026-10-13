@@ -136,9 +136,11 @@ const GIT_CSS = [
   // The tooltip's anchor is one of these spans, not the button: a disabled
   // button emits no pointer events of its own, so the span is what takes the
   // hover — which is how a busy or unreachable control can still explain itself.
+  // The branch pill, whose bubble the row makes necessary by shortening it, is
+  // anchored the same way and shortened through the same span.
   '.dsh-cg-tip{display:inline-flex}',
-  '.dsh-cg-tip:has(.dsh-cg-icon:disabled){cursor:default}',
-  '.dsh-cg-tip .dsh-cg-icon:disabled{pointer-events:none}',
+  '.dsh-cg-tip:has(:disabled){cursor:default}',
+  '.dsh-cg-tip .dsh-cg-icon:disabled,.dsh-cg-tip .dsh-cg-branch:disabled{pointer-events:none}',
   '@keyframes dsh-cg-spin{to{transform:rotate(360deg)}}',
   // One spin for every glyph that marks a wait: the branch pill, the two halves
   // of the sync button, and the refresh control. The sync button's arrows turn
@@ -147,31 +149,93 @@ const GIT_CSS = [
   // not running.
   '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
-  // The sidebar's first row: the Workspace's name on the left, and the toolbar
-  // — branch, 同步变更 (or 发布分支), refresh — on the right, one hairline under
-  // both. Each name carries its own glyph (a directory for the Workspace, a
-  // forked commit for the branch), so the row states which is which without
-  // either label having to say it; the two operations are icons rather than words
-  // because the branch pill and the two buttons all have to fit the row at its
-  // narrowest, which is the sidebar's own floor.
-  '.dsh-cg-side-head{flex:none;display:flex;align-items:center;gap:6px;height:34px;padding:0 6px 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
-  // The Workspace's name is the only part that may give ground: every control to
-  // its right has a fixed width, and a name that scrolls out of the row is worse
-  // than one that ends in an ellipsis.
+  // The sidebar's first row: the Workspace's name on the left, the branch pill
+  // beside it, and then the toolbar's own group — 同步变更 (or 发布分支) and 刷新 —
+  // one hairline under all of them. Each name carries its own glyph (a directory
+  // for the Workspace, a forked commit for the branch), so the row states which is
+  // which without either label having to say it; the operations are icons rather
+  // than words because the three controls have to fit the row at its narrowest,
+  // which is the sidebar's own floor.
+  //
+  // Two of the row's parts may give ground, and the branch's name goes first: the
+  // pill is the row's own item rather than a member of the group beside it, because
+  // a flex container is never narrower than its items' text — a pill inside the
+  // group would have been the group's own floor, and the Workspace's name would
+  // have gone on being the only part that shortened, with the branch keeping a name
+  // the row could not afford.
+  '.dsh-cg-side-head{flex:none;display:flex;align-items:center;height:34px;padding:0 6px 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+  // The Workspace's name is the second of the two parts that give ground: every
+  // control to its right is fixed, so once the pill has been shortened to its icon
+  // this name is the only thing left that can end in an ellipsis rather than run
+  // over the sidebar's own edge.
   '.dsh-cg-workspace{flex:1 1 auto;display:flex;align-items:center;gap:4px;min-width:0;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-workspace-icon{flex:none;display:inline-flex;align-items:center;width:13px;height:13px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-workspace-icon svg{width:13px;height:13px;display:block}',
-  '.dsh-cg-workspace-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  // The name is the part of the Workspace that gives ground, and the ellipsis is
+  // how it says so — but not one moment before the branch's name is spent.
+  //
+  // The row shares a deficit out in proportion to each item's `flex-shrink`, so
+  // while the pill is being shortened the Workspace is still handed a fraction of a
+  // pixel of it (see the pill's own rule below). A box a fraction of a pixel
+  // narrower than its own text is enough to draw the ellipsis, which then drops
+  // characters the row still had the branch's name to spend — the pill would go on
+  // compressing beside a name that had already given up a whole word. The floor is
+  // therefore one pixel wider than the room the icon and its gap leave (13 + 4):
+  // that pixel swallows the fraction, and a real loss — the pill already down to
+  // its icon — is still the ellipsis it should be.
+  '.dsh-cg-workspace-name{min-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   // `margin-left:auto` is what keeps the group at the row's right edge however
-  // long the Workspace's name is.
-  '.dsh-cg-tools{flex:none;display:flex;align-items:center;gap:4px;margin-left:auto}',
-  '.dsh-cg-divergence{flex:none;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
-  '.dsh-cg-branch{display:inline-flex;align-items:center;gap:4px;max-width:130px;height:22px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}',
+  // long the Workspace's name is — and `flex:none` is what makes the group the
+  // fixed part of the row: neither the remote control nor 刷新 is ever asked to
+  // give up a pixel of the width its own glyph and counts need.
+  '.dsh-cg-tools{flex:none;display:flex;align-items:center;margin-left:auto}',
+  // The badge's gap is its own `margin` for the reason the icon's is: the pill's
+  // spacing belongs to the things that stay.
+  '.dsh-cg-divergence{flex:none;margin-left:4px;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
+  // The branch pill is the row's first thing to give ground, and its name is what
+  // it gives: the row shrinks the pill, the name shortens to an ellipsis and then
+  // to nothing at all, and `min-width` is where the shrinking stops — the pill's
+  // own 6px of padding and the 12px icon. What is left at that floor is the icon
+  // alone, centred, and the pill's bubble still names the branch it stands for.
+  //
+  // The pill has no `gap` of its own: a gap is a property of the container, so it
+  // would still be paid out beside an icon the name had already left, and the pill
+  // would end with a 4px hollow on the right of its icon. The two gaps the pill
+  // draws are therefore the icon's `margin-right` and the badge's `margin-left` —
+  // spacing that belongs to a thing which is still there, and that the name's own
+  // shrinking takes with it.
+  //
+  // The pill's own `min-width` is what keeps the icon from being squeezed once the
+  // span around it has been shortened; the floor the row reads, and the order it is
+  // spent in, live on that span, below, because the row lays the span out.
+  '.dsh-cg-branch{display:inline-flex;align-items:center;min-width:24px;max-width:130px;height:22px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}',
   '.dsh-cg-branch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-branch:disabled{opacity:.45;cursor:default}',
-  '.dsh-cg-branch-icon{flex:none;display:inline-flex;align-items:center;width:12px;height:12px;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-branch-icon{flex:none;display:inline-flex;align-items:center;width:12px;height:12px;margin-right:4px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-branch-icon svg{width:12px;height:12px;display:block}',
-  '.dsh-cg-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  // The name is the one part of the pill that shrinks: `min-width:0` is what lets
+  // the flex line take it below its own text, and the ellipsis is what says so on
+  // the way down. At zero the name is gone from the row entirely — the icon's gap
+  // that the name was paying for goes with it, and what is left of that gap simply
+  // runs into the pill's own padding, where nothing is drawn.
+  '.dsh-cg-branch-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  // The pill's anchor is where the row is told what may be shortened, and in which
+  // order. A deficit is shared in proportion to each item's `flex-shrink` times its
+  // base size, so "first" and "second" are a ratio: the pill carries a thousand
+  // times the Workspace's name, which is enough that the pill reaches its own
+  // `min-width` — and stops there, because an item at its floor is frozen and the
+  // rest of the deficit moves on to the next item — while the fraction of a pixel
+  // the Workspace is still handed is swallowed by that name's own floor.
+  //
+  // A pill on a detached HEAD carries 游离 as well, and that word is fixed: two
+  // full-width glyphs at the pill's own 11px type, so 22px, with the same 4px in
+  // front of it. The floor takes the badge and both gaps with the name's place
+  // empty — 12 + 12 + 4 + 4 + 22, plus the pill's 12px of padding — or the marker
+  // would spill out of a pill shortened to its icon and sit on the button beside
+  // it. The sum is written in pixels because the tip span is not the pill: an `em`
+  // here would be measured against the span's own type, not the badge's.
+  '.dsh-cg-branch-tip{flex:0 1000 auto;min-width:24px}',
+  '.dsh-cg-branch-tip:has(.dsh-cg-divergence){min-width:54px}',
 
   // The branch dialog: a filter over a scrolling list of three labelled groups —
   // the branch checked out, the other local branches, and the remote-tracking

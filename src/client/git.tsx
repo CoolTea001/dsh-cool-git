@@ -620,7 +620,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
             own and the panes stay the only flow children of the column. */}
         <section ref={filesPane} className="dsh-cg-pane dsh-cg-files">
           <header className="dsh-cg-head">
-            <span className="dsh-cg-head-title">变更文件区</span>
+            <span className="dsh-cg-head-title">文件变更</span>
             {files.length > 0 ? <span className="dsh-cg-count">{files.length}</span> : null}
           </header>
           <div className="dsh-cg-list">
@@ -749,6 +749,13 @@ function ErrorDialog(props: {
  * has no divergence to state and no pull to take: what it needs is the push that
  * creates the remote branch and records it as the upstream. One cloud-and-arrow
  * glyph, the same tooltip-only naming, and the two are never offered together.
+ *
+ * The row is also where the two names inside it are spent, and the branch's goes
+ * first: a sidebar too narrow for both shortens the pill, whose own name gives way
+ * to its icon alone, and only then does the Workspace's name begin to end in an
+ * ellipsis. The pill's bubble therefore carries the branch's whole name, and
+ * nothing but it — there is no other place the full name still reads once the row
+ * has taken it, and an icon on its own is not an answer to which branch this is.
  *
  * @param props.status - the current status answer, for the branch already on.
  * @param props.sessionId - the session whose repository is being switched.
@@ -919,37 +926,50 @@ function SideHead(props: {
           : <span className="dsh-cg-workspace-icon" aria-hidden="true"><IconFolder /></span>}
         <span className="dsh-cg-workspace-name">{workspaceName}</span>
       </span>
-      <div className="dsh-cg-tools">
-        <button
-          type="button"
-          className="dsh-cg-branch"
-          // Disabled while any repository operation is in flight: a second
-          // dialog opened then could queue a second checkout behind the first.
-          disabled={!onBranch || busy}
-          title={switching === null
-            ? status?.upstream === undefined ? '切换分支' : `上游：${status.upstream}`
-            : `正在切换到 ${switching}…`}
-          aria-haspopup="dialog"
-          aria-expanded={open}
-          onClick={() => setOpen(value => !value)}
-        >
-          <span
-            className="dsh-cg-branch-icon"
-            data-busy={switching !== null}
-            aria-hidden="true"
+      {/* The pill is the row's own item rather than a member of the group beside
+          it, because the pill is what the row shortens first and a flex item's
+          text is its container's floor: inside the group the pill could never have
+          been narrower than its name, and the Workspace's name would have gone on
+          being the only part that gave ground (see `styles.ts`). */}
+      {/* The bubble carries the branch's own name and nothing else — the name is
+          what the row is allowed to shorten, down to the icon alone, so the whole
+          of it has to read somewhere, and this is the one place left that can hold
+          it. The anchor is the span rather than the button for the reason the
+          controls below state: a disabled button emits no pointer events, and a
+          pill that has lost its name is exactly the one whose hover has the most to
+          say. */}
+      <Tooltip label={label} side="bottom" portal>
+        <span className="dsh-cg-tip dsh-cg-branch-tip">
+          <button
+            type="button"
+            className="dsh-cg-branch"
+            // Disabled while any repository operation is in flight: a second
+            // dialog opened then could queue a second checkout behind the first.
+            disabled={!onBranch || busy}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => setOpen(value => !value)}
           >
-            {switching === null ? <IconBranch /> : SPINNER_ICON}
-          </span>
-          <span className="dsh-cg-branch-name">{label}</span>
-          {detached ? <span className="dsh-cg-divergence">游离</span> : null}
-        </button>
-        <BranchDialog
-          open={open}
-          sessionId={sessionId}
-          onClose={closeDialog}
-          onConfirm={choose}
-          onError={onError}
-        />
+            <span
+              className="dsh-cg-branch-icon"
+              data-busy={switching !== null}
+              aria-hidden="true"
+            >
+              {switching === null ? <IconBranch /> : SPINNER_ICON}
+            </span>
+            <span className="dsh-cg-branch-name">{label}</span>
+            {detached ? <span className="dsh-cg-divergence">游离</span> : null}
+          </button>
+        </span>
+      </Tooltip>
+      <BranchDialog
+        open={open}
+        sessionId={sessionId}
+        onClose={closeDialog}
+        onConfirm={choose}
+        onError={onError}
+      />
+      <div className="dsh-cg-tools">
         {/* The tooltip's anchor is the span, not the button: a disabled button
             emits no pointer events, so anchoring on it would lose the hover
             exactly when the bubble has the most to explain. */}
