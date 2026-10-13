@@ -42,7 +42,7 @@ export declare function fetchDiff(sessionId: string | undefined, file: {
  */
 export declare function fetchCommit(sessionId: string | undefined, hash: string): Promise<CommitPayload>;
 /**
- * Ask the Host for the local branches a switch may pick.
+ * Ask the Host for the branches a switch may pick, local and remote-tracking.
  *
  * Read fresh on every open rather than cached: branches appear and disappear as
  * the agent works, and a stale menu would offer a branch that no longer exists.
@@ -59,7 +59,7 @@ export declare function fetchBranches(sessionId: string | undefined): Promise<Br
  * other answer on this page is stale.
  *
  * @param sessionId - the session whose directory Git runs in, when known.
- * @param branch - the local branch to switch to.
+ * @param branch - the local or remote-tracking branch to switch to.
  * @returns the checkout payload.
  */
 export declare function checkoutBranch(sessionId: string | undefined, branch: string): Promise<CheckoutPayload>;

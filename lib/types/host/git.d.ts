@@ -123,35 +123,44 @@ export declare function readCommit(target: GitTarget, hash: string): Promise<Com
  */
 export declare function readDiff(target: GitTarget, file: Pick<ChangedFile, 'path' | 'staged' | 'untracked'>): Promise<DiffPayload>;
 /**
- * Read the local branches a switch may pick.
+ * Read the branches a switch may pick: the local ones and the remote-tracking
+ * ones.
  *
- * `for-each-ref` is asked for one field — the short name — and sorted by commit
- * date, so the list opens on the branches someone is actually working on. The
- * separator question does not arise: a ref name can hold neither a newline nor a
- * control character, so one name per line is unambiguous. (`%(...)` fields are
- * not where `%x1f` expansion happens — that is `log --pretty` — which is why
- * this command does not use the field-separator trick the others do.)
+ * The two lists are read the same way and sorted by commit date, so either one
+ * opens on the branches someone is actually working on. Whether a remote branch
+ * is switchable is not a filter applied here: a remote branch is a real choice —
+ * checking it out is what creates the local branch that tracks it — so the page
+ * shows both and the switch decides what to do with each.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @returns the branch list and which one HEAD is on.
+ * @returns the two branch lists and which branch HEAD is on.
  */
 export declare function readBranches(target: GitTarget): Promise<BranchesPayload>;
 /**
- * Switch the working tree to one local branch.
+ * Switch the working tree to one branch.
  *
- * The name is checked against `refs/heads/` first, so only a branch that really
- * exists is ever acted on: a typo becomes "this branch does not exist" instead
- * of Git's remote-guessing or an ambiguous-argument error. The switch itself
- * runs as `git switch`, whose argument is unambiguously a branch rather than a
- * path; Git older than 2.23 does not have that subcommand, and the retry with
- * `checkout` is what keeps those installations working.
+ * The name is a local branch, or a remote-tracking one (`origin/main`). The local
+ * case has always been here: the name is checked against `refs/heads/` first, so
+ * only a branch that really exists is ever acted on, and a typo becomes "this
+ * branch does not exist" instead of Git's remote-guessing or an
+ * ambiguous-argument error. The remote case is the same decision answered by
+ * today's Git: checking out `origin/main` is how the local `main` that tracks it
+ * comes into being, so the name is checked against `refs/remotes/` and the local
+ * branch that tracks it is created — or, when it already exists, switched to,
+ * because that is what the pick meant. The local name is derived here rather
+ * than left to Git's own guess so the exists-check and the branch Git is told to
+ * create can never disagree.
+ *
+ * The switch itself runs as `git switch`, whose argument is unambiguously a
+ * branch rather than a path; Git older than 2.23 does not have that subcommand,
+ * and the retry with `checkout` is what keeps those installations working.
  *
  * This is the one route that writes: a checkout replaces files in the working
  * tree. It is therefore also the one place the session's file policy is
  * load-bearing, and a refusal is reported as such rather than as a Git error.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param name - the branch to check out.
+ * @param name - the local or remote-tracking branch to check out.
  * @returns the outcome, including the reason a switch was refused.
  */
 export declare function switchBranch(target: GitTarget, name: string): Promise<CheckoutPayload>;

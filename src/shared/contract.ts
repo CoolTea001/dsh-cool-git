@@ -90,7 +90,7 @@ export interface WorkspaceInfo {
   readonly path: string
 }
 
-/** `POST /branches`: the local branches a switch may pick. */
+/** `POST /branches`: the branches a switch may pick. */
 export interface BranchesPayload {
   readonly ok: boolean
   readonly error?: string
@@ -100,7 +100,14 @@ export interface BranchesPayload {
   readonly detached?: boolean
   /** Local branch names, most recently committed first. */
   readonly branches?: readonly string[]
-  /** The list was cut at the Host's bound; the page says so. */
+  /**
+   * Remote-tracking branch names (`origin/main`), most recently committed first
+   * and one remote's symbolic `HEAD` left out. Handing one to `POST /checkout`
+   * switches to the local branch that tracks it, creating it when it does not
+   * exist yet.
+   */
+  readonly remotes?: readonly string[]
+  /** One of the lists was cut at the Host's bound; the page says so. */
   readonly truncated?: boolean
 }
 

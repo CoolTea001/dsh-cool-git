@@ -28,19 +28,24 @@
  */
 
 import {
+  Fragment,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
   type ReactElement,
+  type ReactNode,
 } from 'react'
-import { Button, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { checkoutBranch, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchStatus, pullBranch, pushBranch } from './api.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
+import { IconBranch, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
 import { GIT_ROOT_CLASS } from './styles.js'
 import type {
   ChangedFile,
@@ -292,14 +297,6 @@ function refLabel(ref: string): string {
   return ref.replace(/^HEAD -> /, '').replace(/^tag: /, '')
 }
 
-/** The refresh glyph. */
-const REFRESH_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    <path d="M13.4 2.4v3.4H10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
 /** The copy glyph. */
 const COPY_ICON = (
   <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -315,58 +312,18 @@ const CHECK_ICON = (
   </svg>
 )
 
-/** The chevron that marks the branch label as a menu trigger. */
-const CHEVRON_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M4.2 6.2L8 10l3.8-3.8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/** The Workspace glyph: the project directory the session's repository lives in. */
-const WORKSPACE_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M2 4.4A1.4 1.4 0 0 1 3.4 3h2.5a1 1 0 0 1 .8.4l.9 1.2h5A1.4 1.4 0 0 1 14 6v5.6A1.4 1.4 0 0 1 12.6 13H3.4A1.4 1.4 0 0 1 2 11.6z" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-  </svg>
-)
-
-/** The branch glyph: the trunk node and the commit a branch forks off it. */
-const BRANCH_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M4 2v8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    <circle cx="12" cy="4" r="2" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    <circle cx="4" cy="12" r="2" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    <path d="M12 6a6 6 0 0 1-6 6" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-  </svg>
-)
-
-/**
- * The Pull glyph: an arrow pointing at this working tree.
- *
- * Pull and push are one picture with the arrow reversed, which is what makes the
- * pair readable at 13px beside their counts. No floor line under either of them:
- * the number next to the arrow already says how many commits are crossing, and a
- * second horizontal mark only competes with it.
- */
-const PULL_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M8 2.9v9.6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M4.4 9L8 12.6 11.6 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/** The Push glyph: the same arrow leaving this working tree. */
-const PUSH_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M8 13.1V3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M4.4 7L8 3.4 11.6 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
 /**
  * The busy glyph: an open ring, turned by the stylesheet.
  *
  * A control that can wait on the network for minutes cannot look the same as an
  * idle one, and a disabled button alone does not say which control is working.
+ * It stands in for whichever glyph the wait belongs to, so it has to carry the
+ * same weight as the artwork it replaces rather than a stroke of its own.
+ *
+ * The Workspace, branch, pull, push and refresh marks are assets now — see
+ * `icons.tsx` — because those are the glyphs the toolbar shows at rest. This
+ * ring, the copy pair and the spinner's own turning are local because they are
+ * states rather than subjects.
  */
 const SPINNER_ICON = (
   <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -576,7 +533,10 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
  * still shows the old state, and it must not be mistaken for the content it is
  * explaining or scrolled away from. The platform's own Modal owns the parts that
  * are easy to get wrong — the body portal, the mask, the focus walk, Escape, and
- * returning focus to the control that opened it.
+ * returning focus to the control that opened it. This is the same composition
+ * DSH's own destructive confirm uses (`client-ui-workspace`'s 删除工作区), down to
+ * reporting the failure inside the card as one `role="alert"` block painted with
+ * the error token.
  *
  * @param props.error - the failure to state, or null while none is open.
  * @param props.onClose - called by the close button, Escape, or the mask.
@@ -595,9 +555,13 @@ function ErrorDialog(props: {
       closeLabel="关闭"
       footer={<Button variant="primary" onClick={onClose}>知道了</Button>}
     >
-      {error === null ? null : error.lines.map((line, index) => (
-        <p className="dsh-cg-dialog-text" key={index}>{line}</p>
-      ))}
+      {/* One alert for the whole failure, not one per line: a screen reader
+          announces it once, and the dialog still lists each failed request. */}
+      <div className="dsh-cg-dialog-body" role="alert">
+        {(error?.lines ?? []).map((line, index) => (
+          <p className="dsh-cg-dialog-text" key={index}>{line}</p>
+        ))}
+      </div>
     </Modal>
   )
 }
@@ -605,20 +569,20 @@ function ErrorDialog(props: {
 /**
  * The repository's toolbar, in the order the work happens: the Workspace this
  * session is in, the branch it is on, how far that branch has drifted from its
- * upstream, and then the two operations the page can perform — one 同步变更
- * button and a re-read — plus the branch menu itself as the only control that
+ * upstream, and then the two operations the page can perform — one remote control
+ * and a re-read — plus the branch button, which opens the one dialog that
  * moves HEAD.
  *
- * The branch switch is stated as a decision rather than an accident: the menu is
- * the list Git reports, the current branch carries the check, and the choice is
- * applied by the Host through a real checkout. Every control is disabled while
+ * The branch switch is stated as a decision rather than an accident: the dialog
+ * lists what Git reported, tags the branch already on, and applies nothing until
+ * the choice is confirmed with a button of its own — the Host then runs a real
+ * checkout, and a refusal is the error dialog's. Every control is disabled while
  * any other operation is in flight, so a second click cannot queue a second
  * checkout or sync behind the first.
  *
- * The menu is the platform's own dropdown, which owns the parts that are easy to
- * get wrong — anchoring, the focus walk, Escape, outside-click dismissal, and
- * rendering into a portal so a list longer than the sidebar is not clipped by
- * it.
+ * The dialog is the platform's own Modal, which owns the parts that are easy to
+ * get wrong — the body portal, the mask, the focus walk, Escape, and returning
+ * focus to the control that opened it.
  *
  * Sync is the round trip taken in the one order that cannot rewind work: a
  * fast-forward pull, then a push of what is left. Both arrows and both counts
@@ -628,6 +592,11 @@ function ErrorDialog(props: {
  * button draws those two arrows and nothing else: 同步变更 is the name the
  * tooltip and the accessible label carry, not a word in the row, which is what
  * keeps a named operation inside the width a 340px header has left for it.
+ *
+ * Publish takes Sync's place on a branch with no upstream, because that branch
+ * has no divergence to state and no pull to take: what it needs is the push that
+ * creates the remote branch and records it as the upstream. One cloud-and-arrow
+ * glyph, the same tooltip-only naming, and the two are never offered together.
  *
  * @param props.status - the current status answer, for the branch already on.
  * @param props.sessionId - the session whose repository is being switched.
@@ -649,65 +618,51 @@ function SideHead(props: {
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const { status, sessionId, refreshing, onRefresh, onSwitched, onSynced, onError } = props
+  /** Whether the branch dialog is showing. */
   const [open, setOpen] = useState(false)
-  const [branches, setBranches] = useState<readonly string[] | null>(null)
-  const [current, setCurrent] = useState<string | null>(null)
-  const [truncated, setTruncated] = useState(false)
-  const [loading, setLoading] = useState(false)
-  /** A failed branch read, kept apart from an empty list: "none" is a fact, this is not. */
-  const [readError, setReadError] = useState(false)
   const [switching, setSwitching] = useState<string | null>(null)
   /** The remote operation in flight, if any. */
   const [syncing, setSyncing] = useState<'pull' | 'push' | null>(null)
 
-  // Read the branches when the menu opens, never before: this is the only
-  // question the page asks that the tab's own mount does not already answer, and
-  // a list read at mount would be stale by the time anyone opened it.
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    setLoading(true)
-    setReadError(false)
-    void fetchBranches(sessionId).then(result => {
-      if (cancelled) return
-      setLoading(false)
-      if (result?.ok !== true) {
-        setBranches([])
-        setReadError(true)
-        if (!isNoRepo(result)) {
-          onError({ title: '读取分支列表失败', lines: [reasonOf(result, '读取分支列表失败')] })
-        }
-        return
-      }
-      setBranches(Array.isArray(result.branches) ? result.branches : [])
-      setCurrent(typeof result.current === 'string' ? result.current : null)
-      setTruncated(result.truncated === true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [open, sessionId, onError])
-
-  // What the toolbar's one remote control is allowed to do, read from the answer
+  // What the toolbar's remote controls are allowed to do, read from the answer
   // the page already has. `reachable` is the repository's own word on whether
-  // there is a branch to move at all; `hasUpstream` is what makes a pull
-  // possible and what the two counts are counted against — a branch with no
-  // upstream has no divergence to report, and the round trip then starts at the
-  // push that records the upstream in the first place. The counts themselves are
-  // drawn on the arrows that resolve them, zeros included, so a number that
-  // appeared and disappeared as commits moved could never make the toolbar jump
-  // under the cursor.
+  // there is a branch to move at all; `hasUpstream` is what makes a pull possible,
+  // what the two counts are counted against, and what decides which control the
+  // row offers — a branch with no upstream has no remote to have diverged from,
+  // so there is nothing to count and nothing to sync, and what it needs first is
+  // the push that records an upstream (Publish).
+  //
+  // Both counts are always numbers, zeros included. A control whose numbers vanish
+  // when nothing is pending reads as broken rather than as idle, and a digit that
+  // came and went as commits moved would shift the toolbar under the cursor; `0`
+  // is the honest answer for a branch in step with its upstream. The fallback
+  // below is never drawn — the sync button needs an upstream to exist — it only
+  // keeps the two counts plain numbers.
   const onBranch = status?.ok === true
   const detached = status?.detached === true
   const reachable = onBranch && !detached
   const hasUpstream = reachable && status?.upstream !== undefined
-  const behind = hasUpstream ? status?.behind ?? 0 : null
-  const ahead = hasUpstream ? status?.ahead ?? 0 : null
+  const publishable = reachable && !hasUpstream
+  const behind = hasUpstream ? status?.behind ?? 0 : 0
+  const ahead = hasUpstream ? status?.ahead ?? 0 : 0
   const busy = switching !== null || syncing !== null
 
+  /** Close the branch dialog without switching. */
+  const closeDialog = useCallback((): void => {
+    setOpen(false)
+  }, [])
+
+  /**
+   * Check out the branch the dialog confirmed.
+   *
+   * The dialog closes first: a checkout replaces the working tree, and a picker
+   * left on screen while that runs would be offering a list that is already
+   * stale. A refusal is the error dialog's, like every other failure.
+   *
+   * @param branch - the branch the user picked and confirmed.
+   */
   const choose = useCallback((branch: string): void => {
     setOpen(false)
-    if (branch === current) return
     setSwitching(branch)
     void checkoutBranch(sessionId, branch).then(result => {
       setSwitching(null)
@@ -720,10 +675,33 @@ function SideHead(props: {
       }
       onSwitched()
     })
-  }, [current, sessionId, onSwitched, onError])
+  }, [sessionId, onSwitched, onError])
 
   /**
-   * Run the one round trip the toolbar offers: pull, then push.
+   * Send this branch to its upstream, and report the answer.
+   *
+   * Publish and the second half of Sync run this one call, because the Host
+   * decides which of the two it is from the repository itself: a branch with no
+   * upstream is pushed to the single configured remote and recorded as its
+   * upstream. The only difference the page makes is what it calls a failure.
+   *
+   * @param title - the failure's heading, naming which of the two was asked.
+   */
+  const push = useCallback((title: string): void => {
+    setSyncing('push')
+    void pushBranch(sessionId).then(result => {
+      setSyncing(null)
+      if (result?.ok !== true) {
+        onError({ title, lines: [reasonOf(result, title)] })
+      }
+      // A push moves nothing on disk, but a refusal moves the page's idea of the
+      // divergence just as surely, so the two answers are re-read either way.
+      onSynced()
+    })
+  }, [sessionId, onSynced, onError])
+
+  /**
+   * Run the round trip: pull, then push.
    *
    * The order is what makes a single button safe. Fast-forwarding first means
    * the push that follows sends a history the remote already has, so the common
@@ -732,30 +710,10 @@ function SideHead(props: {
    * there instead: the two sides have diverged, and pushing into that is exactly
    * the refusal the pull has already explained.
    *
-   * A branch with no upstream skips straight to the push, because there is
-   * nothing to fast-forward from — that push is what records the upstream.
-   *
-   * Every failure is reported once, naming the step that failed, and the page
-   * re-reads either way: even a refusal can leave the divergence stale.
+   * This is only ever asked of a branch that has an upstream — without one the
+   * row offers Publish instead — so the pull has a target by construction.
    */
   const sync = useCallback((): void => {
-    /** Send what the pull left behind, and report that half's answer. */
-    const push = (): void => {
-      setSyncing('push')
-      void pushBranch(sessionId).then(result => {
-        setSyncing(null)
-        if (result?.ok !== true) {
-          onError({ title: '推送失败', lines: [reasonOf(result, '推送失败')] })
-        }
-        onSynced()
-      })
-    }
-
-    if (!hasUpstream) {
-      push()
-      return
-    }
-
     setSyncing('pull')
     void pullBranch(sessionId).then(result => {
       if (result?.ok !== true) {
@@ -769,26 +727,24 @@ function SideHead(props: {
       // The pull rewrote the working tree, so the diff on screen is stale and is
       // dropped here — the push that follows moves nothing on disk.
       onSwitched()
-      push()
+      push('推送失败')
     })
-  }, [hasUpstream, sessionId, onSwitched, onSynced, onError])
+  }, [sessionId, onSwitched, onSynced, onError, push])
 
-  const items: MenuEntry[] = []
-  if (loading) {
-    items.push({ type: 'label', id: 'loading', text: '正在读取分支…' })
-  } else if (readError) {
-    items.push({ type: 'label', id: 'failed', text: '读取分支失败' })
-  } else if (branches === null || branches.length === 0) {
-    items.push({ type: 'label', id: 'empty', text: '没有本地分支' })
-  } else {
-    // No `icon` of our own: the primitive draws the trailing check on the row
-    // `selectedId` names, and a second marker would only repeat it.
-    for (const name of branches) items.push({ id: name, label: name })
-    if (truncated) {
-      items.push({ type: 'separator', id: 'cut' })
-      items.push({ type: 'label', id: 'cut-label', text: `仅显示最近的 ${branches.length} 个分支` })
-    }
-  }
+  /**
+   * Publish this branch: push it to the single configured remote and let that
+   * push record the upstream, which is what turns a local branch into one the
+   * rest of the world can see.
+   *
+   * It is offered exactly when there is no upstream to sync with, and it is the
+   * honest answer for that state rather than a Sync showing `0 0`: the two counts
+   * have nothing to be counted against, and the thing the branch needs is not a
+   * comparison but a relationship. No remote, or several, is Git's refusal to
+   * guess, reported like every other failure.
+   */
+  const publish = useCallback((): void => {
+    push('发布分支失败')
+  }, [push])
 
   const label = detached
     ? `HEAD ${status?.head?.short ?? ''}`.trim()
@@ -808,87 +764,106 @@ function SideHead(props: {
       >
         {workspaceName === ''
           ? null
-          : <span className="dsh-cg-workspace-icon" aria-hidden="true">{WORKSPACE_ICON}</span>}
+          : <span className="dsh-cg-workspace-icon" aria-hidden="true"><IconFolder /></span>}
         <span className="dsh-cg-workspace-name">{workspaceName}</span>
       </span>
       <div className="dsh-cg-tools">
-        <Menu
-          className="dsh-cg-branch-menu"
+        <button
+          type="button"
+          className="dsh-cg-branch"
+          // Disabled while any repository operation is in flight: a second
+          // dialog opened then could queue a second checkout behind the first.
+          disabled={!onBranch || busy}
+          title={switching === null
+            ? status?.upstream === undefined ? '切换分支' : `上游：${status.upstream}`
+            : `正在切换到 ${switching}…`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen(value => !value)}
+        >
+          <span
+            className="dsh-cg-branch-icon"
+            data-busy={switching !== null}
+            aria-hidden="true"
+          >
+            {switching === null ? <IconBranch /> : SPINNER_ICON}
+          </span>
+          <span className="dsh-cg-branch-name">{label}</span>
+          {detached ? <span className="dsh-cg-divergence">游离</span> : null}
+        </button>
+        <BranchDialog
           open={open}
-          anchor={(
-            <button
-              type="button"
-              className="dsh-cg-branch"
-              // Disabled while any repository operation is in flight: a second
-              // menu opened then could queue a second checkout behind the first.
-              disabled={!onBranch || busy}
-              title={switching === null
-                ? status?.upstream === undefined ? '切换分支' : `上游：${status.upstream}`
-                : `正在切换到 ${switching}…`}
-              aria-haspopup="menu"
-              aria-expanded={open}
-              onClick={() => setOpen(value => !value)}
-            >
-              <span
-                className="dsh-cg-branch-icon"
-                data-busy={switching !== null}
-                aria-hidden="true"
-              >
-                {switching === null ? BRANCH_ICON : SPINNER_ICON}
-              </span>
-              <span className="dsh-cg-branch-name">{label}</span>
-              {detached ? <span className="dsh-cg-divergence">游离</span> : null}
-              <span className="dsh-cg-chevron" aria-hidden="true">{CHEVRON_ICON}</span>
-            </button>
-          )}
-          items={items}
-          selectedId={current ?? undefined}
-          align="end"
-          portal
-          onSelect={choose}
-          onClose={() => setOpen(false)}
+          sessionId={sessionId}
+          onClose={closeDialog}
+          onConfirm={choose}
+          onError={onError}
         />
         {/* The tooltip's anchor is the span, not the button: a disabled button
             emits no pointer events, so anchoring on it would lose the hover
             exactly when the bubble has the most to explain. */}
-        {/* One control for both directions of the round trip. The two arrows and
-            their counts stay inside it — each beside its own glyph, each turning
-            while its own half is in flight — so the button that states the
-            divergence is the button that resolves it. No word in the button
-            itself: 同步变更 is this tooltip's label and the button's accessible
-            name. */}
-        <Tooltip label="同步变更" side="bottom" portal>
-          <span className="dsh-cg-tip">
-            <button
-              type="button"
-              className="dsh-cg-icon dsh-cg-sync"
-              aria-label="同步变更"
-              // No `data-busy` on the button itself: each arrow marks its own
-              // half of the round trip, and one on the button would turn both.
-              disabled={!reachable || busy || refreshing}
-              onClick={sync}
-            >
-              <span
-                className="dsh-cg-sync-arrow"
-                data-busy={syncing === 'pull'}
-                data-pending={behind !== null && behind > 0}
-                aria-hidden="true"
-              >
-                {syncing === 'pull' ? SPINNER_ICON : PULL_ICON}
-                {behind === null ? null : <span className="dsh-cg-sync-count">{behind}</span>}
+        {/* Which remote control the row offers is the branch's own answer rather
+            than a setting. An upstream means the two counts have something to be
+            counted against and Sync is what resolves them; no upstream means
+            there is nothing to count, and the branch needs a relationship before
+            it needs a comparison — that is Publish. Neither control is ever asked
+            to show a number it cannot stand behind. */}
+        {publishable
+          ? (
+            <Tooltip label="发布分支" side="bottom" portal>
+              <span className="dsh-cg-tip">
+                <button
+                  type="button"
+                  className="dsh-cg-icon"
+                  aria-label="发布分支"
+                  data-busy={syncing === 'push'}
+                  disabled={!reachable || busy || refreshing}
+                  onClick={publish}
+                >
+                  {syncing === 'push' ? SPINNER_ICON : <IconPublish />}
+                </button>
               </span>
-              <span
-                className="dsh-cg-sync-arrow"
-                data-busy={syncing === 'push'}
-                data-pending={ahead !== null && ahead > 0}
-                aria-hidden="true"
-              >
-                {syncing === 'push' ? SPINNER_ICON : PUSH_ICON}
-                {ahead === null ? null : <span className="dsh-cg-sync-count">{ahead}</span>}
+            </Tooltip>
+          )
+          : (
+            /* One control for both directions of the round trip. The two arrows
+               and their counts stay inside it — each beside its own glyph, each
+               turning while its own half is in flight — so the button that states
+               the divergence is the button that resolves it. No word in the
+               button itself: 同步变更 is this tooltip's label and the button's
+               accessible name. */
+            <Tooltip label="同步变更" side="bottom" portal>
+              <span className="dsh-cg-tip">
+                <button
+                  type="button"
+                  className="dsh-cg-icon dsh-cg-sync"
+                  aria-label="同步变更"
+                  // No `data-busy` on the button itself: each arrow marks its own
+                  // half of the round trip, and one on the button would turn both.
+                  disabled={!reachable || busy || refreshing}
+                  onClick={sync}
+                >
+                  <span
+                    className="dsh-cg-sync-arrow"
+                    data-busy={syncing === 'pull'}
+                    data-pending={behind > 0}
+                    aria-hidden="true"
+                  >
+                    {syncing === 'pull' ? SPINNER_ICON : <IconPull />}
+                    <span className="dsh-cg-sync-count">{behind}</span>
+                  </span>
+                  <span
+                    className="dsh-cg-sync-arrow"
+                    data-busy={syncing === 'push'}
+                    data-pending={ahead > 0}
+                    aria-hidden="true"
+                  >
+                    {syncing === 'push' ? SPINNER_ICON : <IconPush />}
+                    <span className="dsh-cg-sync-count">{ahead}</span>
+                  </span>
+                </button>
               </span>
-            </button>
-          </span>
-        </Tooltip>
+            </Tooltip>
+          )}
         <Tooltip label="刷新" side="bottom" portal>
           <span className="dsh-cg-tip">
             <button
@@ -899,12 +874,388 @@ function SideHead(props: {
               disabled={refreshing || busy}
               onClick={onRefresh}
             >
-              {refreshing ? SPINNER_ICON : REFRESH_ICON}
+              {refreshing ? SPINNER_ICON : <IconRefresh />}
             </button>
           </span>
         </Tooltip>
       </div>
     </div>
+  )
+}
+
+/**
+ * Which run of rows a branch belongs to, in the order the dialog draws them.
+ *
+ * The order is the dialog's own answer to where a branch sits: the branch HEAD
+ * is on, then the other local branches, then the remote-tracking ones.
+ */
+type BranchGroup = 'current' | 'local' | 'remote'
+
+/** One row of the branch dialog's list. */
+interface BranchRow {
+  /** The name the row shows, and the name the switch is asked for. */
+  readonly name: string
+  readonly group: BranchGroup
+}
+
+/** What each run of rows is called. */
+const BRANCH_GROUP_LABEL: Readonly<Record<BranchGroup, string>> = {
+  current: '当前分支',
+  local: '本地分支',
+  remote: '远程分支',
+}
+
+/**
+ * The branches Git reports, as a dialog the choice is confirmed in.
+ *
+ * A dialog rather than a dropdown because the list here is the whole decision: a
+ * repository can hold hundreds of branches, so the list scrolls inside a fixed
+ * height and carries a filter of its own. The rows are the three groups a branch
+ * can come from — 当前分支, 本地分支, 远程分支 — each labelled where it starts, so
+ * a remote name is never mistaken for a local one of the same shape and the
+ * branch already checked out needs no mark of its own. The click that picks a row
+ * therefore selects it and nothing else — the footer's button is what applies the
+ * choice, because a checkout rewrites the working tree and a stray click on a
+ * scrolling list must not do that.
+ *
+ * One row is active at a time, and that index is the only thing the list paints
+ * and the only thing a keystroke acts on: the keys walk it with a wrap-around
+ * from the branch the dialog opened on, the pointer takes it over by moving onto
+ * a row, and Enter applies whichever row it is. The filter keeps the keyboard
+ * throughout — the arrows move the highlight rather than the focus — so typing
+ * still narrows the list after the arrows have walked it, and a click selects
+ * without switching: a checkout rewrites the working tree, so only the footer's
+ * button or Enter applies the choice. Escape closes the dialog the way the
+ * Modal's own layer does it.
+ *
+ * The list is read when the dialog opens, never before and never cached: this is
+ * the only question the page asks that the tab's own mount does not already
+ * answer, branches appear and disappear as the agent works, and a list read at
+ * mount would be stale by the time anyone opened it.
+ *
+ * Whether the switch is allowed is Git's answer, not this half's: the dialog asks
+ * the Host to check out the branch and nothing else, so a working tree Git would
+ * refuse over comes back as the refusal it is — the paths in the way and all — in
+ * the page's error dialog. The only choices made here are which branch, and
+ * whether the footer's button is pressed at all.
+ *
+ * A read that fails closes the dialog and is stated by the page's one error
+ * dialog, so the page keeps a single failure shape. The one exception is a
+ * directory that is not a repository: that is not a failure, so the dialog says
+ * so in place.
+ *
+ * @param props.open - whether the dialog is showing.
+ * @param props.sessionId - the session whose repository is being read.
+ * @param props.onClose - called by 取消, the close button, Escape, or the mask.
+ * @param props.onConfirm - called with the picked branch when 切换 is pressed.
+ * @param props.onError - called with the failure to state in the error dialog.
+ * @returns the dialog element.
+ */
+function BranchDialog(props: {
+  readonly open: boolean
+  readonly sessionId: string | undefined
+  readonly onClose: () => void
+  readonly onConfirm: (branch: string) => void
+  readonly onError: (error: GitError) => void
+}): ReactElement {
+  const { open, sessionId, onClose, onConfirm, onError } = props
+  /** The local branches Git reported, or null while it has not answered yet. */
+  const [branches, setBranches] = useState<readonly string[] | null>(null)
+  /** The remote-tracking branches Git reported. */
+  const [remoteBranches, setRemoteBranches] = useState<readonly string[]>([])
+  const [current, setCurrent] = useState<string | null>(null)
+  const [truncated, setTruncated] = useState(false)
+  /** A directory that is not a repository: the dialog's own empty state. */
+  const [noRepo, setNoRepo] = useState(false)
+  /** The row the dialog is on, which the footer's button then applies. */
+  const [picked, setPicked] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
+
+  // The cleanup discards a late answer and clears the one already in state, so a
+  // reopen starts on 正在读取分支… instead of painting the previous list for the
+  // frame between the reopen and the request.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void fetchBranches(sessionId).then(result => {
+      if (cancelled) return
+      if (result?.ok !== true) {
+        const missing = isNoRepo(result)
+        setBranches([])
+        setNoRepo(missing)
+        if (!missing) {
+          onClose()
+          onError({ title: '读取分支列表失败', lines: [reasonOf(result, '读取分支列表失败')] })
+        }
+        return
+      }
+      const on = typeof result.current === 'string' ? result.current : null
+      setBranches(Array.isArray(result.branches) ? result.branches : [])
+      setRemoteBranches(Array.isArray(result.remotes) ? result.remotes : [])
+      setCurrent(on)
+      setTruncated(result.truncated === true)
+      // The dialog opens on the branch it is already showing: the row is active
+      // before the keyboard touches it, so an arrow moves off it rather than
+      // onto it, and Enter confirms what the dialog says is current.
+      setPicked(on)
+    })
+    return () => {
+      cancelled = true
+      setBranches(null)
+      setRemoteBranches([])
+      setCurrent(null)
+      setTruncated(false)
+      setNoRepo(false)
+      setPicked(null)
+      setFilter('')
+    }
+  }, [open, sessionId, onClose, onError])
+
+  // `null` is the one state that means "no answer yet": an answer that named no
+  // branch is an empty list, which is a fact this dialog states rather than a
+  // load it is still waiting on. The rows are the three groups in the order they
+  // are read: the branch HEAD is on, then the other local branches, then the
+  // remote-tracking ones — where you are, where you could be, and what a remote
+  // has — and the group is carried on the row so a filtered list can still label
+  // what each run of rows belongs to.
+  const rows: readonly BranchRow[] = [
+    ...(current === null ? [] : [{ name: current, group: 'current' as const }]),
+    ...(branches ?? [])
+      .filter(name => name !== current)
+      .map(name => ({ name, group: 'local' as const })),
+    ...remoteBranches.map(name => ({ name, group: 'remote' as const })),
+  ]
+
+  /**
+   * The rows one filter value leaves.
+   *
+   * A function rather than a value because the filter's own change handler has to
+   * know the list its new value produces — the active row is put back on the
+   * first match as the list narrows, and that is the row the next Enter applies.
+   *
+   * @param value - the filter's text.
+   * @returns the rows whose name contains it, case-insensitively.
+   */
+  const shownFor = (value: string): readonly BranchRow[] => {
+    const needle = value.trim().toLowerCase()
+    return needle === '' ? rows : rows.filter(row => row.name.toLowerCase().includes(needle))
+  }
+
+  const shown = shownFor(filter)
+  // The one active row, as an index into `shown`: -1 while nothing is active,
+  // which is also the state a filter with no matches leaves behind. It is the
+  // only thing the list paints and the only thing a keystroke acts on, so the
+  // pointer and the keys can never disagree about which row is lit.
+  const active = picked === null ? -1 : shown.findIndex(row => row.name === picked)
+
+  /** One ref per rendered row, so the active row can be scrolled into view. */
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
+  /** Prefixed onto each row's id, which the filter names as its active option. */
+  const listId = useId()
+
+  // The active row is no longer DOM focus — the filter keeps the keyboard — so
+  // nothing scrolls it into view by itself. `nearest` moves the list as little as
+  // it can: a row already on screen stays exactly where it is.
+  useLayoutEffect(() => {
+    if (active < 0) return
+    rowRefs.current[active]?.scrollIntoView({ block: 'nearest' })
+  }, [active, shown])
+
+  /**
+   * Whether this branch may be switched to.
+   *
+   * The one gate, consulted by the footer's button and by Enter alike: a keyboard
+   * that could press past a disabled button would be a second, quieter way to
+   * check out. Two refusals only — no row active, and the branch already checked
+   * out — because whether a switch would be accepted is Git's answer, given when
+   * the switch is asked for and stated by the error dialog if it is a refusal.
+   *
+   * @param name - the branch to judge, or null when no row is active.
+   * @returns true when a checkout of that branch may be offered.
+   */
+  const switchable = (name: string | null): boolean => name !== null && name !== current
+
+  /**
+   * The keys the dialog offers.
+   *
+   * Bound on the whole dialog, and they move the highlight rather than the focus:
+   * the filter keeps the keyboard for as long as the dialog is open, so the next
+   * character still narrows the list after an arrow has walked it. That is the
+   * whole of the interaction — one active row, which the keys walk with a
+   * wrap-around and the pointer takes back by moving over a row — and it is what
+   * the terminal tab's completion popup and the platform's own model picker do,
+   * for the same reason. The walk starts from the active row, not from nothing,
+   * so the branch the dialog opened on is where the first arrow moves away from;
+   * Home and End jump to the ends.
+   *
+   * The dialog rather than the body is the binding site because the keyboard can
+   * end up on the dialog element itself: clicking the card's own background moves
+   * focus there, and those keys never reach the body. Enter is the exception — it
+   * applies the active row only from the search field, so the footer's buttons and
+   * the header's ✕ keep their own activation. Escape is not handled here at all:
+   * the Modal owns it, along with the focus it hands back to the button that
+   * opened the dialog. Tab is left alone as well — the list holds no tab stop of
+   * its own, so the keyboard leaves the filter for the footer's buttons, which is
+   * what keeps a two-hundred-branch list from becoming two hundred tab stops.
+   *
+   * @param event - the dialog's key event.
+   */
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // An IME owns these keys while it is composing: its arrows walk candidate
+    // words and its Enter commits one, so neither may apply a branch. The
+    // platform's own model picker guards the same way.
+    if (event.nativeEvent.isComposing) return
+
+    if (event.key === 'Enter') {
+      if (!(event.target instanceof HTMLInputElement)) return
+      if (event.repeat || picked === null || !switchable(picked)) return
+      event.preventDefault()
+      onConfirm(picked)
+      return
+    }
+
+    const last = shown.length - 1
+    const next = event.key === 'ArrowDown' ? (active < 0 ? 0 : (active + 1) % shown.length)
+      : event.key === 'ArrowUp' ? (active < 0 ? last : (active - 1 + shown.length) % shown.length)
+        : event.key === 'Home' ? 0
+          : event.key === 'End' ? last
+            : -1
+    // A key the list does not act on, or a filter that matched nothing, is left
+    // to whoever else wants it: the caret the arrows would have moved is still
+    // the filter's own.
+    if (next < 0 || next > last) return
+    event.preventDefault()
+    setPicked(shown[next]?.name ?? null)
+  }
+
+  // The dialog's states, with the filter first in the tree that carries one. That
+  // order is not cosmetic: the Modal looks for `data-modal-autofocus` in the frame
+  // the layer opens the dialog — one render *before* the branches arrive — so a
+  // filter that waited for the list would leave the ✕ (the dialog's first
+  // focusable control) holding the keyboard instead, and the arrows would have
+  // nothing to walk. Keeping that one input mounted across the load is also what
+  // lets it keep the focus it was given, and keeps whatever was typed while
+  // reading in it.
+  let content: ReactNode
+  if (noRepo) {
+    content = <p className="dsh-cg-dialog-hint">当前会话目录不是 Git 仓库</p>
+  } else if (branches !== null && rows.length === 0) {
+    content = <p className="dsh-cg-dialog-hint">没有可切换的分支</p>
+  } else {
+    content = (
+      <>
+        <Input
+          className="dsh-cg-branch-filter"
+          type="text"
+          role="searchbox"
+          // The keyboard never leaves the field, so the row it is walking is named
+          // rather than focused — the same pair the platform's own model picker
+          // puts on its search box, and the reason the arrows keep working after
+          // a character has been typed.
+          aria-controls={listId}
+          aria-activedescendant={active < 0 ? undefined : `${listId}-${active}`}
+          value={filter}
+          placeholder="搜索分支"
+          aria-label="搜索分支"
+          // The Modal's own way of choosing the initial focus: React's
+          // `autoFocus` runs before the layer can note the control to return to.
+          // The primitive passes the marker through to the native field, which is
+          // the element the layer actually focuses.
+          data-modal-autofocus
+          // Narrowing the list puts the active row back on the first match, so
+          // Enter applies the row the list now leads with instead of nothing —
+          // and a filter with no match leaves nothing active, which is honest.
+          onChange={event => {
+            const value = event.target.value
+            setFilter(value)
+            setPicked(shownFor(value)[0]?.name ?? null)
+          }}
+        />
+        {branches === null
+          ? <p className="dsh-cg-dialog-hint">正在读取分支…</p>
+          : shown.length === 0
+            ? <p className="dsh-cg-dialog-hint">没有匹配的分支</p>
+            : (
+              <div id={listId} className="dsh-cg-branch-list" role="listbox" aria-label="分支">
+                {shown.map((row, index) => (
+                  <Fragment key={row.name}>
+                    {/* The heading opens each run of rows; the runs are in group
+                        order already, so a kind that changed since the row above
+                        is where the next one starts. */}
+                    {row.group === shown[index - 1]?.group
+                      ? null
+                      : <span role="presentation" className="dsh-cg-branch-group">{BRANCH_GROUP_LABEL[row.group]}</span>}
+                    <button
+                      ref={element => { rowRefs.current[index] = element }}
+                      type="button"
+                      role="option"
+                      id={`${listId}-${index}`}
+                      aria-selected={picked === row.name}
+                      // The list holds no tab stop: the filter is the keyboard's
+                      // only seat in this dialog.
+                      tabIndex={-1}
+                      className="dsh-cg-branch-row"
+                      // `move`, not `enter`: a pointer already resting inside a row
+                      // has to take the highlight back the moment it moves after
+                      // the arrows walked away from it, and `enter` has already
+                      // fired by then.
+                      onMouseMove={() => { if (picked !== row.name) setPicked(row.name) }}
+                      // Keep the keyboard in the filter: letting the mousedown move
+                      // focus into the row would end the typing that is narrowing
+                      // the list (the terminal tab's completion popup prevents the
+                      // same blur for its own keystroke stream).
+                      onMouseDown={event => { event.preventDefault() }}
+                      // The pointer selects, it does not switch: a checkout
+                      // rewrites the working tree, so only the footer's button — or
+                      // Enter — applies the choice.
+                      onClick={() => setPicked(row.name)}
+                    >
+                      <span className="dsh-cg-branch-row-name">{row.name}</span>
+                    </button>
+                  </Fragment>
+                ))}
+              </div>
+            )}
+        {truncated
+          ? <p className="dsh-cg-dialog-hint">分支过多，仅显示最近的部分分支</p>
+          : null}
+      </>
+    )
+  }
+
+  const canConfirm = switchable(picked)
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="切换分支"
+      description={'选择并切换至指定分支'}
+      closeLabel="关闭"
+      // The dialog is wider than the platform's default card: a branch name is a
+      // path, and `origin/feature/…` cut by an ellipsis is a name no one can
+      // tell from its neighbour. The class is the platform's own way of sizing a
+      // dialog (its RiskConfirmation does the same).
+      className="dsh-cg-branch-dialog"
+      // Bound on the dialog rather than on the body: the layer hands the keyboard
+      // to the filter on open, but a click on the card's own background moves it to
+      // the dialog element, and keys aimed there never reach the body.
+      onKeyDownCapture={onKeyDown}
+      footer={(
+        <>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button
+            variant="primary"
+            disabled={!canConfirm}
+            onClick={() => { if (picked !== null) onConfirm(picked) }}
+          >
+            切换
+          </Button>
+        </>
+      )}
+    >
+      <div className="dsh-cg-branch-body">{content}</div>
+    </Modal>
   )
 }
 

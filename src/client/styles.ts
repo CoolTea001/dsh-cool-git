@@ -64,13 +64,15 @@ const GIT_CSS = [
   '.dsh-cg-icon:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-icon:disabled:hover{background:transparent;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-icon svg{width:13px;height:13px;display:block}',
-  // 同步变更 is the toolbar's one remote control, and inside it sit both halves of
-  // the round trip: each arrow with its divergence count beside it, because the
-  // count and the control that resolves it are one thing. The button widens to
-  // take the digits, and the arrow of a direction with something to move is a
-  // shade stronger than an idle one's. The name is the tooltip's and the
-  // accessible label's, not a word in the row: two arrows and two counts already
-  // fill what a 340px header has left.
+  // 同步变更 is the toolbar's remote control wherever the branch has an upstream,
+  // and inside it sit both halves of the round trip: each arrow with its
+  // divergence count beside it, because the count and the control that resolves
+  // it are one thing. The button widens to take the digits, and the arrow of a
+  // direction with something to move is a shade stronger than an idle one's. The
+  // name is the tooltip's and the accessible label's, not a word in the row: two
+  // arrows and two counts already fill what a 340px header has left. Where there
+  // is no upstream this button is not drawn at all — 发布分支 takes its place as
+  // an ordinary single-glyph control.
   '.dsh-cg-sync{width:auto;min-width:22px;gap:4px;padding:0 5px}',
   '.dsh-cg-sync-arrow{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-sync-arrow[data-pending=true]{color:var(--dsw-alias-label-secondary)}',
@@ -90,11 +92,11 @@ const GIT_CSS = [
   '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, and the toolbar
-  // — branch, 同步变更, refresh — on the right, one hairline under both. Each
-  // name carries its own glyph (a directory for the Workspace, a forked commit
-  // for the branch), so the row states which is which without either label
-  // having to say it; the two operations are icons rather than words because the
-  // branch pill and the two buttons all have to fit a 340px row.
+  // — branch, 同步变更 (or 发布分支), refresh — on the right, one hairline under
+  // both. Each name carries its own glyph (a directory for the Workspace, a
+  // forked commit for the branch), so the row states which is which without
+  // either label having to say it; the two operations are icons rather than words
+  // because the branch pill and the two buttons all have to fit a 340px row.
   '.dsh-cg-side-head{flex:none;display:flex;align-items:center;gap:6px;height:34px;padding:0 6px 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
   // The Workspace's name is the only part that may give ground: every control to
   // its right has a fixed width, and a name that scrolls out of the row is worse
@@ -107,23 +109,70 @@ const GIT_CSS = [
   // long the Workspace's name is.
   '.dsh-cg-tools{flex:none;display:flex;align-items:center;gap:4px;margin-left:auto}',
   '.dsh-cg-divergence{flex:none;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
-  // The Menu primitive's wrapper span is the trigger's own box.
-  '.dsh-cg-branch-menu{flex:none;display:inline-flex}',
-  '.dsh-cg-branch{display:inline-flex;align-items:center;gap:4px;max-width:130px;height:22px;padding:0 4px 0 6px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}',
+  '.dsh-cg-branch{display:inline-flex;align-items:center;gap:4px;max-width:130px;height:22px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}',
   '.dsh-cg-branch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-branch:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-branch-icon{flex:none;display:inline-flex;align-items:center;width:12px;height:12px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-branch-icon svg{width:12px;height:12px;display:block}',
   '.dsh-cg-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
-  '.dsh-cg-chevron{flex:none;display:inline-flex;width:12px;height:12px;color:var(--dsw-alias-label-tertiary)}',
-  '.dsh-cg-chevron svg{width:12px;height:12px;display:block}',
 
-  // The one line the error dialog states per failed request. The dialog itself
-  // is the platform's Modal, so only its body text needs a rule here: a reason
-  // Git printed can be a whole sentence with punctuation of its own, and it must
-  // wrap rather than widen the card.
-  '.dsh-cg-dialog-text{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word}',
-  '.dsh-cg-dialog-text+.dsh-cg-dialog-text{margin-top:8px}',
+  // The branch dialog: a filter over a scrolling list of three labelled groups —
+  // the branch checked out, the other local branches, and the remote-tracking
+  // ones. The list is the decision, so it caps its own height instead of
+  // stretching the card — in `min()` with a viewport share, because a short
+  // window must not push the card's footer off the mask — and the filter is the
+  // control the Modal focuses when it opens.
+  //
+  // The filter is the platform's own `Input` primitive, so its border, fill,
+  // radius, type scale, and focus color are the platform's and follow the theme
+  // without a rule here; this stylesheet only gives its frame the width of the
+  // dialog's content column.
+  //
+  // That frame is portaled to `document.body` with the card, which is outside
+  // the root the stylesheet's own box-sizing reset is scoped to, so it says
+  // `border-box` itself: the primitive's frame carries padding and a hairline
+  // border, and without it a `width:100%` frame grows past the content column by
+  // both.
+  //
+  // The body is a column of its own so the filter is a block-level box rather
+  // than an inline one with a line box of its own under it: the keys that walk
+  // the list are bound here, and the height stays the sum of the parts.
+  '.dsh-cg-branch-body{display:flex;flex-direction:column;min-width:0}',
+  '.dsh-cg-branch-filter,.dsh-cg-branch-list,.dsh-cg-branch-row{box-sizing:border-box}',
+  '.dsh-cg-branch-filter{flex:none;width:100%}',
+  // A branch name is a path, and two remote branches cut at the same ellipsis are
+  // one name to the eye, so the card is widened past the platform's default. The
+  // card is not height-capped here: the list below is what gives ground on a
+  // short window, in `min()` with a viewport share.
+  '.dsh-cg-branch-dialog{width:min(560px,100%)}',
+  '.dsh-cg-branch-list{display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);margin-top:8px;overflow:auto}',
+  // The heading that opens each run of rows — 当前分支, 本地分支, 远程分支. It sits
+  // in the list's own column so the three groups read as one list, and the first
+  // one carries no gap above it.
+  '.dsh-cg-branch-group{flex:none;margin-top:8px;padding:0 8px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
+  '.dsh-cg-branch-group:first-child{margin-top:0}',
+  '.dsh-cg-branch-row{flex:none;display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
+  // One mechanism owns the highlight: the pointer and the keys both move the one
+  // active row, and this is the only rule that paints it — with the same fill a
+  // hover would use. There is deliberately no `:hover` rule beside it, so the row
+  // under a resting pointer cannot stay lit after the arrows have walked away
+  // from it (the terminal tab's completion popup is built the same way).
+  '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-branch-row-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  // One line of the dialog's own state: still reading, a directory that is not a
+  // repository, no branch at all, a filter that matched nothing. A failure is the
+  // error dialog's, so nothing here paints one.
+  '.dsh-cg-dialog-hint{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.7}',
+  '.dsh-cg-branch-list+.dsh-cg-dialog-hint{margin-top:8px}',
+
+  // The failure lines the error dialog states, one per request that did not
+  // answer. The dialog itself is the platform's Modal, so this is only its body:
+  // the card reports the failure the way DSH's own dialogs do — one `role="alert"`
+  // block painted with the error token — and a reason Git printed can be a whole
+  // sentence with punctuation of its own, so it must wrap rather than widen the
+  // card.
+  '.dsh-cg-dialog-body{display:flex;flex-direction:column;gap:8px}',
+  '.dsh-cg-dialog-text{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary);white-space:pre-wrap;word-break:break-word}',
 
   // Changed-path rows.
   '.dsh-cg-row{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',

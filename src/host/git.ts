@@ -632,32 +632,76 @@ export async function readDiff(
 }
 
 /**
- * Read the local branches a switch may pick.
+ * One namespace's branch names, and whether the cap cut the list.
  *
- * `for-each-ref` is asked for one field — the short name — and sorted by commit
- * date, so the list opens on the branches someone is actually working on. The
- * separator question does not arise: a ref name can hold neither a newline nor a
- * control character, so one name per line is unambiguous. (`%(...)` fields are
- * not where `%x1f` expansion happens — that is `log --pretty` — which is why
- * this command does not use the field-separator trick the others do.)
+ * A failure is reported as the reason rather than as a payload, because the two
+ * callers wrap it in the same answer and neither has anything to add to it.
+ */
+type RefNames =
+  | { readonly ok: true; readonly names: readonly string[]; readonly truncated: boolean }
+  | { readonly ok: false; readonly error: string }
+
+/**
+ * Read the short names under one ref namespace, newest commit date first.
+ *
+ * `--count` is asked for one more name than the cap, so a cut list can say that
+ * it was cut. The separator question does arise here — and only here — because a
+ * remote's symbolic `HEAD` is wanted out of the list: `%(symref)` is empty for a
+ * real ref and names the target for that alias, and `%00` is how the two fields
+ * are kept apart inside a record (`%x1f` is expanded by `log --pretty` and not
+ * by `for-each-ref`; `%00` is). Ref names can hold no NUL, so a record is
+ * exactly two fields.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param namespace - the ref namespace to read, e.g. `refs/heads/`.
+ * @returns the short names, or why the read failed.
+ */
+async function readRefNames(root: GitTarget, namespace: string): Promise<RefNames> {
+  const list = await runGit(root, [
+    'for-each-ref', '--sort=-committerdate', `--count=${MAX_BRANCHES + 1}`,
+    '--format=%(refname:short)%00%(symref)', namespace,
+  ])
+  if (list.code !== 0) return { ok: false, error: failureText(list) }
+
+  const names: string[] = []
+  let truncated = false
+  for (const record of list.stdout.split('\n')) {
+    if (record === '') continue
+    const [name = '', symref = ''] = record.split('\0')
+    // A remote's `HEAD` alias shortens to the bare remote name, which is not a
+    // branch anyone can switch to; the ref it points at is in the list itself.
+    if (symref !== '') continue
+    if (names.length === MAX_BRANCHES) {
+      truncated = true
+      break
+    }
+    names.push(name)
+  }
+  return { ok: true, names, truncated }
+}
+
+/**
+ * Read the branches a switch may pick: the local ones and the remote-tracking
+ * ones.
+ *
+ * The two lists are read the same way and sorted by commit date, so either one
+ * opens on the branches someone is actually working on. Whether a remote branch
+ * is switchable is not a filter applied here: a remote branch is a real choice —
+ * checking it out is what creates the local branch that tracks it — so the page
+ * shows both and the switch decides what to do with each.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @returns the branch list and which one HEAD is on.
+ * @returns the two branch lists and which branch HEAD is on.
  */
 export async function readBranches(target: GitTarget): Promise<BranchesPayload> {
   const repo = await resolveRepo(target)
   if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  // One more than the cap, so a cut list can say that it was cut.
-  const list = await runGit(root, [
-    'for-each-ref', '--sort=-committerdate', `--count=${MAX_BRANCHES + 1}`,
-    '--format=%(refname:short)', 'refs/heads/',
-  ])
-  if (list.code !== 0) return { ok: false, error: failureText(list), reason: 'error' }
-
-  const names = list.stdout.split('\n').map(name => name.trim()).filter(name => name !== '')
-  const truncated = names.length > MAX_BRANCHES
+  const locals = await readRefNames(root, 'refs/heads/')
+  if (!locals.ok) return { ok: false, error: locals.error, reason: 'error' }
+  const remotes = await readRefNames(root, 'refs/remotes/')
+  if (!remotes.ok) return { ok: false, error: remotes.error, reason: 'error' }
 
   const current = await currentBranch(root)
 
@@ -665,27 +709,37 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
     ok: true,
     current,
     detached: current === null,
-    branches: truncated ? names.slice(0, MAX_BRANCHES) : names,
-    truncated,
+    branches: locals.names,
+    remotes: remotes.names,
+    truncated: locals.truncated || remotes.truncated,
   }
 }
 
 /**
- * Switch the working tree to one local branch.
+ * Switch the working tree to one branch.
  *
- * The name is checked against `refs/heads/` first, so only a branch that really
- * exists is ever acted on: a typo becomes "this branch does not exist" instead
- * of Git's remote-guessing or an ambiguous-argument error. The switch itself
- * runs as `git switch`, whose argument is unambiguously a branch rather than a
- * path; Git older than 2.23 does not have that subcommand, and the retry with
- * `checkout` is what keeps those installations working.
+ * The name is a local branch, or a remote-tracking one (`origin/main`). The local
+ * case has always been here: the name is checked against `refs/heads/` first, so
+ * only a branch that really exists is ever acted on, and a typo becomes "this
+ * branch does not exist" instead of Git's remote-guessing or an
+ * ambiguous-argument error. The remote case is the same decision answered by
+ * today's Git: checking out `origin/main` is how the local `main` that tracks it
+ * comes into being, so the name is checked against `refs/remotes/` and the local
+ * branch that tracks it is created — or, when it already exists, switched to,
+ * because that is what the pick meant. The local name is derived here rather
+ * than left to Git's own guess so the exists-check and the branch Git is told to
+ * create can never disagree.
+ *
+ * The switch itself runs as `git switch`, whose argument is unambiguously a
+ * branch rather than a path; Git older than 2.23 does not have that subcommand,
+ * and the retry with `checkout` is what keeps those installations working.
  *
  * This is the one route that writes: a checkout replaces files in the working
  * tree. It is therefore also the one place the session's file policy is
  * load-bearing, and a refusal is reported as such rather than as a Git error.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param name - the branch to check out.
+ * @param name - the local or remote-tracking branch to check out.
  * @returns the outcome, including the reason a switch was refused.
  */
 export async function switchBranch(target: GitTarget, name: string): Promise<CheckoutPayload> {
@@ -696,17 +750,97 @@ export async function switchBranch(target: GitTarget, name: string): Promise<Che
   }
 
   const root = inDir(target, repo.root)
-  const exists = await runGit(
-    root, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`], [0, 1],
-  )
-  if (exists.code !== 0) return { ok: false, error: `分支不存在：${name}`, reason: 'unknown-branch' }
+  if (await refExists(root, `refs/heads/${name}`)) {
+    return switchTo(root, ['switch', name], ['checkout', name], name)
+  }
+  if (!await refExists(root, `refs/remotes/${name}`)) {
+    return { ok: false, error: `分支不存在：${name}`, reason: 'unknown-branch' }
+  }
 
-  let run = await runGit(root, ['switch', name])
+  const local = await localNameForRemote(root, name)
+  if (local === null) {
+    return { ok: false, error: `无法从远程分支推导本地分支名：${name}`, reason: 'error' }
+  }
+  // The local branch may already track this remote: then the pick is a plain
+  // switch, which is also the case where Git's own `--track` would refuse with
+  // "a branch named ... already exists".
+  if (await refExists(root, `refs/heads/${local}`)) {
+    return switchTo(root, ['switch', local], ['checkout', local], local)
+  }
+  return switchTo(
+    root,
+    ['switch', '-c', local, '--track', name],
+    ['checkout', '-b', local, '--track', name],
+    local,
+  )
+}
+
+/**
+ * Run one switch and report it.
+ *
+ * `git switch` arrived in 2.23; on an older Git the same intent is spelled with
+ * `checkout`, which differs in exactly one letter of one option (`-c` against
+ * `-b`), so the caller hands over both spellings rather than this helper
+ * translating an argument list it does not own.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param attempt - the `switch` invocation, subcommand first.
+ * @param fallback - the same invocation for a Git without `switch`.
+ * @param branch - the local branch this switch lands on.
+ * @returns the outcome, including the reason a switch was refused.
+ */
+async function switchTo(
+  root: GitTarget,
+  attempt: readonly string[],
+  fallback: readonly string[],
+  branch: string,
+): Promise<CheckoutPayload> {
+  let run = await runGit(root, attempt)
   if (run.code !== 0 && /switch.*(?:is not a git command|unknown)|unknown (?:option|subcommand)/i.test(run.stderr)) {
-    run = await runGit(root, ['checkout', name])
+    run = await runGit(root, fallback)
   }
   if (run.code !== 0) return checkoutFailure(run)
-  return { ok: true, branch: name }
+  return { ok: true, branch }
+}
+
+/**
+ * Whether one fully-qualified ref resolves.
+ *
+ * `--quiet` with `--verify` answers in the exit code alone, which is the only
+ * question asked here: a name that resolves to nothing and a name that is not a
+ * valid ref at all are the same answer to "may this be switched to".
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param ref - the full ref name to resolve.
+ * @returns true when the ref exists.
+ */
+async function refExists(root: GitTarget, ref: string): Promise<boolean> {
+  const run = await runGit(root, ['rev-parse', '--verify', '--quiet', ref], [0, 1])
+  return run.code === 0
+}
+
+/**
+ * The local branch name a remote-tracking ref is checked out as.
+ *
+ * Git's rule is to strip the remote name, and the remote names are the
+ * configured ones rather than a guess cut out of the ref: a remote may itself
+ * contain a slash, so the longest matching remote is the only correct answer.
+ * No match means no configured remote owns the ref — a stale directory left by a
+ * removed remote — and the caller states that rather than inventing a name.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param ref - the remote-tracking ref, e.g. `origin/feature/x`.
+ * @returns the local name, or null when no configured remote prefixes the ref.
+ */
+async function localNameForRemote(root: GitTarget, ref: string): Promise<string | null> {
+  let best: string | null = null
+  for (const remote of await remotesOf(root)) {
+    if (!ref.startsWith(`${remote}/`)) continue
+    if (best === null || remote.length > best.length) best = remote
+  }
+  if (best === null) return null
+  const local = ref.slice(best.length + 1)
+  return local === '' ? null : local
 }
 
 /**

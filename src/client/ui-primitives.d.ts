@@ -5,11 +5,11 @@
  * boot answers for every client bundle, so it is a runtime `require` this
  * package must not inline (see tsdown.config.ts). The package is not a build
  * dependency here, hence this local declaration: it covers exactly the exports
- * this plugin consumes, mirroring packages/client/ui-primitives/src/Menu.tsx.
+ * this plugin consumes.
  */
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { ReactElement, ReactNode } from 'react'
+  import type { InputHTMLAttributes, KeyboardEventHandler, ReactElement, ReactNode } from 'react'
 
   /** Button visual weight (the subset this plugin uses). */
   export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger'
@@ -35,6 +35,22 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   /** Render the platform's button. */
   export function Button(props: ButtonProps): ReactElement
 
+  /**
+   * Single-line text entry props (the subset this plugin uses).
+   *
+   * Native input attributes pass through to the field itself, `data-modal-autofocus`
+   * included; `className` is the one exception, and lands on the frame around it.
+   */
+  export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'className'> {
+    /** Optional 16px leading icon node, rendered inside the frame before the field. */
+    icon?: ReactNode
+    /** Extra class for the frame element that carries the field's border and fill. */
+    className?: string
+  }
+
+  /** Render the platform's single-line text field. */
+  export function Input(props: InputProps): ReactElement
+
   /** Centered modal dialog props (the subset this plugin uses). */
   export interface ModalProps {
     /** Whether the dialog is showing; a closed dialog renders nothing. */
@@ -51,6 +67,14 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     children?: ReactNode
     /** Action row along the bottom. */
     footer?: ReactNode
+    /** Extra class for the dialog card; how a caller sizes it. */
+    className?: string
+    /**
+     * Key handling on the dialog's whole overlay, ahead of the layer's own Escape
+     * and Tab handling and ahead of anything inside the card: the seam a dialog
+     * with its own keyboard model binds to.
+     */
+    onKeyDownCapture?: KeyboardEventHandler<HTMLDivElement>
     /** Render children directly in the card, without the default chrome. */
     headless?: boolean
     /** Disable the mask blur when the caller already blurs the page. */
@@ -59,71 +83,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
   /** Render a centered, body-portaled modal over a blurred mask. */
   export function Modal(props: ModalProps): ReactElement
-
-  /** Selectable row, optionally with a nested submenu. */
-  export interface MenuItem {
-    id: string
-    label: ReactNode
-    disabled?: boolean
-    /** Leading icon. */
-    icon?: ReactNode
-    /** Destructive row: error-colored text and a danger hover fill. */
-    danger?: boolean
-    /** Nested card opened to the right on hover or focus. */
-    submenu?: readonly MenuItem[]
-  }
-
-  /** Hairline between item groups (not selectable). */
-  export interface MenuSeparator {
-    type: 'separator'
-    id: string
-  }
-
-  /** Non-interactive heading row above a group of items. */
-  export interface MenuLabel {
-    type: 'label'
-    id: string
-    text: string
-  }
-
-  /** One menu entry: a row, a separator, or a heading label. */
-  export type MenuEntry = MenuItem | MenuSeparator | MenuLabel
-
-  /** Anchored dropdown menu props (the subset this plugin uses). */
-  export interface MenuProps {
-    /** Whether the list is showing (owner-controlled). */
-    open: boolean
-    /** The trigger element, rendered in place. */
-    anchor: ReactNode
-    /** Selectable rows and optional separators or labels. */
-    items?: readonly MenuEntry[]
-    /**
-     * Focus the first row on open. Arrow-key navigation works either way, so
-     * this decides only whether the keyboard enters the list by itself.
-     */
-    autoFocus?: boolean
-    /** Row click callback; not called for disabled rows. */
-    onSelect?: (id: string) => void
-    /** Invoked on outside click, Escape, or a window blur that left the document. */
-    onClose: () => void
-    /** List alignment against the anchor. */
-    align?: 'start' | 'end'
-    /** Open below (`bottom`, default), above (`top`), or beside (`right`). */
-    side?: 'bottom' | 'top' | 'right'
-    /** Render into `document.body` with fixed positioning, escaping ancestor clipping. */
-    portal?: boolean
-    /** Row marked as the current one; how it is marked is `selection`. */
-    selectedId?: string | undefined
-    /** Mark the current row with a check glyph, or with the fill alone. */
-    selection?: 'check' | 'fill'
-    /** Extra class on the anchor wrapper (the caller positions; this draws). */
-    className?: string | undefined
-    /** Extra class on the list card. */
-    listClassName?: string | undefined
-  }
-
-  /** Render an anchored dropdown menu. */
-  export function Menu(props: MenuProps): ReactElement
 
   /** Placement of a tooltip bubble relative to its anchor. */
   export type TooltipSide = 'right' | 'bottom' | 'top'
