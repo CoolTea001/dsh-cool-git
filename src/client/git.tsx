@@ -14,7 +14,7 @@
  * whatever it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
- * refused branch switch, a Pull or Push the remote turned down, a read the Host
+ * refused branch switch, a pull or push the remote turned down, a read the Host
  * could not answer, and a transport that never reached the Host all open that
  * dialog, so there is one failure shape no matter how a request went wrong. The
  * one exception is `no-repo`: a directory that is not a repository is the panes'
@@ -135,8 +135,8 @@ interface RouteAnswer {
 /**
  * Everything the error dialog states about one failed action.
  *
- * The dialog is the page's only error report: a refused branch switch, a Pull or
- * Push the remote turned down, a read the Host could not answer, and a transport
+ * The dialog is the page's only error report: a refused branch switch, a pull or
+ * push the remote turned down, a read the Host could not answer, and a transport
  * that never reached the Host all arrive here, so the page has one failure shape
  * to render no matter how a request went wrong. A directory that is not a
  * repository never does — `no-repo` is the panes' own empty state, not a failure.
@@ -605,23 +605,29 @@ function ErrorDialog(props: {
 /**
  * The repository's toolbar, in the order the work happens: the Workspace this
  * session is in, the branch it is on, how far that branch has drifted from its
- * upstream, and then the four operations the page can perform — Pull, Push and
- * a re-read, plus the branch menu itself as the one control that moves HEAD.
+ * upstream, and then the two operations the page can perform — one 同步变更
+ * button and a re-read — plus the branch menu itself as the only control that
+ * moves HEAD.
  *
  * The branch switch is stated as a decision rather than an accident: the menu is
  * the list Git reports, the current branch carries the check, and the choice is
  * applied by the Host through a real checkout. Every control is disabled while
  * any other operation is in flight, so a second click cannot queue a second
- * checkout, pull or push behind the first.
+ * checkout or sync behind the first.
  *
  * The menu is the platform's own dropdown, which owns the parts that are easy to
  * get wrong — anchoring, the focus walk, Escape, outside-click dismissal, and
  * rendering into a portal so a list longer than the sidebar is not clipped by
  * it.
  *
- * The divergence is the row's only read-only text, and it is placed between the
- * branch and the two arrows that resolve it: `↓` behind is what Pull brings,
- * `↑` ahead is what Push sends.
+ * Sync is the round trip taken in the one order that cannot rewind work: a
+ * fast-forward pull, then a push of what is left. Both arrows and both counts
+ * stay inside that single button — `↓` behind is what the pull brings, `↑` ahead
+ * is what the push sends — so the control that states the divergence is the one
+ * that resolves it, and each arrow turns while its own half is in flight. The
+ * button draws those two arrows and nothing else: 同步变更 is the name the
+ * tooltip and the accessible label carry, not a word in the row, which is what
+ * keeps a named operation inside the width a 340px header has left for it.
  *
  * @param props.status - the current status answer, for the branch already on.
  * @param props.sessionId - the session whose repository is being switched.
@@ -682,6 +688,23 @@ function SideHead(props: {
     }
   }, [open, sessionId, onError])
 
+  // What the toolbar's one remote control is allowed to do, read from the answer
+  // the page already has. `reachable` is the repository's own word on whether
+  // there is a branch to move at all; `hasUpstream` is what makes a pull
+  // possible and what the two counts are counted against — a branch with no
+  // upstream has no divergence to report, and the round trip then starts at the
+  // push that records the upstream in the first place. The counts themselves are
+  // drawn on the arrows that resolve them, zeros included, so a number that
+  // appeared and disappeared as commits moved could never make the toolbar jump
+  // under the cursor.
+  const onBranch = status?.ok === true
+  const detached = status?.detached === true
+  const reachable = onBranch && !detached
+  const hasUpstream = reachable && status?.upstream !== undefined
+  const behind = hasUpstream ? status?.behind ?? 0 : null
+  const ahead = hasUpstream ? status?.ahead ?? 0 : null
+  const busy = switching !== null || syncing !== null
+
   const choose = useCallback((branch: string): void => {
     setOpen(false)
     if (branch === current) return
@@ -700,30 +723,55 @@ function SideHead(props: {
   }, [current, sessionId, onSwitched, onError])
 
   /**
-   * Run one remote operation and report its answer.
+   * Run the one round trip the toolbar offers: pull, then push.
    *
-   * A pull and a push differ in exactly two places: which route answers, and
-   * what the page must re-read afterwards. Everything else — the in-flight state
-   * that blocks a second click, the failure dialog, the refresh — is the same
-   * decision, so it is taken once here.
+   * The order is what makes a single button safe. Fast-forwarding first means
+   * the push that follows sends a history the remote already has, so the common
+   * divergence — the remote moved on while this branch did — resolves without a
+   * second click and without the non-fast-forward refusal. A refused pull stops
+   * there instead: the two sides have diverged, and pushing into that is exactly
+   * the refusal the pull has already explained.
+   *
+   * A branch with no upstream skips straight to the push, because there is
+   * nothing to fast-forward from — that push is what records the upstream.
+   *
+   * Every failure is reported once, naming the step that failed, and the page
+   * re-reads either way: even a refusal can leave the divergence stale.
    */
-  const sync = useCallback((action: 'pull' | 'push'): void => {
-    const call = action === 'pull' ? pullBranch : pushBranch
-    const label = action === 'pull' ? 'Pull' : 'Push'
-    setSyncing(action)
-    void call(sessionId).then(result => {
-      setSyncing(null)
+  const sync = useCallback((): void => {
+    /** Send what the pull left behind, and report that half's answer. */
+    const push = (): void => {
+      setSyncing('push')
+      void pushBranch(sessionId).then(result => {
+        setSyncing(null)
+        if (result?.ok !== true) {
+          onError({ title: '推送失败', lines: [reasonOf(result, '推送失败')] })
+        }
+        onSynced()
+      })
+    }
+
+    if (!hasUpstream) {
+      push()
+      return
+    }
+
+    setSyncing('pull')
+    void pullBranch(sessionId).then(result => {
       if (result?.ok !== true) {
-        onError({ title: `${label} 失败`, lines: [reasonOf(result, `${label} 失败`)] })
-        // Even a refusal can leave the answer stale — a rejected push still
-        // tells the user the remote has moved — so the page re-reads either way.
+        setSyncing(null)
+        onError({ title: '拉取失败', lines: [reasonOf(result, '拉取失败')] })
+        // A rejected pull still tells the user the remote has moved, so the
+        // counts are re-read even though nothing was pulled.
         onSynced()
         return
       }
-      if (action === 'pull') onSwitched()
-      else onSynced()
+      // The pull rewrote the working tree, so the diff on screen is stale and is
+      // dropped here — the push that follows moves nothing on disk.
+      onSwitched()
+      push()
     })
-  }, [sessionId, onSwitched, onSynced, onError])
+  }, [hasUpstream, sessionId, onSwitched, onSynced, onError])
 
   const items: MenuEntry[] = []
   if (loading) {
@@ -742,7 +790,6 @@ function SideHead(props: {
     }
   }
 
-  const detached = status?.detached === true
   const label = detached
     ? `HEAD ${status?.head?.short ?? ''}`.trim()
     : status?.branch === undefined || status.branch === ''
@@ -752,18 +799,6 @@ function SideHead(props: {
   // directory with no final segment) draws no glyph either: a lone folder beside
   // nothing would name nothing.
   const workspaceName = status?.workspace?.title ?? workspaceFallback(status)
-
-  // The two counts are shown on the two buttons that resolve them, zeros
-  // included, and only when there is an upstream to count against: a branch with
-  // none has no divergence to report, and a number that appeared and disappeared
-  // as commits moved would make the toolbar jump under the cursor. `↓` is what
-  // Pull brings, `↑` is what Push sends, so each number sits on its own arrow.
-  const onBranch = status?.ok === true
-  const reachable = onBranch && !detached
-  const hasUpstream = reachable && status?.upstream !== undefined
-  const behind = hasUpstream ? status?.behind ?? 0 : null
-  const ahead = hasUpstream ? status?.ahead ?? 0 : null
-  const busy = switching !== null || syncing !== null
 
   return (
     <div className="dsh-cg-side-head">
@@ -816,35 +851,41 @@ function SideHead(props: {
         {/* The tooltip's anchor is the span, not the button: a disabled button
             emits no pointer events, so anchoring on it would lose the hover
             exactly when the bubble has the most to explain. */}
-        <Tooltip label="Pull" side="bottom" portal>
+        {/* One control for both directions of the round trip. The two arrows and
+            their counts stay inside it — each beside its own glyph, each turning
+            while its own half is in flight — so the button that states the
+            divergence is the button that resolves it. No word in the button
+            itself: 同步变更 is this tooltip's label and the button's accessible
+            name. */}
+        <Tooltip label="同步变更" side="bottom" portal>
           <span className="dsh-cg-tip">
             <button
               type="button"
               className="dsh-cg-icon dsh-cg-sync"
-              aria-label="Pull"
-              data-busy={syncing === 'pull'}
-              data-pending={behind !== null && behind > 0}
+              aria-label="同步变更"
+              // No `data-busy` on the button itself: each arrow marks its own
+              // half of the round trip, and one on the button would turn both.
               disabled={!reachable || busy || refreshing}
-              onClick={() => sync('pull')}
+              onClick={sync}
             >
-              {syncing === 'pull' ? SPINNER_ICON : PULL_ICON}
-              {behind === null ? null : <span className="dsh-cg-sync-count">{behind}</span>}
-            </button>
-          </span>
-        </Tooltip>
-        <Tooltip label="Push" side="bottom" portal>
-          <span className="dsh-cg-tip">
-            <button
-              type="button"
-              className="dsh-cg-icon dsh-cg-sync"
-              aria-label="Push"
-              data-busy={syncing === 'push'}
-              data-pending={ahead !== null && ahead > 0}
-              disabled={!reachable || busy || refreshing}
-              onClick={() => sync('push')}
-            >
-              {syncing === 'push' ? SPINNER_ICON : PUSH_ICON}
-              {ahead === null ? null : <span className="dsh-cg-sync-count">{ahead}</span>}
+              <span
+                className="dsh-cg-sync-arrow"
+                data-busy={syncing === 'pull'}
+                data-pending={behind !== null && behind > 0}
+                aria-hidden="true"
+              >
+                {syncing === 'pull' ? SPINNER_ICON : PULL_ICON}
+                {behind === null ? null : <span className="dsh-cg-sync-count">{behind}</span>}
+              </span>
+              <span
+                className="dsh-cg-sync-arrow"
+                data-busy={syncing === 'push'}
+                data-pending={ahead !== null && ahead > 0}
+                aria-hidden="true"
+              >
+                {syncing === 'push' ? SPINNER_ICON : PUSH_ICON}
+                {ahead === null ? null : <span className="dsh-cg-sync-count">{ahead}</span>}
+              </span>
             </button>
           </span>
         </Tooltip>

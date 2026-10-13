@@ -991,8 +991,10 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
 
   if (action === 'push' && /non-fast-forward|fetch first|behind its remote|\[rejected\]/i.test(text)) {
     return {
+      // The one button pulls before it pushes, so this refusal means the remote
+      // moved again between the two halves rather than that nobody pulled.
       ok: false,
-      error: '远程有本地没有的提交，请先 Pull 再 Push',
+      error: '远程在同步过程中又有了新提交，请再同步一次',
       reason: 'diverged',
       action,
     }

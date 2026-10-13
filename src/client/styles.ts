@@ -64,13 +64,16 @@ const GIT_CSS = [
   '.dsh-cg-icon:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-icon:disabled:hover{background:transparent;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-icon svg{width:13px;height:13px;display:block}',
-  // Pull and Push carry the divergence as a number beside their own arrow: the
-  // count and the button that resolves it are one control, so the toolbar holds
-  // no second copy of the same fact. The button widens to take the digits, and
-  // the arrow of a button with something to move is a shade stronger than an
-  // idle one's.
-  '.dsh-cg-sync{width:auto;min-width:22px;gap:3px;padding:0 5px}',
-  '.dsh-cg-sync[data-pending=true]{color:var(--dsw-alias-label-secondary)}',
+  // 同步变更 is the toolbar's one remote control, and inside it sit both halves of
+  // the round trip: each arrow with its divergence count beside it, because the
+  // count and the control that resolves it are one thing. The button widens to
+  // take the digits, and the arrow of a direction with something to move is a
+  // shade stronger than an idle one's. The name is the tooltip's and the
+  // accessible label's, not a word in the row: two arrows and two counts already
+  // fill what a 340px header has left.
+  '.dsh-cg-sync{width:auto;min-width:22px;gap:4px;padding:0 5px}',
+  '.dsh-cg-sync-arrow{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-sync-arrow[data-pending=true]{color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-sync-count{flex:none;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:10.5px;font-variant-numeric:tabular-nums}',
   // The tooltip's anchor is one of these spans, not the button: a disabled
   // button emits no pointer events of its own, so the span is what takes the
@@ -79,16 +82,19 @@ const GIT_CSS = [
   '.dsh-cg-tip:has(.dsh-cg-icon:disabled){cursor:default}',
   '.dsh-cg-tip .dsh-cg-icon:disabled{pointer-events:none}',
   '@keyframes dsh-cg-spin{to{transform:rotate(360deg)}}',
-  // One spin for every glyph that marks a wait: the branch pill and the three
-  // toolbar controls.
-  '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
+  // One spin for every glyph that marks a wait: the branch pill, the two halves
+  // of the sync button, and the refresh control. The sync button's arrows turn
+  // one at a time, which is why the rule names the arrow span and not the
+  // button: spinning the whole button would turn the arrow of the half that is
+  // not running.
+  '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, and the toolbar
-  // — branch, Pull, Push, refresh — on the right, one hairline under both. Each
+  // — branch, 同步变更, refresh — on the right, one hairline under both. Each
   // name carries its own glyph (a directory for the Workspace, a forked commit
   // for the branch), so the row states which is which without either label
-  // having to say it; the three operations are icons rather than words because
-  // the branch pill and three buttons all have to fit a 340px row.
+  // having to say it; the two operations are icons rather than words because the
+  // branch pill and the two buttons all have to fit a 340px row.
   '.dsh-cg-side-head{flex:none;display:flex;align-items:center;gap:6px;height:34px;padding:0 6px 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
   // The Workspace's name is the only part that may give ground: every control to
   // its right has a fixed width, and a name that scrolls out of the row is worse

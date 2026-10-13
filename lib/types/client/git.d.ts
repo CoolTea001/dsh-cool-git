@@ -14,7 +14,7 @@
  * whatever it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
- * refused branch switch, a Pull or Push the remote turned down, a read the Host
+ * refused branch switch, a pull or push the remote turned down, a read the Host
  * could not answer, and a transport that never reached the Host all open that
  * dialog, so there is one failure shape no matter how a request went wrong. The
  * one exception is `no-repo`: a directory that is not a repository is the panes'
