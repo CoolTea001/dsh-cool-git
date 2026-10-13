@@ -152,11 +152,12 @@ const GIT_CSS = [
   '.dsh-cg-branch-group{flex:none;margin-top:8px;padding:0 8px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
   '.dsh-cg-branch-group:first-child{margin-top:0}',
   '.dsh-cg-branch-row{flex:none;display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
-  // One mechanism owns the highlight: the pointer and the keys both move the one
-  // active row, and this is the only rule that paints it — with the same fill a
-  // hover would use. There is deliberately no `:hover` rule beside it, so the row
-  // under a resting pointer cannot stay lit after the arrows have walked away
-  // from it (the terminal tab's completion popup is built the same way).
+  // The row under the pointer and the row that is selected are painted the same
+  // way, on purpose: the fill is the dialog's one "this is the row" colour, so the
+  // selected row keeps reading as selected while the pointer is away on the
+  // footer's buttons. The selection itself is the click's, not the pointer's, so
+  // moving the mouse over a row can never change what 切换 would apply.
+  '.dsh-cg-branch-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
   // One line of the dialog's own state: still reading, a directory that is not a

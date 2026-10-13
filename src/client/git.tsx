@@ -31,13 +31,11 @@ import {
   Fragment,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
   type ReactElement,
   type ReactNode,
 } from 'react'
@@ -913,20 +911,15 @@ const BRANCH_GROUP_LABEL: Readonly<Record<BranchGroup, string>> = {
  * height and carries a filter of its own. The rows are the three groups a branch
  * can come from — 当前分支, 本地分支, 远程分支 — each labelled where it starts, so
  * a remote name is never mistaken for a local one of the same shape and the
- * branch already checked out needs no mark of its own. The click that picks a row
- * therefore selects it and nothing else — the footer's button is what applies the
- * choice, because a checkout rewrites the working tree and a stray click on a
- * scrolling list must not do that.
+ * branch already checked out needs no mark of its own.
  *
- * One row is active at a time, and that index is the only thing the list paints
- * and the only thing a keystroke acts on: the keys walk it with a wrap-around
- * from the branch the dialog opened on, the pointer takes it over by moving onto
- * a row, and Enter applies whichever row it is. The filter keeps the keyboard
- * throughout — the arrows move the highlight rather than the focus — so typing
- * still narrows the list after the arrows have walked it, and a click selects
- * without switching: a checkout rewrites the working tree, so only the footer's
- * button or Enter applies the choice. Escape closes the dialog the way the
- * Modal's own layer does it.
+ * The pointer is the whole of the selection: a click marks one row — the branch
+ * the dialog opened on is marked before anything is clicked — and that mark is
+ * what the footer's button applies. The click itself switches nothing, because a
+ * checkout rewrites the working tree and a stray click on a scrolling list must
+ * not do that. The filter narrows the three groups as it is typed, dropping a
+ * selection it has just hidden, and Escape closes the dialog the way the Modal's
+ * own layer does it.
  *
  * The list is read when the dialog opens, never before and never cached: this is
  * the only question the page asks that the tab's own mount does not already
@@ -1042,100 +1035,28 @@ function BranchDialog(props: {
   }
 
   const shown = shownFor(filter)
-  // The one active row, as an index into `shown`: -1 while nothing is active,
-  // which is also the state a filter with no matches leaves behind. It is the
-  // only thing the list paints and the only thing a keystroke acts on, so the
-  // pointer and the keys can never disagree about which row is lit.
-  const active = picked === null ? -1 : shown.findIndex(row => row.name === picked)
-
-  /** One ref per rendered row, so the active row can be scrolled into view. */
-  const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
-  /** Prefixed onto each row's id, which the filter names as its active option. */
-  const listId = useId()
-
-  // The active row is no longer DOM focus — the filter keeps the keyboard — so
-  // nothing scrolls it into view by itself. `nearest` moves the list as little as
-  // it can: a row already on screen stays exactly where it is.
-  useLayoutEffect(() => {
-    if (active < 0) return
-    rowRefs.current[active]?.scrollIntoView({ block: 'nearest' })
-  }, [active, shown])
 
   /**
    * Whether this branch may be switched to.
    *
-   * The one gate, consulted by the footer's button and by Enter alike: a keyboard
-   * that could press past a disabled button would be a second, quieter way to
-   * check out. Two refusals only — no row active, and the branch already checked
+   * The one gate, consulted by the footer's button: that button is what applies
+   * the choice, so a row the working tree is already on is not a switch it may
+   * offer. Two refusals only — nothing selected, and the branch already checked
    * out — because whether a switch would be accepted is Git's answer, given when
    * the switch is asked for and stated by the error dialog if it is a refusal.
    *
-   * @param name - the branch to judge, or null when no row is active.
+   * @param name - the branch to judge, or null when no row is selected.
    * @returns true when a checkout of that branch may be offered.
    */
   const switchable = (name: string | null): boolean => name !== null && name !== current
-
-  /**
-   * The keys the dialog offers.
-   *
-   * Bound on the whole dialog, and they move the highlight rather than the focus:
-   * the filter keeps the keyboard for as long as the dialog is open, so the next
-   * character still narrows the list after an arrow has walked it. That is the
-   * whole of the interaction — one active row, which the keys walk with a
-   * wrap-around and the pointer takes back by moving over a row — and it is what
-   * the terminal tab's completion popup and the platform's own model picker do,
-   * for the same reason. The walk starts from the active row, not from nothing,
-   * so the branch the dialog opened on is where the first arrow moves away from;
-   * Home and End jump to the ends.
-   *
-   * The dialog rather than the body is the binding site because the keyboard can
-   * end up on the dialog element itself: clicking the card's own background moves
-   * focus there, and those keys never reach the body. Enter is the exception — it
-   * applies the active row only from the search field, so the footer's buttons and
-   * the header's ✕ keep their own activation. Escape is not handled here at all:
-   * the Modal owns it, along with the focus it hands back to the button that
-   * opened the dialog. Tab is left alone as well — the list holds no tab stop of
-   * its own, so the keyboard leaves the filter for the footer's buttons, which is
-   * what keeps a two-hundred-branch list from becoming two hundred tab stops.
-   *
-   * @param event - the dialog's key event.
-   */
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    // An IME owns these keys while it is composing: its arrows walk candidate
-    // words and its Enter commits one, so neither may apply a branch. The
-    // platform's own model picker guards the same way.
-    if (event.nativeEvent.isComposing) return
-
-    if (event.key === 'Enter') {
-      if (!(event.target instanceof HTMLInputElement)) return
-      if (event.repeat || picked === null || !switchable(picked)) return
-      event.preventDefault()
-      onConfirm(picked)
-      return
-    }
-
-    const last = shown.length - 1
-    const next = event.key === 'ArrowDown' ? (active < 0 ? 0 : (active + 1) % shown.length)
-      : event.key === 'ArrowUp' ? (active < 0 ? last : (active - 1 + shown.length) % shown.length)
-        : event.key === 'Home' ? 0
-          : event.key === 'End' ? last
-            : -1
-    // A key the list does not act on, or a filter that matched nothing, is left
-    // to whoever else wants it: the caret the arrows would have moved is still
-    // the filter's own.
-    if (next < 0 || next > last) return
-    event.preventDefault()
-    setPicked(shown[next]?.name ?? null)
-  }
 
   // The dialog's states, with the filter first in the tree that carries one. That
   // order is not cosmetic: the Modal looks for `data-modal-autofocus` in the frame
   // the layer opens the dialog — one render *before* the branches arrive — so a
   // filter that waited for the list would leave the ✕ (the dialog's first
-  // focusable control) holding the keyboard instead, and the arrows would have
-  // nothing to walk. Keeping that one input mounted across the load is also what
-  // lets it keep the focus it was given, and keeps whatever was typed while
-  // reading in it.
+  // focusable control) holding the keyboard instead. Keeping that one input
+  // mounted across the load is also what lets it keep the focus it was given, and
+  // keeps whatever was typed while reading in it.
   let content: ReactNode
   if (noRepo) {
     content = <p className="dsh-cg-dialog-hint">当前会话目录不是 Git 仓库</p>
@@ -1147,13 +1068,6 @@ function BranchDialog(props: {
         <Input
           className="dsh-cg-branch-filter"
           type="text"
-          role="searchbox"
-          // The keyboard never leaves the field, so the row it is walking is named
-          // rather than focused — the same pair the platform's own model picker
-          // puts on its search box, and the reason the arrows keep working after
-          // a character has been typed.
-          aria-controls={listId}
-          aria-activedescendant={active < 0 ? undefined : `${listId}-${active}`}
           value={filter}
           placeholder="搜索分支"
           aria-label="搜索分支"
@@ -1162,13 +1076,14 @@ function BranchDialog(props: {
           // The primitive passes the marker through to the native field, which is
           // the element the layer actually focuses.
           data-modal-autofocus
-          // Narrowing the list puts the active row back on the first match, so
-          // Enter applies the row the list now leads with instead of nothing —
-          // and a filter with no match leaves nothing active, which is honest.
+          // A selection the filter has just hidden is dropped with it: the footer's
+          // button applies the row it can name, and a row the list no longer shows
+          // is not one. A selection that survived the narrowing is kept, so a stray
+          // character does not undo a click.
           onChange={event => {
             const value = event.target.value
             setFilter(value)
-            setPicked(shownFor(value)[0]?.name ?? null)
+            setPicked(shownFor(value).some(row => row.name === picked) ? picked : null)
           }}
         />
         {branches === null
@@ -1176,7 +1091,7 @@ function BranchDialog(props: {
           : shown.length === 0
             ? <p className="dsh-cg-dialog-hint">没有匹配的分支</p>
             : (
-              <div id={listId} className="dsh-cg-branch-list" role="listbox" aria-label="分支">
+              <div className="dsh-cg-branch-list" role="listbox" aria-label="分支">
                 {shown.map((row, index) => (
                   <Fragment key={row.name}>
                     {/* The heading opens each run of rows; the runs are in group
@@ -1186,28 +1101,23 @@ function BranchDialog(props: {
                       ? null
                       : <span role="presentation" className="dsh-cg-branch-group">{BRANCH_GROUP_LABEL[row.group]}</span>}
                     <button
-                      ref={element => { rowRefs.current[index] = element }}
                       type="button"
                       role="option"
-                      id={`${listId}-${index}`}
                       aria-selected={picked === row.name}
-                      // The list holds no tab stop: the filter is the keyboard's
-                      // only seat in this dialog.
+                      // The list holds no tab stop of its own: the rows are picked
+                      // with the pointer, and a two-hundred-branch list must not
+                      // become two hundred tab stops between the filter and the
+                      // footer's buttons.
                       tabIndex={-1}
                       className="dsh-cg-branch-row"
-                      // `move`, not `enter`: a pointer already resting inside a row
-                      // has to take the highlight back the moment it moves after
-                      // the arrows walked away from it, and `enter` has already
-                      // fired by then.
-                      onMouseMove={() => { if (picked !== row.name) setPicked(row.name) }}
                       // Keep the keyboard in the filter: letting the mousedown move
-                      // focus into the row would end the typing that is narrowing
+                      // focus onto the row would end the typing that is narrowing
                       // the list (the terminal tab's completion popup prevents the
                       // same blur for its own keystroke stream).
                       onMouseDown={event => { event.preventDefault() }}
-                      // The pointer selects, it does not switch: a checkout
-                      // rewrites the working tree, so only the footer's button — or
-                      // Enter — applies the choice.
+                      // The click selects, it does not switch: a checkout rewrites
+                      // the working tree, so the footer's button is what applies the
+                      // choice.
                       onClick={() => setPicked(row.name)}
                     >
                       <span className="dsh-cg-branch-row-name">{row.name}</span>
@@ -1237,10 +1147,6 @@ function BranchDialog(props: {
       // tell from its neighbour. The class is the platform's own way of sizing a
       // dialog (its RiskConfirmation does the same).
       className="dsh-cg-branch-dialog"
-      // Bound on the dialog rather than on the body: the layer hands the keyboard
-      // to the filter on open, but a click on the card's own background moves it to
-      // the dialog element, and keys aimed there never reach the body.
-      onKeyDownCapture={onKeyDown}
       footer={(
         <>
           <Button variant="outline" onClick={onClose}>取消</Button>

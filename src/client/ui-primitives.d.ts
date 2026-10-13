@@ -9,7 +9,7 @@
  */
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { InputHTMLAttributes, KeyboardEventHandler, ReactElement, ReactNode } from 'react'
+  import type { InputHTMLAttributes, ReactElement, ReactNode } from 'react'
 
   /** Button visual weight (the subset this plugin uses). */
   export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger'
@@ -69,12 +69,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     footer?: ReactNode
     /** Extra class for the dialog card; how a caller sizes it. */
     className?: string
-    /**
-     * Key handling on the dialog's whole overlay, ahead of the layer's own Escape
-     * and Tab handling and ahead of anything inside the card: the seam a dialog
-     * with its own keyboard model binds to.
-     */
-    onKeyDownCapture?: KeyboardEventHandler<HTMLDivElement>
     /** Render children directly in the card, without the default chrome. */
     headless?: boolean
     /** Disable the mask blur when the caller already blurs the page. */
