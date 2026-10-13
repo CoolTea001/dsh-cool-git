@@ -281,7 +281,29 @@ const GIT_CSS = [
   '.dsh-cg-branch-dialog{width:min(450px,100%)}',
   // Scrolls like the sidebar's two lists, whose rule above states how the
   // platform's bar is kept out of the frame until the pointer is inside.
-  '.dsh-cg-branch-list{display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);margin-top:8px;overflow:auto}',
+  // The scroller is wrapped rather than being the positioned element itself:
+  // the edge fades below have to be siblings of the list — a child of the
+  // scroller would slide away with the rows — so they are pinned to the
+  // wrapper's box and painted after the list. The list keeps its own height
+  // cap, so the wrapper is exactly the visible box.
+  '.dsh-cg-branch-list-wrap{position:relative;display:flex;flex-direction:column;min-height:0;margin-top:8px}',
+  '.dsh-cg-branch-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);overflow:auto}',
+  // The two edge fades, the same rhythm as the 终端 tab's command dialog: a
+  // gradient that dissolves rows into the card's own surface (layer-2 is the
+  // Modal card background), shown only while that edge really hides content,
+  // so a list short enough to fit does not smudge its first row. The height
+  // matches one row (see `.dsh-cg-branch-row`), so the dissolve reads as a
+  // single row rather than a band. `--dsh-cg-fade-right` is the scrollbar
+  // gutter set by the edge-fade effect, so a fade covers the content column
+  // and never washes out the scrollbar; `pointer-events:none` keeps scrolling
+  // and row clicks working where a fade covers a row.
+  '.dsh-cg-branch-fade{position:absolute;left:0;right:var(--dsh-cg-fade-right,0);height:28px;pointer-events:none;opacity:0;transition:opacity .15s ease;z-index:2}',
+  '.dsh-cg-branch-fade-top{top:0;background:linear-gradient(to bottom,var(--dsw-alias-bg-layer-2),rgba(0,0,0,0))}',
+  '.dsh-cg-branch-fade-bottom{bottom:0;background:linear-gradient(to top,var(--dsw-alias-bg-layer-2),rgba(0,0,0,0))}',
+  // The attribute is read on the wrapper, and the rule names that wrapper so a
+  // `[data-fade-*]` another plugin writes on its own scroller cannot reach in.
+  '.dsh-cg-branch-list-wrap[data-fade-top] .dsh-cg-branch-fade-top{opacity:1}',
+  '.dsh-cg-branch-list-wrap[data-fade-bottom] .dsh-cg-branch-fade-bottom{opacity:1}',
   // The heading that opens each run of rows — 当前分支, 本地分支, 远程分支. It sits
   // in the list's own column so the three groups read as one list, and the first
   // one carries no gap above it.
@@ -300,7 +322,8 @@ const GIT_CSS = [
   // repository, no branch at all, a filter that matched nothing. A failure is the
   // error dialog's, so nothing here paints one.
   '.dsh-cg-dialog-hint{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.7}',
-  '.dsh-cg-branch-list+.dsh-cg-dialog-hint{margin-top:8px}',
+  // The 分支过多 line follows the list's wrapper, not the scroller inside it.
+  '.dsh-cg-branch-list-wrap+.dsh-cg-dialog-hint{margin-top:8px}',
 
   // The failure lines the error dialog states, one per request that did not
   // answer. The dialog itself is the platform's Modal, so this is only its body:

@@ -1137,6 +1137,9 @@ function BranchDialog(props: {
   /** The row the dialog is on, which the footer's button then applies. */
   const [picked, setPicked] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  /** The scrolling branch list, and the wrapper its edge fades are pinned to. */
+  const listScroll = useRef<HTMLDivElement | null>(null)
+  const listWrap = useRef<HTMLDivElement | null>(null)
 
   // The cleanup discards a late answer and clears the one already in state, so a
   // reopen starts on 正在读取分支… instead of painting the previous list for the
@@ -1177,6 +1180,45 @@ function BranchDialog(props: {
       setFilter('')
     }
   }, [open, sessionId, onClose, onError])
+
+  /**
+   * The list's edge fades, driven the way the 终端 tab's lists drive theirs.
+   *
+   * A branch list can be two hundred rows long and the card cuts it at a fixed
+   * height, so the two ends are where the dialog has to admit there is more: an
+   * edge fades its rows into the card's own surface only while that edge really
+   * hides some. The attributes are written straight to the wrapper (no
+   * re-render), a scroll listener follows the offset, a ResizeObserver follows
+   * the box, and the scrollbar gutter is recorded so the fade covers the
+   * content column and leaves the bar alone. No dependency list: a filter
+   * keystroke and a fresh branch list both land as commits, and re-running is
+   * what re-reads the new heights.
+   */
+  useEffect(() => {
+    const scroll = listScroll.current
+    const wrap = listWrap.current
+    if (scroll === null || wrap === null) return
+    const update = (): void => {
+      const overflow = scroll.scrollHeight - scroll.clientHeight > 1
+      wrap.toggleAttribute('data-fade-top', overflow && scroll.scrollTop > 1)
+      wrap.toggleAttribute(
+        'data-fade-bottom',
+        overflow && scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 1,
+      )
+      const gutter = `${scroll.offsetWidth - scroll.clientWidth}px`
+      if (wrap.style.getPropertyValue('--dsh-cg-fade-right') !== gutter) {
+        wrap.style.setProperty('--dsh-cg-fade-right', gutter)
+      }
+    }
+    update()
+    scroll.addEventListener('scroll', update, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
+    observer?.observe(scroll)
+    return () => {
+      scroll.removeEventListener('scroll', update)
+      observer?.disconnect()
+    }
+  })
 
   // `null` is the one state that means "no answer yet": an answer that named no
   // branch is an empty list, which is a fact this dialog states rather than a
@@ -1265,39 +1307,48 @@ function BranchDialog(props: {
           : shown.length === 0
             ? <p className="dsh-cg-dialog-hint">没有匹配的分支</p>
             : (
-              <div className="dsh-cg-branch-list" role="listbox" aria-label="分支">
-                {shown.map((row, index) => (
-                  <Fragment key={row.name}>
-                    {/* The heading opens each run of rows; the runs are in group
-                        order already, so a kind that changed since the row above
-                        is where the next one starts. */}
-                    {row.group === shown[index - 1]?.group
-                      ? null
-                      : <span role="presentation" className="dsh-cg-branch-group">{BRANCH_GROUP_LABEL[row.group]}</span>}
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={picked === row.name}
-                      // The list holds no tab stop of its own: the rows are picked
-                      // with the pointer, and a two-hundred-branch list must not
-                      // become two hundred tab stops between the filter and the
-                      // footer's buttons.
-                      tabIndex={-1}
-                      className="dsh-cg-branch-row"
-                      // Keep the keyboard in the filter: letting the mousedown move
-                      // focus onto the row would end the typing that is narrowing
-                      // the list (the terminal tab's completion popup prevents the
-                      // same blur for its own keystroke stream).
-                      onMouseDown={event => { event.preventDefault() }}
-                      // The click selects, it does not switch: a checkout rewrites
-                      // the working tree, so the footer's button is what applies the
-                      // choice.
-                      onClick={() => setPicked(row.name)}
-                    >
-                      <span className="dsh-cg-branch-row-name">{row.name}</span>
-                    </button>
-                  </Fragment>
-                ))}
+              <div className="dsh-cg-branch-list-wrap" ref={listWrap}>
+                <div className="dsh-cg-branch-list" role="listbox" aria-label="分支" ref={listScroll}>
+                  {shown.map((row, index) => (
+                    <Fragment key={row.name}>
+                      {/* The heading opens each run of rows; the runs are in group
+                          order already, so a kind that changed since the row above
+                          is where the next one starts. */}
+                      {row.group === shown[index - 1]?.group
+                        ? null
+                        : <span role="presentation" className="dsh-cg-branch-group">{BRANCH_GROUP_LABEL[row.group]}</span>}
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={picked === row.name}
+                        // The list holds no tab stop of its own: the rows are picked
+                        // with the pointer, and a two-hundred-branch list must not
+                        // become two hundred tab stops between the filter and the
+                        // footer's buttons.
+                        tabIndex={-1}
+                        className="dsh-cg-branch-row"
+                        // Keep the keyboard in the filter: letting the mousedown move
+                        // focus onto the row would end the typing that is narrowing
+                        // the list (the terminal tab's completion popup prevents the
+                        // same blur for its own keystroke stream).
+                        onMouseDown={event => { event.preventDefault() }}
+                        // The click selects, it does not switch: a checkout rewrites
+                        // the working tree, so the footer's button is what applies the
+                        // choice.
+                        onClick={() => setPicked(row.name)}
+                      >
+                        <span className="dsh-cg-branch-row-name">{row.name}</span>
+                      </button>
+                    </Fragment>
+                  ))}
+                </div>
+                {/* The fades are siblings of the scroller, never children of it:
+                    pinned to the visible box so the rows slide under them, and
+                    painted over the rows only while the wrapper carries the
+                    matching data attribute (see the edge-fade effect above).
+                    Empty spans — no layout. */}
+                <span className="dsh-cg-branch-fade dsh-cg-branch-fade-top" aria-hidden="true" />
+                <span className="dsh-cg-branch-fade dsh-cg-branch-fade-bottom" aria-hidden="true" />
               </div>
             )}
         {truncated
