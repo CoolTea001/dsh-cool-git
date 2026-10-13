@@ -13,8 +13,11 @@
  *    is mounted: Chat, 轨迹 and 终端 keep their composer untouched, and the rule
  *    disappears with the View.
  *
- * 2. The page itself: a fixed sidebar of two stacked panes (变更文件区 above
- *    提交历史) beside a scrollable Diff 查看区.
+ * 2. The page itself: a sidebar of two stacked panes (变更文件区 above
+ *    提交历史) beside a scrollable Diff 查看区. Both of the sidebar's boundaries —
+ *    its right edge and the divider between the panes — are dragged, and the
+ *    bounds they move within are imported from `layout.ts` rather than restated,
+ *    so the width a drag may reach and the width a rule allows cannot drift apart.
  *
  * Every color is a `--dsw-*` theme token, so the tab follows the active light
  * or dark appearance — including third-party theme presets — instead of forcing

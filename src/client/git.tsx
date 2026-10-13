@@ -1,17 +1,19 @@
 /**
  * The Git conversation view.
  *
- * The page is the whole of the tab: a fixed sidebar carrying 变更文件区 above
- * 提交历史, and a Diff 查看区 taking every remaining pixel. Changed paths come
- * from `git status`, the history from `git log`, and the diff pane shows either
- * one path's patch against HEAD or one commit's whole patch (see `api.ts` for
- * the routes and `diff.ts` for the patch parser).
+ * The page is the whole of the tab: a sidebar carrying 变更文件区 above 提交历史,
+ * and a Diff 查看区 taking every remaining pixel. Changed paths come from
+ * `git status`, the history from `git log`, and the diff pane shows either one
+ * path's patch against HEAD or one commit's whole patch (see `api.ts` for the
+ * routes and `diff.ts` for the patch parser). Both of the sidebar's boundaries —
+ * its right edge and the divider between the two lists — are the reader's to
+ * drag, and both sizes are remembered between visits (see `layout.ts`).
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
- * answer is current, and which failure the dialog is stating. That keeps a manual
- * refresh honest — it re-reads `status` and `log`, and the diff pane re-reads
- * whatever it is showing.
+ * answer is current, which failure the dialog is stating, and where the two
+ * boundaries were left. That keeps a manual refresh honest — it re-reads `status`
+ * and `log`, and the diff pane re-reads whatever it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
@@ -44,6 +46,16 @@ import { checkoutBranch, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchS
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
 import { IconBranch, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
+import {
+  clampFilesHeight,
+  clampSideWidth,
+  readLayout,
+  ResizeHandle,
+  shareOf,
+  writeLayout,
+  type GitLayout,
+  type ResizeAxis,
+} from './layout.js'
 import { GIT_ROOT_CLASS } from './styles.js'
 import type {
   ChangedFile,
@@ -344,6 +356,9 @@ const PAGE: CSSProperties = {
  */
 export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
   const page = useRef<HTMLDivElement | null>(null)
+  /** The sidebar itself, and the 变更文件区 pane at the top of it. */
+  const side = useRef<HTMLElement | null>(null)
+  const filesPane = useRef<HTMLElement | null>(null)
   const sessionId = typeof props?.sessionId === 'string' ? props.sessionId : undefined
 
   const [status, setStatus] = useState<StatusPayload | null>(null)
@@ -354,11 +369,124 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
   const [doc, setDoc] = useState<DocState | null>(null)
   /** The failure the dialog is stating, or null while none is open. */
   const [error, setError] = useState<GitError | null>(null)
+  /** The two boundaries' sizes, read from storage before the first paint. */
+  const [layout, setLayout] = useState<GitLayout>(readLayout)
+  /** The boundary a drag is holding, or null at rest. */
+  const [resizing, setResizing] = useState<ResizeAxis | null>(null)
 
   // Layout effect, not a passive one: the composer seat is already in the tree
   // when this View mounts, and a passive effect would paint one frame of an
   // input this page cannot use.
   useLayoutEffect(() => suppressComposerSeat(page.current), [])
+
+  /**
+   * Draw one layout: the page's two boundaries, as custom properties on the root.
+   *
+   * The sizes live on the root rather than in each element's own inline style for
+   * two reasons. A drag can then move them from the pointer without rendering
+   * React — the Diff pane holds thousands of rows, and a render per pointer frame
+   * would cost all of them — and one publish states both panes' shares together,
+   * so the divider between them can never be drawn from two different layouts.
+   */
+  const publish = useCallback((next: GitLayout): void => {
+    const root = page.current
+    if (root === null) return
+    root.style.setProperty('--dsh-cg-side-width', `${next.sideWidth}px`)
+    root.style.setProperty('--dsh-cg-files-grow', `${next.filesShare}`)
+    root.style.setProperty('--dsh-cg-history-grow', `${1 - next.filesShare}`)
+  }, [])
+
+  // Before the first paint, not after: the stylesheet's own fallback is the
+  // default layout, and a saved boundary must not be drawn at the default for one
+  // frame and then jump to where it was left.
+  useLayoutEffect(() => {
+    publish(layout)
+  }, [layout, publish])
+
+  /**
+   * Record one layout: what the page draws from, and what it saves.
+   *
+   * The two are written together on purpose. A size drawn but not saved is one the
+   * next visit forgets; a size saved but not drawn is a drag that looks like it did
+   * nothing until the tab is reopened.
+   */
+  const record = useCallback((next: GitLayout): void => {
+    setLayout(next)
+    writeLayout(next)
+  }, [])
+
+  /** The page's own width, which is the room the sidebar and the Diff pane share. */
+  const available = useCallback((): number => page.current?.getBoundingClientRect().width ?? 0, [])
+
+  /** The vertical run the two sidebar panes share, below the toolbar row. */
+  const trackHeight = useCallback((): number => {
+    const host = side.current
+    const first = filesPane.current
+    if (host === null || first === null) return 0
+    return host.getBoundingClientRect().bottom - first.getBoundingClientRect().top
+  }, [])
+
+  /**
+   * Where the sidebar's edge is, as a drag starts.
+   *
+   * Measured off the box rather than read from the layout: the stylesheet is what
+   * clamps a saved width to the window it is drawn in, so the edge on screen — not
+   * the preference behind it — is where the pointer has actually taken hold.
+   */
+  const startSideResize = useCallback((): number => {
+    setResizing('col')
+    return side.current?.getBoundingClientRect().width ?? layout.sideWidth
+  }, [layout.sideWidth])
+
+  /** Draw the sidebar width the pointer implies, for this frame. */
+  const dragSideResize = useCallback((width: number): void => {
+    const root = page.current
+    const room = available()
+    if (root === null || room <= 0) return
+    root.style.setProperty('--dsh-cg-side-width', `${clampSideWidth(width, room)}px`)
+  }, [available])
+
+  /** Record the sidebar width the gesture settled on. */
+  const commitSideResize = useCallback((width: number): void => {
+    setResizing(null)
+    const room = available()
+    if (room <= 0) return
+    record({ ...layout, sideWidth: clampSideWidth(width, room) })
+  }, [available, layout, record])
+
+  /** Where the divider between the panes is, as a drag starts: the upper pane's height. */
+  const startSplitResize = useCallback((): number => {
+    setResizing('row')
+    return filesPane.current?.getBoundingClientRect().height ?? layout.filesShare * trackHeight()
+  }, [layout.filesShare, trackHeight])
+
+  /** Draw the split the pointer implies, for this frame. */
+  const dragSplitResize = useCallback((height: number): void => {
+    const root = page.current
+    const track = trackHeight()
+    if (root === null || track <= 0) return
+    const share = shareOf(clampFilesHeight(height, track), track)
+    root.style.setProperty('--dsh-cg-files-grow', `${share}`)
+    root.style.setProperty('--dsh-cg-history-grow', `${1 - share}`)
+  }, [trackHeight])
+
+  /** Record the split the gesture settled on. */
+  const commitSplitResize = useCallback((height: number): void => {
+    setResizing(null)
+    const track = trackHeight()
+    if (track <= 0) return
+    record({ ...layout, filesShare: shareOf(clampFilesHeight(height, track), track) })
+  }, [layout, record, trackHeight])
+
+  /**
+   * A gesture that produced no size — a click on a boundary, or a pointer lost
+   * mid-drag — draws the recorded layout again, so the preview a cancelled drag
+   * left on screen cannot outlive the gesture.
+   */
+  const endResize = useCallback((): void => {
+    setResizing(null)
+    publish(layout)
+  }, [layout, publish])
 
   /** Open the error dialog on one failed action. */
   const reportError = useCallback((next: GitError): void => {
@@ -470,9 +598,13 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
       // declare: the shell then drops the transcript width handles and gives
       // this View the whole conversation body.
       data-conversation-composer-overlay=""
+      // One attribute for "a boundary is being dragged", which is how the whole
+      // page keeps the drag's cursor and stops selecting text under the pointer.
+      // Absent at rest, so the rules it turns on cost nothing the rest of the time.
+      data-resizing={resizing ?? undefined}
       style={PAGE}
     >
-      <aside className="dsh-cg-side">
+      <aside ref={side} className="dsh-cg-side">
         <SideHead
           status={status}
           sessionId={sessionId}
@@ -482,7 +614,11 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
           onSynced={handleSynced}
           onError={reportError}
         />
-        <section className="dsh-cg-pane">
+        {/* The upper pane owns the divider under it: the boundary is what its own
+            height is measured to, and the handle is placed on that pane's bottom
+            edge rather than between the panes, so the split takes no layout of its
+            own and the panes stay the only flow children of the column. */}
+        <section ref={filesPane} className="dsh-cg-pane dsh-cg-files">
           <header className="dsh-cg-head">
             <span className="dsh-cg-head-title">变更文件区</span>
             {files.length > 0 ? <span className="dsh-cg-count">{files.length}</span> : null}
@@ -496,9 +632,16 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
               onSelect={file => setSelection({ kind: 'file', file })}
             />
           </div>
+          <ResizeHandle
+            axis="row"
+            onStart={startSplitResize}
+            onDrag={dragSplitResize}
+            onCommit={commitSplitResize}
+            onEnd={endResize}
+          />
         </section>
 
-        <section className="dsh-cg-pane">
+        <section className="dsh-cg-pane dsh-cg-history">
           <header className="dsh-cg-head">
             <span className="dsh-cg-head-title">提交历史</span>
             {commits.length > 0 ? <span className="dsh-cg-count">{commits.length}</span> : null}
@@ -513,6 +656,16 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
             />
           </div>
         </section>
+
+        {/* The sidebar's own right edge, which is the boundary its width is
+            measured to. */}
+        <ResizeHandle
+          axis="col"
+          onStart={startSideResize}
+          onDrag={dragSideResize}
+          onCommit={commitSideResize}
+          onEnd={endResize}
+        />
       </aside>
 
       <main className="dsh-cg-main">
@@ -589,7 +742,8 @@ function ErrorDialog(props: {
  * that resolves it, and each arrow turns while its own half is in flight. The
  * button draws those two arrows and nothing else: 同步变更 is the name the
  * tooltip and the accessible label carry, not a word in the row, which is what
- * keeps a named operation inside the width a 340px header has left for it.
+ * keeps a named operation inside the width the sidebar's own floor has left for
+ * the row.
  *
  * Publish takes Sync's place on a branch with no upstream, because that branch
  * has no divergence to state and no pull to take: what it needs is the push that

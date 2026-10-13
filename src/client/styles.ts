@@ -13,8 +13,11 @@
  *    is mounted: Chat, 轨迹 and 终端 keep their composer untouched, and the rule
  *    disappears with the View.
  *
- * 2. The page itself: a fixed sidebar of two stacked panes (变更文件区 above
- *    提交历史) beside a scrollable Diff 查看区.
+ * 2. The page itself: a sidebar of two stacked panes (变更文件区 above
+ *    提交历史) beside a scrollable Diff 查看区. Both of the sidebar's boundaries —
+ *    its right edge and the divider between the panes — are dragged, and the
+ *    bounds they move within are imported from `layout.ts` rather than restated,
+ *    so the width a drag may reach and the width a rule allows cannot drift apart.
  *
  * Every color is a `--dsw-*` theme token, so the tab follows the active light
  * or dark appearance — including third-party theme presets — instead of forcing
@@ -22,6 +25,8 @@
  * dedicated diff tokens, which is what makes the diff read the same as the
  * diffs the tool cards already draw.
  */
+
+import { DIFF_MIN, PANE_MIN, SIDE_DEFAULT, SIDE_MAX, SIDE_MIN } from './layout.js'
 
 /** Class the Git View renders on its root; the stylesheet's only anchor. */
 export const GIT_ROOT_CLASS = 'dsh-cg-root'
@@ -37,18 +42,69 @@ const GIT_CSS = [
 
   // 2. Page layout.
   //
-  // The sidebar is a fixed column so the diff pane keeps every remaining pixel
-  // and its own scroll position; `min-height:0` on all three levels is what
-  // lets the inner lists scroll instead of stretching the page. `flex:1 1 auto`
-  // in addition to the View's inline `height:100%` keeps the page full-height
-  // whichever way the shell's own wrapper hands the body over.
+  // The sidebar is a column fixed to the width the reader dragged it to, so the
+  // diff pane keeps every remaining pixel and its own scroll position; an explicit
+  // `min-height` at every level — `0` where a box has to be free to shrink, 96px at
+  // the two panes' own floor — is what lets the inner lists scroll instead of
+  // stretching the page. `flex:1 1 auto` in addition to the View's inline
+  // `height:100%` keeps the page full-height whichever way the shell's own wrapper
+  // hands the body over.
   `.${GIT_ROOT_CLASS}{display:flex;flex:1 1 auto;flex-direction:row;box-sizing:border-box;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family,sans-serif);font-size:12.5px;line-height:1.5}`,
   `.${GIT_ROOT_CLASS} *{box-sizing:border-box}`,
-  '.dsh-cg-side{flex:none;display:flex;flex-direction:column;width:340px;min-width:0;min-height:0;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}',
-  // Equal halves, as the design's divider shows: `flex-basis:0` is what makes
-  // the two panes share the column evenly instead of by content length.
-  '.dsh-cg-pane{display:flex;flex-direction:column;flex:1 1 0;min-height:0}',
+  // The sidebar's width is the drag's to set: one custom property the page
+  // publishes on its root (see `layout.ts`), with the default width as the rule's
+  // own fallback, so the first frame — before a saved layout has been read — is
+  // already a whole page. The floor and the cap restate the drag's bounds, and
+  // they are what keeps a width saved in a wide window from squeezing the Diff
+  // pane in a narrow one.
+  `.dsh-cg-side{position:relative;flex:none;display:flex;flex-direction:column;width:var(--dsh-cg-side-width,${SIDE_DEFAULT}px);min-width:${SIDE_MIN}px;max-width:min(${SIDE_MAX}px,calc(100% - ${DIFF_MIN}px));min-height:0;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}`,
+  // The two panes are shares of the column rather than fixed heights: the split is
+  // saved as a share, so a window that grows makes both lists longer instead of
+  // leaving one at a height that no longer fits. `flex-basis:0` is what makes the
+  // two panes split by those shares instead of by their content, and `min-height`
+  // is the floor the drag states too — a window too short for both floors overflows
+  // the sidebar, which is the honest end of a column that cannot hold two lists.
+  `.dsh-cg-pane{display:flex;flex-direction:column;flex:1 1 0;min-height:${PANE_MIN}px}`,
+  '.dsh-cg-files{position:relative;flex-grow:var(--dsh-cg-files-grow,1)}',
+  '.dsh-cg-history{flex-grow:var(--dsh-cg-history-grow,1)}',
   '.dsh-cg-pane+.dsh-cg-pane{border-top:1px solid var(--dsw-alias-border-l1)}',
+  // The two boundaries themselves. Each is the 1px line the panes already draw,
+  // with an invisible band around it as the hit target: the handle element is 1px
+  // wide so that it can sit exactly on the border, and its `::after` reaches 4px
+  // either side, because a 1px line is not something a pointer can be asked to
+  // hold. Neither handle takes any layout space — one is positioned on the
+  // sidebar's own edge, the other on the upper pane's bottom edge — so adding them
+  // moves nothing on the page.
+  //
+  // `::before` is the indicator: the line brightens towards its middle on hover and
+  // stays lit for the length of a drag, which is what makes a boundary read as
+  // draggable at rest. The geometry and the gradient are DSH's own pane divider's
+  // (`client/ui-dockkit`), so a divider here looks like every other one in the app.
+  '.dsh-cg-resize{position:absolute;z-index:2;touch-action:none}',
+  '.dsh-cg-resize::before{content:"";position:absolute;opacity:0;transition:opacity .12s ease-out}',
+  '.dsh-cg-resize::after{content:"";position:absolute}',
+  '.dsh-cg-resize:hover::before,.dsh-cg-resize[data-dragging]::before{opacity:1}',
+  // The sidebar's right edge: the handle sits on the border itself (`right:-1px`
+  // is the padding box plus its 1px border), so the line it lights up is the line
+  // that is already drawn there.
+  '.dsh-cg-col-resize{top:0;right:-1px;bottom:0;width:1px;cursor:col-resize}',
+  '.dsh-cg-col-resize::after{inset:0 -4px}',
+  '.dsh-cg-col-resize::before{inset:0;background:linear-gradient(to bottom,transparent,var(--dsw-alias-label-caption) 50%,transparent) center / 1px 100% no-repeat}',
+  // The divider between the panes: the same line, reached from the upper pane and
+  // covering the lower pane's own top border.
+  '.dsh-cg-row-resize{right:0;bottom:-1px;left:0;height:1px;cursor:row-resize}',
+  '.dsh-cg-row-resize::after{inset:-4px 0}',
+  '.dsh-cg-row-resize::before{inset:0;background:linear-gradient(to right,transparent,var(--dsw-alias-label-caption) 50%,transparent) center / 100% 1px no-repeat}',
+  // While a boundary is being dragged the whole page takes that axis's cursor and
+  // stops selecting text: the pointer leaves a 1px line at the first frame of a
+  // vertical drag, and a cursor that changed as it crossed a row would say the
+  // gesture had ended. Both rules are stated on the page root rather than on the
+  // handle because the pointer is usually over neither; a control that states a
+  // cursor of its own more specifically (a disabled toolbar button) keeps it, which
+  // is the same trade the platform's own dividers make.
+  `.${GIT_ROOT_CLASS}[data-resizing],.${GIT_ROOT_CLASS}[data-resizing] *{user-select:none}`,
+  `.${GIT_ROOT_CLASS}[data-resizing=col],.${GIT_ROOT_CLASS}[data-resizing=col] *{cursor:col-resize}`,
+  `.${GIT_ROOT_CLASS}[data-resizing=row],.${GIT_ROOT_CLASS}[data-resizing=row] *{cursor:row-resize}`,
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.dsh-cg-count{flex:none;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:500;line-height:15px}',
@@ -70,9 +126,9 @@ const GIT_CSS = [
   // it are one thing. The button widens to take the digits, and the arrow of a
   // direction with something to move is a shade stronger than an idle one's. The
   // name is the tooltip's and the accessible label's, not a word in the row: two
-  // arrows and two counts already fill what a 340px header has left. Where there
-  // is no upstream this button is not drawn at all — 发布分支 takes its place as
-  // an ordinary single-glyph control.
+  // arrows and two counts already fill what the sidebar's own floor has left.
+  // Where there is no upstream this button is not drawn at all — 发布分支 takes
+  // its place as an ordinary single-glyph control.
   '.dsh-cg-sync{width:auto;min-width:22px;gap:4px;padding:0 5px}',
   '.dsh-cg-sync-arrow{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-sync-arrow[data-pending=true]{color:var(--dsw-alias-label-secondary)}',
@@ -96,7 +152,8 @@ const GIT_CSS = [
   // both. Each name carries its own glyph (a directory for the Workspace, a
   // forked commit for the branch), so the row states which is which without
   // either label having to say it; the two operations are icons rather than words
-  // because the branch pill and the two buttons all have to fit a 340px row.
+  // because the branch pill and the two buttons all have to fit the row at its
+  // narrowest, which is the sidebar's own floor.
   '.dsh-cg-side-head{flex:none;display:flex;align-items:center;gap:6px;height:34px;padding:0 6px 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
   // The Workspace's name is the only part that may give ground: every control to
   // its right has a fixed width, and a name that scrolls out of the row is worse
