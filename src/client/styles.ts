@@ -109,6 +109,19 @@ const GIT_CSS = [
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.dsh-cg-count{flex:none;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:500;line-height:15px}',
   '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 6px 8px}',
+  // Every list the tab scrolls — the sidebar's two panes here, and the branch
+  // dialog's list below, which states the same binding by sharing this
+  // selector — keeps the platform's bar out of the frame until the pointer is
+  // inside it. The platform paints a bar for any scrollport that overflows, and
+  // a stripe standing in a pane (or in a dialog this narrow) is chrome no one
+  // asked to keep: the thumb is bound to `transparent` and rebound to the
+  // platform's own dialog-level colour while the pointer is inside the list, so
+  // the bar arrives with the pointer and leaves with it. Only a colour is
+  // rebound — the bar is the same width hidden or shown, so the rows do not
+  // shift as the pointer crosses the list's edge, and the thumb is there to be
+  // grabbed the moment it is painted.
+  '.dsh-cg-list,.dsh-cg-branch-list{--dsh-scrollbar-thumb:transparent;--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+  '.dsh-cg-list:hover,.dsh-cg-branch-list:hover{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2)}',
 
   // Toolbar buttons are plain buttons rather than the shared primitive: the tab
   // needs a few of them, and the token-driven states below are the whole of what
@@ -265,7 +278,9 @@ const GIT_CSS = [
   // one name to the eye, so the card is widened past the platform's default. The
   // card is not height-capped here: the list below is what gives ground on a
   // short window, in `min()` with a viewport share.
-  '.dsh-cg-branch-dialog{width:min(560px,100%)}',
+  '.dsh-cg-branch-dialog{width:min(450px,100%)}',
+  // Scrolls like the sidebar's two lists, whose rule above states how the
+  // platform's bar is kept out of the frame until the pointer is inside.
   '.dsh-cg-branch-list{display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);margin-top:8px;overflow:auto}',
   // The heading that opens each run of rows — 当前分支, 本地分支, 远程分支. It sits
   // in the list's own column so the three groups read as one list, and the first
