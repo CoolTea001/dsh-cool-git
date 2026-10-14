@@ -176,6 +176,27 @@ export interface CommitPayload {
     readonly merge?: boolean;
 }
 /**
+ * `POST /commit-all`: one commit made out of every change the working tree has.
+ *
+ * The page asks for this in one request because staging and committing are one
+ * decision here: the tab lists changes and commits all of them, so an index left
+ * half-staged between two answers would be a state nothing on the page could
+ * name or undo.
+ */
+export interface CommitAllPayload {
+    readonly ok: boolean;
+    readonly error?: string;
+    /**
+     * Why no commit was made, when the page can act on it: there is no repository,
+     * the session may not write, there was nothing to commit, or the tree still
+     * holds an unresolved conflict — which `git add -A` would otherwise stage,
+     * markers and all.
+     */
+    readonly reason?: 'no-repo' | 'error' | 'denied' | 'clean' | 'conflict';
+    /** The commit that was just created, once it succeeded. */
+    readonly commit?: CommitSummary;
+}
+/**
  * Collapse one porcelain `XY` pair into the single label the sidebar shows.
  *
  * The worktree column wins when it says anything: a path staged as added and

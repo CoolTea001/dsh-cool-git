@@ -1,5 +1,5 @@
 /**
- * The Host half's Git reader, and its three writers.
+ * The Host half's Git reader, and its four writers.
  *
  * Every fact about the repository is produced by running the real `git` binary
  * through the `shell` capability seam — never by reading `.git` by hand. That
@@ -12,10 +12,12 @@
  * under a `workspace-write` session — and refuse the very writes the session
  * allows.
  *
- * Reading is the bulk of this module. Three commands change something — the
- * branch switch, the fast-forward pull, and the push — and each reports a
- * sandbox refusal as such rather than as a Git error, because under a
- * `read-only` mode that refusal is the whole answer.
+ * Reading is the bulk of this module. Four commands change something — the
+ * branch switch, the fast-forward pull, the push, and the commit — and each
+ * reports a sandbox refusal as such rather than as a Git error, because under a
+ * `read-only` mode that refusal is the whole answer. The commit is the one that
+ * writes the index as well as the history, which is why it is a single call
+ * rather than a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -39,6 +41,7 @@ import {
   type BranchesPayload,
   type ChangedFile,
   type CheckoutPayload,
+  type CommitAllPayload,
   type CommitPayload,
   type CommitSummary,
   type DiffPayload,
@@ -1135,6 +1138,96 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
   }
 
   return { ok: false, error: failureText(run), reason: 'error', action }
+}
+
+/**
+ * Stage every change and commit it under one message.
+ *
+ * The tree is read before it is touched, and both refusals that matter come out
+ * of that read. A tree with nothing in it is not a commit that Git would fail to
+ * make — "nothing to commit" is a state, and the answer says so as one. And a
+ * tree holding an unmerged path is refused before `git add -A` runs: staging a
+ * conflicted file resolves it as far as Git is concerned, so a commit made then
+ * would record conflict markers as the resolution, which is a commit nobody can
+ * mean and one this page has no way to take back.
+ *
+ * What is committed is deliberately everything the page is listing — tracked
+ * edits, deletions, and untracked files alike — because that is the one decision
+ * the form offers. The message is the route's to validate; by the time it
+ * arrives here it is non-empty text.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param message - the commit message, already trimmed and checked by the route.
+ * @returns the outcome, including the reason a commit did not happen.
+ */
+export async function commitAll(target: GitTarget, message: string): Promise<CommitAllPayload> {
+  const repo = await resolveRepo(target)
+  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+  if (status.code !== 0) return { ok: false, error: failureText(status), reason: 'error' }
+
+  const files = parseStatus(status.stdout).files
+  if (files.length === 0) return emptyCommit()
+  if (files.some(file => file.conflicted)) return conflictedCommit()
+
+  // `-A` is what makes the two halves one decision: it stages a new path, a
+  // deletion, and an edit in the same pass, from the repository root, whatever
+  // the session's own directory is.
+  const add = await runGit(root, ['add', '-A'])
+  if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
+  if (add.code !== 0) return commitFailure(add)
+
+  // No `--no-verify`: a repository's own hooks are part of what committing to it
+  // means, and a hook that refuses is reported as the refusal it is.
+  const commit = await runGit(root, ['commit', '-m', message])
+  if (commit.failure !== undefined) return { ok: false, error: commit.failure, reason: 'error' }
+  if (commit.code !== 0) return commitFailure(commit)
+
+  // The commit Git just wrote, read back the same way the history reads one. A
+  // failure here is not a failed commit — the commit is already made — so the
+  // answer stays a success and simply names nothing.
+  const made = await runGit(root, ['log', '-1', `--pretty=format:${LOG_FORMAT}`])
+  if (made.code !== 0) return { ok: true }
+  const summary = parseSummary(made.stdout.split(FIELD))
+  return summary === undefined ? { ok: true } : { ok: true, commit: summary }
+}
+
+/** The answer for a tree that holds nothing to commit. */
+function emptyCommit(): CommitAllPayload {
+  return { ok: false, error: '工作区没有需要提交的改动', reason: 'clean' }
+}
+
+/** The answer for a tree whose merge is not finished. */
+function conflictedCommit(): CommitAllPayload {
+  return { ok: false, error: '存在未解决的冲突文件，请先解决冲突再提交', reason: 'conflict' }
+}
+
+/**
+ * Describe why staging or the commit itself was refused.
+ *
+ * The sandbox is the refusal the user can act on: under a `read-only` mode Git
+ * never ran at all, and the seam is what says so. The other two cases worth
+ * separating are races against the read above — a merge that was aborted after
+ * it, and a tree another process emptied — which that reading already knows how
+ * to name. Everything else, a refusing hook and a signing failure among them, is
+ * Git's own first line, which is more specific than anything this half could
+ * invent.
+ *
+ * @param run - the failed invocation.
+ * @returns the payload the page renders.
+ */
+function commitFailure(run: GitRun): CommitAllPayload {
+  if (run.denied === true) {
+    return { ok: false, error: '当前权限模式不允许提交：该操作需要写入工作区', reason: 'denied' }
+  }
+
+  const text = diagnosticText(run)
+  if (/unmerged|merging is not possible|you have unmerged files/i.test(text)) return conflictedCommit()
+  if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(text)) return emptyCommit()
+
+  return { ok: false, error: failureText(run), reason: 'error' }
 }
 
 /**

@@ -174,13 +174,14 @@ const GIT_CSS = [
   '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
-  // beside it, and then the one control the row keeps — 刷新 — one hairline under
-  // all of them. Each name carries its own glyph (a directory for the Workspace, a
-  // forked commit for the branch), so the row states which is which without either
-  // label having to say it; the operation is an icon rather than a word because the
-  // controls have to fit the row at its narrowest, which is the sidebar's own floor.
-  // The remote control is not here: it lives in 提交历史's header, beside the
-  // commits it moves.
+  // beside it, and then the one control the row keeps — 刷新. It draws no rule of
+  // its own: the toolbar and the commit form below it are one block of the column,
+  // closed together by the form's own hairline (see `.dsh-cg-commit-bar`). Each
+  // name carries its own glyph (a directory for the Workspace, a forked commit for
+  // the branch), so the row states which is which without either label having to
+  // say it; the operation is an icon rather than a word because the controls have
+  // to fit the row at its narrowest, which is the sidebar's own floor. The remote
+  // control is not here: it lives in 提交历史's header, beside the commits it moves.
   //
   // Two of the row's parts may give ground, and the branch's name goes first: the
   // pill is the row's own item rather than a member of the group beside it, because
@@ -188,7 +189,7 @@ const GIT_CSS = [
   // group would have been the group's own floor, and the Workspace's name would
   // have gone on being the only part that shortened, with the branch keeping a name
   // the row could not afford.
-  '.dsh-cg-side-head{flex:none;display:flex;align-items:center;height:34px;padding:0 6px 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-cg-side-head{flex:none;display:flex;align-items:center;height:34px;padding:0 6px 0 10px}',
   // The Workspace's name is the second of the two parts that give ground: every
   // control to its right is fixed, so once the pill has been shortened to its icon
   // this name is the only thing left that can end in an ellipsis rather than run
@@ -346,6 +347,30 @@ const GIT_CSS = [
   // card.
   '.dsh-cg-dialog-body{display:flex;flex-direction:column;gap:8px}',
   '.dsh-cg-dialog-text{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary);white-space:pre-wrap;word-break:break-word}',
+
+  // The commit form: the sidebar's own row under the toolbar, closed by the one
+  // hairline that separates the column's top block — toolbar and form together —
+  // from the two panes below. Nothing is drawn between the toolbar and the field,
+  // so the three of them read as one block. The field and the button are the
+  // platform's own primitives, so their fill, border, radius, type scale, and
+  // focus colour are the platform's and follow the theme without a rule here; what
+  // is stated is the geometry the form itself is laid out by.
+  //
+  // Two stacked full-width rows rather than one line, because the sidebar is
+  // narrow: a field sharing a line with the button would be a field too small to
+  // read a message in at the pane's floor, and the button's own label is the part
+  // that must never be cut. Their gutters are the toolbar's, so all three of the
+  // sidebar's rows start and end on the same two edges.
+  //
+  // Both parts are small on purpose. The button asks the primitive for `sm` (28px)
+  // and the field is measured to match it — the primitive's field has no small
+  // size of its own, so its frame's height and its text's size are stated here —
+  // which is what keeps the pair to about one changed-path row each of the
+  // column's height.
+  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-cg-commit-input{width:100%;height:28px}',
+  '.dsh-cg-commit-input input{font-size:12px;line-height:20px}',
+  '.dsh-cg-commit-send{width:100%}',
 
   // Changed-path rows.
   '.dsh-cg-row{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',

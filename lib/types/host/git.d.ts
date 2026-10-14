@@ -1,5 +1,5 @@
 /**
- * The Host half's Git reader, and its three writers.
+ * The Host half's Git reader, and its four writers.
  *
  * Every fact about the repository is produced by running the real `git` binary
  * through the `shell` capability seam — never by reading `.git` by hand. That
@@ -12,10 +12,12 @@
  * under a `workspace-write` session — and refuse the very writes the session
  * allows.
  *
- * Reading is the bulk of this module. Three commands change something — the
- * branch switch, the fast-forward pull, and the push — and each reports a
- * sandbox refusal as such rather than as a Git error, because under a
- * `read-only` mode that refusal is the whole answer.
+ * Reading is the bulk of this module. Four commands change something — the
+ * branch switch, the fast-forward pull, the push, and the commit — and each
+ * reports a sandbox refusal as such rather than as a Git error, because under a
+ * `read-only` mode that refusal is the whole answer. The commit is the one that
+ * writes the index as well as the history, which is why it is a single call
+ * rather than a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -33,7 +35,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitPayload, type DiffPayload, type LogPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type LogPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
 /** Upper bound on commits per request, so one call cannot walk a whole history. */
@@ -191,4 +193,25 @@ export declare function pullFromRemote(target: GitTarget): Promise<SyncPayload>;
  * @returns the outcome, including the reason a push was refused.
  */
 export declare function pushToRemote(target: GitTarget): Promise<SyncPayload>;
+/**
+ * Stage every change and commit it under one message.
+ *
+ * The tree is read before it is touched, and both refusals that matter come out
+ * of that read. A tree with nothing in it is not a commit that Git would fail to
+ * make — "nothing to commit" is a state, and the answer says so as one. And a
+ * tree holding an unmerged path is refused before `git add -A` runs: staging a
+ * conflicted file resolves it as far as Git is concerned, so a commit made then
+ * would record conflict markers as the resolution, which is a commit nobody can
+ * mean and one this page has no way to take back.
+ *
+ * What is committed is deliberately everything the page is listing — tracked
+ * edits, deletions, and untracked files alike — because that is the one decision
+ * the form offers. The message is the route's to validate; by the time it
+ * arrives here it is non-empty text.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param message - the commit message, already trimmed and checked by the route.
+ * @returns the outcome, including the reason a commit did not happen.
+ */
+export declare function commitAll(target: GitTarget, message: string): Promise<CommitAllPayload>;
 //# sourceMappingURL=git.d.ts.map

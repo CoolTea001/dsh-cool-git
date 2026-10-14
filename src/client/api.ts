@@ -9,6 +9,7 @@
 import type {
   BranchesPayload,
   CheckoutPayload,
+  CommitAllPayload,
   CommitPayload,
   DiffPayload,
   LogPayload,
@@ -92,6 +93,26 @@ export function fetchDiff(
  */
 export function fetchCommit(sessionId: string | undefined, hash: string): Promise<CommitPayload> {
   return postJson('/commit', { sessionId, hash })
+}
+
+/**
+ * Ask the Host to commit every change the working tree has.
+ *
+ * One request, not a stage followed by a commit: the Host stages everything
+ * `git status` reports — untracked files included, since those are rows the page
+ * lists too — and commits it under this message. So the page never holds a
+ * half-staged index it cannot name, and a refusal (a conflict left unresolved, a
+ * message Git will not take) arrives as one answer.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param message - the commit message, non-empty.
+ * @returns the commit-all payload.
+ */
+export function commitAll(
+  sessionId: string | undefined,
+  message: string,
+): Promise<CommitAllPayload> {
+  return postJson('/commit-all', { sessionId, message })
 }
 
 /**

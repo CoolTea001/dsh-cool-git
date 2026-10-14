@@ -24,6 +24,7 @@
  */
 
 import {
+  commitAll,
   pullFromRemote,
   pushToRemote,
   readBranches,
@@ -43,6 +44,7 @@ export const ROUTES = {
   log: '/dsh-cool-git/api/log',
   diff: '/dsh-cool-git/api/diff',
   commit: '/dsh-cool-git/api/commit',
+  commitAll: '/dsh-cool-git/api/commit-all',
   branches: '/dsh-cool-git/api/branches',
   checkout: '/dsh-cool-git/api/checkout',
   pull: '/dsh-cool-git/api/pull',
@@ -51,6 +53,14 @@ export const ROUTES = {
 
 /** Object names Git accepts, and all a route will pass on to the command line. */
 const OBJECT_NAME = /^[0-9a-f]{4,40}$/i
+
+/**
+ * Longest commit message a route hands to Git.
+ *
+ * A message is free-form text and Git itself bounds nothing here, so the bound
+ * is this route's: a request body is not a place to put a file.
+ */
+const MAX_MESSAGE_LENGTH = 10_000
 
 function sendJson(res: any, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -86,8 +96,8 @@ async function readBody(req: any): Promise<Record<string, unknown>> {
 /**
  * Reject a cross-site request.
  *
- * These routes reach a repository the session owns — and three of them change
- * it — so a page on another origin has no business asking. A same-origin `fetch`
+ * These routes reach a repository the session owns — and four of them change it
+ * — so a page on another origin has no business asking. A same-origin `fetch`
  * omits `Origin` on some requests, so an absent header is allowed.
  */
 function sameOrigin(req: any): boolean {
@@ -341,6 +351,26 @@ function readBranch(body: Record<string, unknown>): string | undefined {
 }
 
 /**
+ * Read one request's commit message.
+ *
+ * A message is free-form text, so nothing about its content is checked; the two
+ * shapes refused are the ones no command line and no commit can carry — a NUL
+ * byte, and a message that is empty once trimmed, which Git itself rejects. The
+ * form's own button is disabled on an empty field, so this is the guard behind
+ * that rather than the answer the user meets.
+ *
+ * @param body - the parsed request body.
+ * @returns the trimmed message, or undefined when it is not one.
+ */
+function readMessage(body: Record<string, unknown>): string | undefined {
+  const message = body.message
+  if (typeof message !== 'string' || message.includes('\0')) return undefined
+  const trimmed = message.trim()
+  if (trimmed === '' || trimmed.length > MAX_MESSAGE_LENGTH) return undefined
+  return trimmed
+}
+
+/**
  * Serve every Git route for one plugin instance.
  *
  * @param ctx - the Host plugin context.
@@ -392,6 +422,16 @@ export function registerRoutes(ctx: any): () => void {
 
     route(ROUTES.branches, (req, res) => handle(ctx, req, res, 'read', (_body, target) =>
       readBranches(target))),
+
+    // The one route that writes both the index and the history: it stages every
+    // change the page is listing and commits it under the page's own message, so
+    // the two halves of a commit cannot be left apart by a page that never sent
+    // the second request.
+    route(ROUTES.commitAll, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const message = readMessage(body)
+      if (message === undefined) return Promise.resolve({ ok: false, error: '缺少提交信息' })
+      return commitAll(target, message)
+    })),
 
     route(ROUTES.checkout, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const branch = readBranch(body)

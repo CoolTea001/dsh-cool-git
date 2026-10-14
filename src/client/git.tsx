@@ -5,17 +5,20 @@
  * and a Diff 查看区 taking every remaining pixel. Changed paths come from
  * `git status`, the history from `git log`, and the diff pane shows either one
  * path's patch against HEAD or one commit's whole patch (see `api.ts` for the
- * routes and `diff.ts` for the patch parser). Both of the sidebar's boundaries —
- * its right edge and the divider between the two lists — are the reader's to
- * drag, and both sizes are remembered between visits (see `layout.ts`).
+ * routes and `diff.ts` for the patch parser). The sidebar's second row is the
+ * commit form — a message field and the button that stages every change
+ * 变更文件区 lists and records them as one commit — and 变更文件区 and 提交历史
+ * stack under it. Both of the sidebar's boundaries — its right edge and the
+ * divider between the two lists — are the reader's to drag, and both sizes are
+ * remembered between visits (see `layout.ts`).
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
  * answer is current, which failure the dialog is stating, which operation is in
- * flight — a checkout or one half of a remote round trip, either of which is what
- * disables the other controls — and where the two boundaries were left. That keeps
- * a manual refresh honest — it re-reads `status` and `log`, and the diff pane
- * re-reads whatever it is showing.
+ * flight — a checkout, one half of a remote round trip, or the commit 变更文件区
+ * asks for — each of which is what disables the other controls, and where the two
+ * boundaries were left. That keeps a manual refresh honest — it re-reads `status`
+ * and `log`, and the diff pane re-reads whatever it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
@@ -44,7 +47,7 @@ import {
   type ReactNode,
 } from 'react'
 import { Button, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { checkoutBranch, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchStatus, pullBranch, pushBranch } from './api.js'
+import { checkoutBranch, commitAll, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchStatus, pullBranch, pushBranch } from './api.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
 import { IconBranch, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
@@ -130,19 +133,29 @@ type FlatRow =
   | { readonly type: 'line'; readonly line: DiffLine }
 
 /**
- * The widest shape of a route answer, as the page reads one.
+ * The two facts every route answer carries, whatever else it holds.
  *
- * Every route answers a different payload type — status, log, diff, commit,
- * branches, checkout, sync — but the page reads them all the same way: `ok`, a
- * reason when it is false, and then whatever the pane needs. The shared readers
- * below therefore take this shape instead of a union of every payload, and
- * `postJson` normalizes a transport failure into it, which is what keeps the
- * page down to one failure shape.
+ * A route answers a payload of its own — status, log, diff, commit, commit-all,
+ * branches, checkout, sync — but every one of them says `ok`, and says why when
+ * it is false. The readers that only ask those two questions take this shape
+ * rather than a union of every payload, so a new route's answer needs no change
+ * here to be reportable, and `postJson` normalizes a transport failure into the
+ * same shape, which is what keeps the page down to one failure report.
  */
-interface RouteAnswer {
+interface RouteOutcome {
   readonly ok?: boolean
   readonly error?: string
   readonly reason?: string
+}
+
+/**
+ * The widest shape of a route answer, as the diff pane reads one.
+ *
+ * The pane's own readers need more than the outcome above: the patch, the flags
+ * that qualify it, and the commit it belongs to. A route whose answer the pane
+ * renders therefore satisfies this shape as well.
+ */
+interface RouteAnswer extends RouteOutcome {
   readonly patch?: string
   readonly truncated?: boolean
   readonly binary?: boolean
@@ -218,7 +231,7 @@ function buildDoc(key: string, result: RouteAnswer | null | undefined): DocState
  * @param payload - the route's answer.
  * @returns true for the `no-repo` reason alone.
  */
-function isNoRepo(payload: RouteAnswer): boolean {
+function isNoRepo(payload: RouteOutcome): boolean {
   return payload.reason === 'no-repo'
 }
 
@@ -229,7 +242,7 @@ function isNoRepo(payload: RouteAnswer): boolean {
  * @param fallback - the reason to state when the answer carried none.
  * @returns the Host's or the transport's own words.
  */
-function reasonOf(payload: RouteAnswer, fallback: string): string {
+function reasonOf(payload: RouteOutcome, fallback: string): string {
   return typeof payload.error === 'string' && payload.error !== '' ? payload.error : fallback
 }
 
@@ -241,7 +254,7 @@ function reasonOf(payload: RouteAnswer, fallback: string): string {
  * @param fallback - the reason to state when the answer carried none.
  * @returns one `label：reason` line.
  */
-function failureLine(label: string, payload: RouteAnswer, fallback: string): string {
+function failureLine(label: string, payload: RouteOutcome, fallback: string): string {
   return `${label}：${reasonOf(payload, fallback)}`
 }
 
@@ -389,6 +402,8 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
   const [switching, setSwitching] = useState<string | null>(null)
   /** The half of the remote round trip in flight, or null at rest. */
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
+  /** Whether 变更文件区's commit is in flight. */
+  const [committing, setCommitting] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [doc, setDoc] = useState<DocState | null>(null)
   /** The failure the dialog is stating, or null while none is open. */
@@ -555,7 +570,8 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
   // diff pane had loaded — which may belong to a file that no longer exists.
   // Dropping the selection is the honest version of that; keeping it would leave
   // a title over a diff from a branch the user already left. A fast-forward pull
-  // rewrites files the same way, so it takes the same path.
+  // rewrites files the same way, and a commit empties the very diffs it recorded,
+  // so all three take this path.
   const handleSwitched = useCallback((): void => {
     setSelection(null)
     void refresh()
@@ -659,11 +675,43 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     pushRemote('发布分支失败')
   }, [pushRemote])
 
+  /**
+   * Commit every change 变更文件区 is listing, under the message the form holds.
+   *
+   * The page asks for the whole thing — the stage and the commit — in one call,
+   * because that is the one decision the form offers: there is no per-path
+   * staging on this page, so a commit interrupted between two requests would
+   * leave an index nothing here could finish. What the answer decides is whether
+   * the form keeps its message: a refusal leaves it where it is, because the
+   * message is usually the thing to fix, and the repository is re-read either way
+   * — even a refusal can have staged something first.
+   *
+   * @param message - the commit message the form holds, already non-empty.
+   * @returns whether the commit was made, which is what clears the form.
+   */
+  const handleCommit = useCallback((message: string): Promise<boolean> => {
+    setCommitting(true)
+    return commitAll(sessionId, message).then(result => {
+      setCommitting(false)
+      if (result?.ok !== true) {
+        reportError({ title: '提交失败', lines: [reasonOf(result, '提交失败')] })
+        handleSynced()
+        return false
+      }
+      // The commit emptied the diffs just recorded, so the selection goes with
+      // them and the page re-reads the tree, the history, and the branch's
+      // divergence in one pass.
+      handleSwitched()
+      return true
+    })
+  }, [sessionId, handleSynced, handleSwitched, reportError])
+
   // One operation at a time, wherever the control that asks for it lives: the
-  // branch pill and 刷新 in the toolbar, and the remote control in 提交历史's
-  // header. Stating it once here is what keeps a second click from queueing a
-  // second checkout or a second round trip behind the first.
-  const busy = switching !== null || syncing !== null
+  // branch pill and 刷新 in the toolbar, the remote control in 提交历史's header,
+  // and the commit in 变更文件区's. Stating it once here is what keeps a second
+  // click from queueing a second checkout, a second round trip, or a second
+  // commit behind the first.
+  const busy = switching !== null || syncing !== null || committing
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
@@ -735,6 +783,18 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
           onRefresh={() => void refresh()}
           onCheckout={handleCheckout}
           onError={reportError}
+        />
+        {/* The commit form is the sidebar's own third row, under the toolbar and
+            above both panes: what it commits is 变更文件区's list, but what it acts
+            on is the whole working tree, so it belongs to the column rather than
+            to either pane. The form is `flex:none` so it keeps its two rows
+            whatever height the panes are dragged to, and its own bottom hairline
+            is the one line above 文件变更's header — nothing is drawn between it
+            and the toolbar, so the two rows above that line read as one block. */}
+        <CommitBar
+          disabled={status?.ok !== true || files.length === 0 || busy || refreshing}
+          committing={committing}
+          onCommit={handleCommit}
         />
         {/* The upper pane owns the divider under it: the boundary is what its own
             height is measured to, and the handle is placed on that pane's bottom
@@ -851,7 +911,9 @@ function ErrorDialog(props: {
 
 /**
  * The sidebar's first row: the Workspace this session is in, the branch it is on,
- * and the one operation the row itself keeps — 刷新. One hairline under all of them.
+ * and the one operation the row itself keeps — 刷新. It draws no rule of its own:
+ * the toolbar and the commit form under it are one block, closed together by that
+ * form's own hairline.
  *
  * The branch switch is stated as a decision rather than an accident: the dialog
  * lists what Git reported, tags the branch already on, and applies nothing until
@@ -1482,6 +1544,90 @@ function workspaceFallback(status: StatusPayload | null): string {
   const trimmed = root.replace(/\/+$/, '')
   const cut = trimmed.lastIndexOf('/')
   return cut < 0 ? trimmed : trimmed.slice(cut + 1)
+}
+
+/**
+ * The sidebar's commit form: a message field with the button that commits
+ * everything 变更文件区 lists under it.
+ *
+ * It is the column's own row — under the toolbar and above both panes — rather
+ * than a part of the pane whose list it commits. Both rows are full width and the
+ * button is a row of its own under the field: the sidebar is narrow, and a field
+ * sharing one line with the button would leave neither of them a readable width at
+ * the pane's floor. The two are small — the field is 28px, the button's own `sm`
+ * — so the pair costs the lists about one row each.
+ *
+ * It is a form of one decision, and that decision is the plain one: everything
+ * 变更文件区 is listing goes in — tracked edits, deletions, and untracked files
+ * alike — because nothing on this page offers a per-path choice that could make
+ * the set smaller.
+ *
+ * The message is this component's own state rather than the page's, and that is
+ * deliberate: the page renders thousands of diff rows, so a keystroke that
+ * re-rendered it would repaint all of them. Nothing else needs the text — the
+ * request carries it and the answer decides whether it is cleared — so it stays
+ * here, one render per keystroke over one field.
+ *
+ * A commit empties the field; a refusal keeps it, because a message Git would not
+ * take is the one thing the answer is about. The field is disabled for the length
+ * of the request, so what is sent cannot be edited after it was read.
+ *
+ * @param props.disabled - whether the repository can take a commit right now:
+ * there is none to name, nothing is changed, or the page is busy with something
+ * else.
+ * @param props.committing - the commit this form asked for is in flight.
+ * @param props.onCommit - runs the commit; resolves true when one was made.
+ * @returns the form element.
+ */
+function CommitBar(props: {
+  readonly disabled: boolean
+  readonly committing: boolean
+  readonly onCommit: (message: string) => Promise<boolean>
+}): ReactElement {
+  const { disabled, committing, onCommit } = props
+  const [message, setMessage] = useState('')
+
+  /**
+   * Ask for the commit the field currently describes.
+   *
+   * Bound to the button and to Enter in the field, which is the one keystroke a
+   * single-line form is expected to answer.
+   */
+  const submit = useCallback((): void => {
+    const trimmed = message.trim()
+    if (trimmed === '' || disabled || committing) return
+    void onCommit(trimmed).then(made => {
+      if (made) setMessage('')
+    })
+  }, [message, disabled, committing, onCommit])
+
+  return (
+    <div className="dsh-cg-commit-bar">
+      <Input
+        className="dsh-cg-commit-input"
+        type="text"
+        value={message}
+        placeholder="Commit Message"
+        aria-label="Commit Message"
+        disabled={committing}
+        onChange={event => setMessage(event.target.value)}
+        onKeyDown={event => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          submit()
+        }}
+      />
+      <Button
+        className="dsh-cg-commit-send"
+        variant="primary"
+        size="sm"
+        disabled={disabled || committing || message.trim() === ''}
+        onClick={submit}
+      >
+        {committing ? 'Commit…' : 'Commit'}
+      </Button>
+    </div>
+  )
 }
 
 /**
