@@ -424,7 +424,13 @@ const GIT_CSS = [
   '.dsh-cg-meta{display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-hash{font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
   '.dsh-cg-refs{display:flex;gap:4px;overflow:hidden}',
-  '.dsh-cg-ref{flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;padding:0 4px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-xs,4px);color:var(--dsw-alias-brand-text,var(--dsw-alias-brand-primary));font-size:10px;line-height:14px}',
+  // A branch or tag decoration is a filled chip in the theme's accent, not an
+  // outlined one. The accent is `--dsw-alias-state-business-primary`, the alias
+  // every accent-marked surface in the platform reads (focus rings, `Tag`'s info
+  // tone), and it is the one a theme preset moves: `--dsw-alias-brand-primary`
+  // would be wrong here, since the platform defines it as the foreground color
+  // itself, which is what paints the monochrome primary Button.
+  '.dsh-cg-ref{flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;padding:0 4px;border-radius:var(--dsw-radius-xs,4px);background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);font-size:10px;line-height:14px}',
 
   // Notes: empty lists and loading rows. A failure is the error dialog's, so
   // nothing here paints one.
