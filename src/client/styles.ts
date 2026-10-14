@@ -351,10 +351,7 @@ const GIT_CSS = [
   // The commit form: the sidebar's own row under the toolbar, closed by the one
   // hairline that separates the column's top block — toolbar and form together —
   // from the two panes below. Nothing is drawn between the toolbar and the field,
-  // so the three of them read as one block. The field and the button are the
-  // platform's own primitives, so their fill, border, radius, type scale, and
-  // focus colour are the platform's and follow the theme without a rule here; what
-  // is stated is the geometry the form itself is laid out by.
+  // so the three of them read as one block.
   //
   // Two stacked full-width rows rather than one line, because the sidebar is
   // narrow: a field sharing a line with the button would be a field too small to
@@ -362,14 +359,35 @@ const GIT_CSS = [
   // that must never be cut. Their gutters are the toolbar's, so all three of the
   // sidebar's rows start and end on the same two edges.
   //
-  // Both parts are small on purpose. The button asks the primitive for `sm` (28px)
-  // and the field is measured to match it — the primitive's field has no small
-  // size of its own, so its frame's height and its text's size are stated here —
-  // which is what keeps the pair to about one changed-path row each of the
-  // column's height.
+  // The button is the platform's own primitive, so its fill, radius, type scale,
+  // and focus colour are the platform's and follow the theme without a rule here.
+  // The field is not: the platform's `Input` atom is single-line, and a commit
+  // message is not, so this is a `textarea` styled here. What it borrows from that
+  // atom is the appearance — the half-pixel border, the layer fill, the dimmed
+  // placeholder, and the business token on focus — so the two still read as the
+  // app's field; what it does not borrow is the radius, which is the `sm` button's
+  // own corner above it, because these two rows are one form.
+  //
+  // The frame and the field are separate boxes for one reason: the component
+  // measures the field's height to its own content, and a box that is measured has
+  // to carry no border — a border on the measured box would have to be added back
+  // by hand, and a half-pixel one is laid out as a whole device pixel, so the sum
+  // would be a field that clips its last line or trails one. So the frame draws the
+  // border, the fill, and the focus colour, and the field inside it is borderless.
+  //
+  // The height is one line's worth and is then measured to its content by the
+  // component (see `CommitBar`), capped here at four lines. The arithmetic runs
+  // through the frame: a line is 20px and the field's own padding is 6px, so the
+  // 26px it keeps at its shortest is the 28px the button beside it is once the
+  // frame's border is counted, and four of those lines is the 86px past which the
+  // field scrolls instead of pushing 变更文件区 down the column.
   '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
-  '.dsh-cg-commit-input{width:100%;height:28px}',
-  '.dsh-cg-commit-input input{font-size:12px;line-height:20px}',
+  '.dsh-cg-commit-frame{display:block;box-sizing:border-box;width:100%;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+  '.dsh-cg-commit-frame:focus-within{border-color:var(--dsw-alias-state-business-primary)}',
+  '.dsh-cg-commit-frame:has(.dsh-cg-commit-input:disabled){opacity:.6}',
+  '.dsh-cg-commit-input{display:block;box-sizing:border-box;width:100%;min-height:26px;max-height:86px;padding:3px 8px;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:20px;resize:none;overflow-y:auto}',
+  '.dsh-cg-commit-input::placeholder{color:var(--dsw-alias-label-dimmed)}',
+  '.dsh-cg-commit-input:disabled{cursor:not-allowed}',
   '.dsh-cg-commit-send{width:100%}',
 
   // Changed-path rows.

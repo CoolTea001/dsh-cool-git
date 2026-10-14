@@ -1554,8 +1554,17 @@ function workspaceFallback(status: StatusPayload | null): string {
  * than a part of the pane whose list it commits. Both rows are full width and the
  * button is a row of its own under the field: the sidebar is narrow, and a field
  * sharing one line with the button would leave neither of them a readable width at
- * the pane's floor. The two are small — the field is 28px, the button's own `sm`
- * — so the pair costs the lists about one row each.
+ * the pane's floor. The two are small — the field opens at 28px, the button's own
+ * `sm` — so the pair costs the lists about one changed-path row each.
+ *
+ * The field is a `textarea` of this plugin's own rather than the platform's
+ * `Input`, because a commit message is not one line: a subject and the note under
+ * it are one message, and a single-line control cannot show the break between
+ * them. So Enter is a line break here, and the chord (⌘/Ctrl+Enter) is what
+ * submits from the keyboard; the button is the plain path. The field grows with
+ * what is typed and stops at four lines, past which it scrolls — a message longer
+ * than that must not push 变更文件区 down the column. Its corner is the button's
+ * own, which is what makes the two read as one form (see `styles.ts`).
  *
  * It is a form of one decision, and that decision is the plain one: everything
  * 变更文件区 is listing goes in — tracked edits, deletions, and untracked files
@@ -1586,12 +1595,32 @@ function CommitBar(props: {
 }): ReactElement {
   const { disabled, committing, onCommit } = props
   const [message, setMessage] = useState('')
+  const field = useRef<HTMLTextAreaElement | null>(null)
+
+  /**
+   * Measure the field to what it holds.
+   *
+   * A textarea does not grow by itself, so every change is measured and written
+   * back as an explicit height. The height is reset to `auto` first, because the
+   * height this effect wrote is otherwise the only thing `scrollHeight` could be
+   * measured against, which would leave the field unable to shrink when lines are
+   * deleted; and it is `scrollHeight` itself that is written back, which is exact
+   * only because the field carries no border of its own — the frame around it
+   * draws that — so content plus padding is the whole of its border-box height.
+   * The stylesheet's `max-height` is what stops it at four lines.
+   */
+  useLayoutEffect(() => {
+    const node = field.current
+    if (node === null) return
+    node.style.height = 'auto'
+    node.style.height = `${node.scrollHeight}px`
+  }, [message])
 
   /**
    * Ask for the commit the field currently describes.
    *
-   * Bound to the button and to Enter in the field, which is the one keystroke a
-   * single-line form is expected to answer.
+   * Bound to the button and to ⌘/Ctrl+Enter in the field: Enter alone is the line
+   * break a message needs, so the chord is the keyboard's own way to submit.
    */
   const submit = useCallback((): void => {
     const trimmed = message.trim()
@@ -1603,20 +1632,28 @@ function CommitBar(props: {
 
   return (
     <div className="dsh-cg-commit-bar">
-      <Input
-        className="dsh-cg-commit-input"
-        type="text"
-        value={message}
-        placeholder="Commit Message"
-        aria-label="Commit Message"
-        disabled={committing}
-        onChange={event => setMessage(event.target.value)}
-        onKeyDown={event => {
-          if (event.key !== 'Enter') return
-          event.preventDefault()
-          submit()
-        }}
-      />
+      {/* The frame is the textarea's border and fill, the way the platform's own
+          field draws them: the box that grows has to carry no border at all, or
+          the height measured for it would be a pixel short of what it is drawn
+          at. The frame is what carries the theme's focus colour as well, since
+          the field inside it is borderless and has nothing to light up. */}
+      <span className="dsh-cg-commit-frame">
+        <textarea
+          ref={field}
+          className="dsh-cg-commit-input"
+          value={message}
+          placeholder="Commit Message"
+          aria-label="Commit Message"
+          rows={1}
+          disabled={committing}
+          onChange={event => setMessage(event.target.value)}
+          onKeyDown={event => {
+            if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
+            event.preventDefault()
+            submit()
+          }}
+        />
+      </span>
       <Button
         className="dsh-cg-commit-send"
         variant="primary"
