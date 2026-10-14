@@ -41,4 +41,17 @@ export declare const IconPush: () => ReactElement;
 export declare const IconPublish: () => ReactElement;
 /** Re-read the repository (assets/refresh.svg). */
 export declare const IconRefresh: () => ReactElement;
+/**
+ * Copy the patch on screen: the Diff 查看区 header's copy control
+ * (assets/copy.svg).
+ */
+export declare const IconCopy: () => ReactElement;
+/**
+ * The mark the copy control swaps to while it reports success (assets/check.svg).
+ *
+ * A state rather than a subject, and the one asset here that is: it is drawn from
+ * the same 24-unit set as the mark it replaces, which is what keeps the swap from
+ * changing the button's stroke weight.
+ */
+export declare const IconCheck: () => ReactElement;
 //# sourceMappingURL=icons.d.ts.map

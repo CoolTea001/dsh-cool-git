@@ -95,3 +95,18 @@ export const IconPublish = svgIcon('publish')
 
 /** Re-read the repository (assets/refresh.svg). */
 export const IconRefresh = svgIcon('refresh')
+
+/**
+ * Copy the patch on screen: the Diff 查看区 header's copy control
+ * (assets/copy.svg).
+ */
+export const IconCopy = svgIcon('copy')
+
+/**
+ * The mark the copy control swaps to while it reports success (assets/check.svg).
+ *
+ * A state rather than a subject, and the one asset here that is: it is drawn from
+ * the same 24-unit set as the mark it replaces, which is what keeps the swap from
+ * changing the button's stroke weight.
+ */
+export const IconCheck = svgIcon('check')

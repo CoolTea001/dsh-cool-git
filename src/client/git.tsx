@@ -50,7 +50,7 @@ import { Button, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primit
 import { checkoutBranch, commitAll, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchStatus, pullBranch, pushBranch } from './api.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
-import { IconBranch, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
+import { IconBranch, IconCheck, IconCopy, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
 import {
   clampFilesHeight,
   clampSideWidth,
@@ -353,21 +353,6 @@ function headText(label: string, count: number): string {
   return `${label} · ${count}`
 }
 
-/** The copy glyph. */
-const COPY_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <rect x="5.6" y="5.6" width="7.4" height="7.4" rx="1.4" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    <path d="M10 5.6V4.4A1.4 1.4 0 0 0 8.6 3H4.4A1.4 1.4 0 0 0 3 4.4v4.2A1.4 1.4 0 0 0 4.4 10h1.2" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-  </svg>
-)
-
-/** The confirmation glyph, shown while the copy button reports success. */
-const CHECK_ICON = (
-  <svg viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M3.4 8.6l3 3 6.2-7" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
 /**
  * The busy glyph: an open ring, turned by the stylesheet.
  *
@@ -376,10 +361,10 @@ const CHECK_ICON = (
  * It stands in for whichever glyph the wait belongs to, so it has to carry the
  * same weight as the artwork it replaces rather than a stroke of its own.
  *
- * The Workspace, branch, pull, push, publish and refresh marks are assets now —
- * see `icons.tsx` — because those are the glyphs the page shows at rest. This
- * ring, the copy pair and the spinner's own turning are local because they are
- * states rather than subjects.
+ * It is the last glyph drawn here rather than under `src/client/assets`: every
+ * subject the page shows — the Workspace, branch, pull, push, publish, refresh,
+ * copy and check marks — is an asset now, and this ring is alone in being a state
+ * with no picture of its own to be named after. See `icons.tsx` for the rest.
  */
 const SPINNER_ICON = (
   <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -1988,7 +1973,7 @@ function CopyButton({ text }: { readonly text: string }): ReactElement {
 
   return (
     <button type="button" className="dsh-cg-icon" title={copied ? '已复制' : '复制 Diff'} aria-label={copied ? '已复制' : '复制 Diff'} onClick={copy}>
-      {copied ? CHECK_ICON : COPY_ICON}
+      {copied ? <IconCheck /> : <IconCopy />}
     </button>
   )
 }
