@@ -1013,14 +1013,18 @@ function SideHead(props: {
  * above the panes, opposite the pane's own name and count: what the two counts
  * are counted against, and what the round trip brings and sends, is the history
  * under it. It stays an icon because that row is the sidebar's narrowest place —
- * the name and count share it with this button — and 同步变更 / 发布分支 are the
- * names its tooltip and its accessible label carry.
+ * the name and count share it with this button — and the bubble behind it is where
+ * the names read: 同步变更 with both counts spelled out as 待拉取 and 待推送, or
+ * 发布分支 alone on a branch that has nothing to count yet. The bubble's text is
+ * the button's accessible name as well, so a screen reader hears the same counts.
  *
  * Sync is the round trip taken in the one order that cannot rewind work: a
  * fast-forward pull, then a push of what is left. Both arrows and both counts
  * stay inside that single button — `↓` behind is what the pull brings, `↑` ahead
  * is what the push sends — so the control that states the divergence is the one
- * that resolves it, and each arrow turns while its own half is in flight.
+ * that resolves it, and each arrow turns while its own half is in flight. A glyph
+ * and a digit are all the header has room for, so the words that say which
+ * direction each number belongs to live in the bubble rather than on the button.
  *
  * Publish takes Sync's place on a branch with no upstream, because that branch
  * has no divergence to state and no pull to take: what it needs is the push that
@@ -1064,6 +1068,12 @@ function RemoteControl(props: {
   const publishable = reachable && !hasUpstream
   const behind = hasUpstream ? status?.behind ?? 0 : 0
   const ahead = hasUpstream ? status?.ahead ?? 0 : 0
+  // The two digits the button draws as arrows are spelled out here, in the
+  // direction each one moves: the button has room for a glyph and a number and
+  // nothing else, so 待拉取 / 待推送 are what say which half of the round trip
+  // each count belongs to. Both numbers are stated either way, zeros included,
+  // for the same reason the button draws them.
+  const syncLabel = `同步变更 · 待拉取 ${behind} · 待推送 ${ahead}`
 
   // The tooltip's anchor is the span, not the button: a disabled button emits no
   // pointer events, so anchoring on it would lose the hover exactly when the
@@ -1089,12 +1099,12 @@ function RemoteControl(props: {
       /* One control for both directions of the round trip. No `data-busy` on the
          button itself: each arrow marks its own half of the round trip, and one on
          the button would turn both. */
-      <Tooltip label="同步变更" side="bottom" portal>
+      <Tooltip label={syncLabel} side="bottom" portal>
         <span className="dsh-cg-tip">
           <button
             type="button"
             className="dsh-cg-icon dsh-cg-sync"
-            aria-label="同步变更"
+            aria-label={syncLabel}
             disabled={!reachable || busy || refreshing}
             onClick={onSync}
           >
