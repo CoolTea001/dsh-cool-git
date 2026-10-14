@@ -119,19 +119,26 @@ const GIT_CSS = [
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
   '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 6px 8px}',
-  // Every list the tab scrolls — the sidebar's two panes here, and the branch
-  // dialog's list below, which states the same binding by sharing this
-  // selector — keeps the platform's bar out of the frame until the pointer is
-  // inside it. The platform paints a bar for any scrollport that overflows, and
-  // a stripe standing in a pane (or in a dialog this narrow) is chrome no one
-  // asked to keep: the thumb is bound to `transparent` and rebound to the
-  // platform's own dialog-level colour while the pointer is inside the list, so
-  // the bar arrives with the pointer and leaves with it. Only a colour is
-  // rebound — the bar is the same width hidden or shown, so the rows do not
-  // shift as the pointer crosses the list's edge, and the thumb is there to be
-  // grabbed the moment it is painted.
-  '.dsh-cg-list,.dsh-cg-branch-list{--dsh-scrollbar-thumb:transparent;--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
-  '.dsh-cg-list:hover,.dsh-cg-branch-list:hover{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2)}',
+  // Every scrollport the tab owns — the sidebar's two panes here, the branch
+  // dialog's list below, and the diff pane's own scrollers, which state the same
+  // binding by sharing this selector — keeps the platform's bar out of the frame
+  // until the pointer is inside it. The platform paints a bar for any scrollport
+  // that overflows, and a stripe standing in a pane (or in a dialog this narrow)
+  // is chrome no one asked to keep: the thumb is bound to `transparent` and
+  // rebound to the platform's own colour while the pointer is inside, so the bar
+  // arrives with the pointer and leaves with it. Only a colour is rebound — the
+  // bar is the same width hidden or shown, so the rows do not shift as the pointer
+  // crosses the edge, and the thumb is there to be grabbed the moment it is
+  // painted.
+  //
+  // Nothing here draws a bar of its own. `scrollbar.css` — the platform's — sets
+  // the width, the pill shape and the track for every scrollport in the app and
+  // reads these two variables for the colour, so a scroller that rebinds them
+  // looks like every other one; a scroller that styles `::-webkit-scrollbar`
+  // itself does not, which is what made the diff pane's bar a different width,
+  // shape and colour from the lists beside it.
+  '.dsh-cg-list,.dsh-cg-branch-list,.dsh-cg-diff,.dsh-cg-file-body{--dsh-scrollbar-thumb:transparent;--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+  '.dsh-cg-list:hover,.dsh-cg-branch-list:hover,.dsh-cg-diff:hover,.dsh-cg-file-body:hover{--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2)}',
 
   // Toolbar buttons are plain buttons rather than the shared primitive: the tab
   // needs a few of them, and the token-driven states below are the whole of what
@@ -444,7 +451,12 @@ const GIT_CSS = [
   '.dsh-cg-stats{flex:none;display:flex;gap:6px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
   '.dsh-cg-added{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-deleted{color:var(--dsw-alias-state-error-primary)}',
-  '.dsh-cg-diff{flex:1 1 auto;min-height:0;overflow:auto;background:var(--dsw-alias-bg-base)}',
+  // The pane's own scroller, vertical only. Sideways movement belongs to the
+  // file it is about, so it is each file's code area that scrolls — see
+  // `.dsh-cg-file-body` below — and the pane itself never does. That is also what
+  // keeps a file's title from sliding out from under it: a title is outside the
+  // scroller that moves.
+  '.dsh-cg-diff{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;background:var(--dsw-alias-bg-base)}',
 
   // An empty pane centres its message. A failure never renders here: it opens
   // the error dialog, so the box holds only the state it belongs to.
@@ -452,27 +464,82 @@ const GIT_CSS = [
   '.dsh-cg-empty-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-empty-text{font-size:12px;max-width:60ch;line-height:1.7}',
 
-  // Per-file section inside a multi-file patch (a commit's diff).
-  '.dsh-cg-file-head{display:flex;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
+  // One file of a patch: its title, and the strips of code under it.
+  //
+  // The title is full-width and its path is the part that gives way, so a title
+  // is one line whatever the pane's width and whatever the code under it does.
+  '.dsh-cg-file-head{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--dsw-alias-bg-layer-1);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
   '.dsh-cg-file-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
 
-  // Hunk header sticks to the top of the scroller: the `@@` scope is the one
-  // piece of context worth keeping while a long diff scrolls.
-  '.dsh-cg-hunk-head{position:sticky;top:0;z-index:1;padding:2px 12px;background:var(--dsw-alias-markdown-code-block-banner,var(--dsw-alias-bg-layer-2));border-top:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;white-space:pre;overflow:hidden;text-overflow:ellipsis}',
+  // One line per boundary, never two. A title or a strip of code draws a rule
+  // along its top whenever something precedes it, and only the last thing in the
+  // pane draws one along its bottom. A title that closed itself as well would stack
+  // its own rule on the next one's, leaving a single boundary at twice the weight —
+  // which is what a list of closed files used to look like, and why the header
+  // above the list is the one rule that is not drawn here.
+  '.dsh-cg-file-head:not(:first-child),.dsh-cg-file-body:not(:first-child){border-top:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-cg-diff>:last-child{border-bottom:1px solid var(--dsw-alias-border-l1)}',
+
+  // The disclosure control: one asset, turned by the stylesheet. The chevron
+  // points right when the file is closed and down once it is open, so the state
+  // `aria-expanded` already carries is the only thing the drawing depends on.
+  '.dsh-cg-file-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;padding:0;border:0;border-radius:var(--dsw-radius-xs,4px);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer}',
+  '.dsh-cg-file-toggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-file-toggle svg{width:12px;height:12px;display:block;transition:transform .12s ease}',
+  '.dsh-cg-file-toggle[aria-expanded=true] svg{transform:rotate(90deg)}',
+
+  // One file's code, and the only thing in the pane that scrolls sideways.
+  // `overflow-y:hidden` is deliberate rather than incidental: left `visible`
+  // beside a non-visible `overflow-x`, the used value would become `auto` and the
+  // strip would grow a vertical scrollbar of its own around content that has
+  // already been given all the height it needs.
+  '.dsh-cg-file-body{overflow-x:auto;overflow-y:hidden}',
+
+  // The rows are laid out in a strip that shrink-wraps the widest of them, and
+  // is never narrower than the scroller itself. A scroller sizes its own
+  // children to the scroller, so without this strip a full-width row — the `@@`
+  // bar above all — would stop at the pane's edge while the code under it ran
+  // on, which reads as a row that has been cut off. `min-width:100%` is what
+  // keeps the code backgrounds reaching the right edge when every row is short.
+  '.dsh-cg-file-scroll{width:max-content;min-width:100%}',
+
+  // The `@@` scope line. It is drawn inside the file's scroller, so a wide scope
+  // travels with the code it scopes instead of hanging over the title, and the
+  // strip above is what gives the bar the width of that code rather than the
+  // width of the pane: measured, a 47-character scope over code that runs to
+  // 1245px in a 500px pane draws a 1245px bar.
+  //
+  // It is a band, not a box: the colour alone separates it from the code above and
+  // below, with no rule of its own along either edge.
+  //
+  // A scope longer than every line under it is the one case that widens a file,
+  // and it is taken deliberately: the alternative is the ellipsis, which is the
+  // old behaviour and is what made a head look cut off. It is the last resort
+  // here, not the first.
+  '.dsh-cg-hunk-head{padding:2px 12px;background:var(--dsw-alias-markdown-code-block-banner,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;white-space:pre;overflow:hidden;text-overflow:ellipsis}',
 
   // One body line: old number, new number, marker, text. `width:max-content`
   // with `min-width:100%` is what gives every row the full width for its
   // background while still letting a long line scroll the pane sideways.
   '.dsh-cg-line{display:grid;grid-template-columns:44px 44px 14px minmax(0,1fr);width:max-content;min-width:100%;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;line-height:18px}',
-  '.dsh-cg-line[data-kind=add]{background:var(--dsw-alias-file-diff-added-bg)}',
-  '.dsh-cg-line[data-kind=del]{background:var(--dsw-alias-file-diff-deleted-bg)}',
+  // An added or deleted row is tinted with the state colour it carries rather
+  // than with the theme's own `file-diff-*-bg`, at a fifth of its strength — which
+  // is how the theme writes a colour at partial strength; a bare `/20` is not CSS.
+  //
+  // The tint is drawn once, on the row, and nothing else draws a background over
+  // it. That is what keeps a row one colour from edge to edge: give the number
+  // columns a tint of their own and it composites on top of the row's, so the
+  // gutter reads as a deeper shade of the code beside it instead of the same one.
+  '.dsh-cg-line[data-kind=add]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 20%,transparent)}',
+  '.dsh-cg-line[data-kind=del]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 20%,transparent)}',
   '.dsh-cg-line[data-kind=meta]{color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-no{padding-right:8px;text-align:right;color:var(--dsw-alias-label-tertiary);user-select:none}',
-  '.dsh-cg-line[data-kind=add] .dsh-cg-no{background:var(--dsw-alias-file-diff-added-gutter)}',
-  '.dsh-cg-line[data-kind=del] .dsh-cg-no{background:var(--dsw-alias-file-diff-deleted-gutter)}',
+  // Only the marker carries the state colour. The code keeps the reading colour:
+  // same-hue text on a same-hue row measured 1.5:1 in the built-in light theme
+  // and 1.8:1 on a teal one, which is a row nobody can read.
   '.dsh-cg-sign{user-select:none;color:var(--dsw-alias-label-tertiary)}',
-  '.dsh-cg-line[data-kind=add] .dsh-cg-sign{color:var(--dsw-alias-file-diff-added-marker,var(--dsw-alias-state-success-primary))}',
-  '.dsh-cg-line[data-kind=del] .dsh-cg-sign{color:var(--dsw-alias-file-diff-deleted-marker,var(--dsw-alias-state-error-primary))}',
+  '.dsh-cg-line[data-kind=add] .dsh-cg-sign{color:var(--dsw-alias-state-success-primary)}',
+  '.dsh-cg-line[data-kind=del] .dsh-cg-sign{color:var(--dsw-alias-state-error-primary)}',
   // `white-space:pre` keeps indentation; a tab would otherwise collapse to one
   // space and every diff of indented code would read as if it were flat.
   '.dsh-cg-text{white-space:pre;padding-right:16px}',

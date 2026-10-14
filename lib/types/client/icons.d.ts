@@ -54,4 +54,13 @@ export declare const IconCopy: () => ReactElement;
  * changing the button's stroke weight.
  */
 export declare const IconCheck: () => ReactElement;
+/**
+ * The disclosure mark on a file's title in a multi-file patch
+ * (assets/arrow-right.svg).
+ *
+ * Drawn pointing right — at the code when the file is closed — and turned a
+ * quarter by the stylesheet once the file is open, so one asset covers both
+ * states and the glyph reads as the same control either way.
+ */
+export declare const IconArrowRight: () => ReactElement;
 //# sourceMappingURL=icons.d.ts.map

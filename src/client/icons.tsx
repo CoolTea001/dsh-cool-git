@@ -110,3 +110,13 @@ export const IconCopy = svgIcon('copy')
  * changing the button's stroke weight.
  */
 export const IconCheck = svgIcon('check')
+
+/**
+ * The disclosure mark on a file's title in a multi-file patch
+ * (assets/arrow-right.svg).
+ *
+ * Drawn pointing right — at the code when the file is closed — and turned a
+ * quarter by the stylesheet once the file is open, so one asset covers both
+ * states and the glyph reads as the same control either way.
+ */
+export const IconArrowRight = svgIcon('arrow-right')

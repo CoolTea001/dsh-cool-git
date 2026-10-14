@@ -50,7 +50,7 @@ import { Button, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primit
 import { checkoutBranch, commitAll, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchStatus, pullBranch, pushBranch } from './api.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
-import { IconBranch, IconCheck, IconCopy, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
+import { IconArrowRight, IconBranch, IconCheck, IconCopy, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
 import {
   clampFilesHeight,
   clampSideWidth,
@@ -142,6 +142,23 @@ type FlatRow =
   | { readonly type: 'file'; readonly file: DiffFile }
   | { readonly type: 'hunk'; readonly header: string }
   | { readonly type: 'line'; readonly line: DiffLine }
+
+/**
+ * One row under a file's title: a hunk header or a body line.
+ *
+ * Spelled as the complement of the row above so the two cannot drift: a file row
+ * belongs to the title, and nothing that draws a body row has to know it exists.
+ */
+type BodyRow = Exclude<FlatRow, { readonly type: 'file' }>
+
+/** One file's share of the patch: its title, and the rows under it. */
+interface DiffGroup {
+  /** Stable identity for the group, within one patch. */
+  readonly id: string
+  /** The file, or null when the patch names one file and the pane header already did. */
+  readonly file: DiffFile | null
+  readonly body: readonly BodyRow[]
+}
 
 /**
  * The two facts every route answer carries, whatever else it holds.
@@ -290,6 +307,38 @@ function flatten(doc: DiffDoc): FlatRow[] {
     }
   }
   return rows
+}
+
+/**
+ * Split the flattened rows into one group per file.
+ *
+ * The pane draws each file as a section of its own — a title that stays put, and
+ * a code area that scrolls sideways under it — so the flat list the rows are
+ * built as has to be folded back into files before it is rendered.
+ *
+ * @param rows - the rows to draw, in order.
+ * @returns one group per file, each holding the rows under its title.
+ */
+function groupFiles(rows: readonly FlatRow[]): DiffGroup[] {
+  const groups: DiffGroup[] = []
+  let current: { id: string; file: DiffFile | null; body: BodyRow[] } | null = null
+
+  rows.forEach((row, index) => {
+    if (row.type === 'file') {
+      current = { id: `${displayPath(row.file)}#${index}`, file: row.file, body: [] }
+      groups.push(current)
+      return
+    }
+    // A single-file patch emits no file row at all: its rows are all body rows,
+    // and the pane's own header already names the file they belong to.
+    if (current === null) {
+      current = { id: `#${index}`, file: null, body: [] }
+      groups.push(current)
+    }
+    current.body.push(row)
+  })
+
+  return groups
 }
 
 /**
@@ -1832,6 +1881,33 @@ function DiffPane(props: {
 }): ReactElement {
   const { status, selection, current } = props
 
+  // Which files are closed lives here, above the body's loading line, rather than
+  // in the sections themselves. A re-read of the answer on screen — the refresh
+  // control, or the re-read an operation is followed by — puts the body back
+  // through its loading state, and state kept below that would be thrown away with
+  // it: the reader would close four files, refresh, and find all four open again.
+  //
+  // It is still reset per answer, so nothing carries between two commits. The
+  // reset happens while rendering rather than in an effect, which is React's own
+  // advice for state that has to follow a prop: the new answer then never paints
+  // for a frame wearing the previous answer's collapse state.
+  const answerKey = current?.key ?? ''
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  const [seenKey, setSeenKey] = useState(answerKey)
+  if (seenKey !== answerKey) {
+    setSeenKey(answerKey)
+    setCollapsed(new Set())
+  }
+
+  const toggleFile = useCallback((id: string): void => {
+    setCollapsed(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
   if (status !== null && status.ok !== true) {
     return (
       <div className="dsh-cg-empty">
@@ -1871,7 +1947,13 @@ function DiffPane(props: {
         )}
       </header>
       <div className="dsh-cg-diff">
-        <DiffBody loading={loading} current={current} kind={selection.kind === 'file' ? selection.file.kind : undefined} />
+        <DiffBody
+          loading={loading}
+          current={current}
+          kind={selection.kind === 'file' ? selection.file.kind : undefined}
+          collapsed={collapsed}
+          onToggleFile={toggleFile}
+        />
       </div>
     </>
   )
@@ -2013,20 +2095,24 @@ async function writeText(text: string): Promise<boolean> {
  * @param props.loading - the answer for this selection has not arrived yet.
  * @param props.current - the answer, when it has.
  * @param props.kind - the selected path's change kind, for a friendlier empty line.
+ * @param props.collapsed - the files the reader has closed, by section identity.
+ * @param props.onToggleFile - asks the pane to flip one file's state.
  * @returns the body element.
  */
 function DiffBody(props: {
   readonly loading: boolean
   readonly current: DocState | null
   readonly kind: ChangeKind | undefined
+  readonly collapsed: ReadonlySet<string>
+  readonly onToggleFile: (id: string) => void
 }): ReactElement {
-  const { loading, current, kind } = props
+  const { loading, current, kind, collapsed, onToggleFile } = props
 
   if (loading) return <Note text="正在读取 Diff…" />
   if (current?.error !== undefined) return <Note text="无法读取 Diff" />
 
   const doc = current?.doc
-  if (doc === undefined || doc.files.length === 0) {
+  if (current === null || doc === undefined || doc.files.length === 0) {
     return (
       <div className="dsh-cg-empty">
         <span className="dsh-cg-empty-title">没有可显示的文本差异</span>
@@ -2037,44 +2123,177 @@ function DiffBody(props: {
     )
   }
 
+  return (
+    <DiffFiles
+      doc={doc}
+      merge={current.merge === true}
+      truncated={current.truncated === true}
+      collapsed={collapsed}
+      onToggleFile={onToggleFile}
+    />
+  )
+}
+
+/**
+ * The patch's file sections.
+ *
+ * @param props.doc - the parsed patch.
+ * @param props.merge - whether the patch compares against a first parent.
+ * @param props.truncated - whether the Host cut the patch short.
+ * @param props.collapsed - the files the reader has closed, by section identity.
+ * @param props.onToggleFile - asks the pane to flip one file's state.
+ * @returns the sections, and the notes that qualify them.
+ */
+function DiffFiles(props: {
+  readonly doc: DiffDoc
+  readonly merge: boolean
+  readonly truncated: boolean
+  readonly collapsed: ReadonlySet<string>
+  readonly onToggleFile: (id: string) => void
+}): ReactElement {
+  const { doc, merge, truncated, collapsed, onToggleFile } = props
+
   const rows = flatten(doc)
   const shown = rows.length > MAX_DIFF_ROWS ? rows.slice(0, MAX_DIFF_ROWS) : rows
   const hidden = rows.length - shown.length
+  const groups = groupFiles(shown)
+  // A file title is drawn only for a patch that touches more than one file: for a
+  // single changed path the pane's own header already names it, and a second
+  // identical line above the first hunk would just be noise. The same count is
+  // what decides whether there is anything to tell apart, and so to collapse.
+  const collapsible = groups.length > 1
 
   return (
     <>
-      {current?.merge === true ? (
+      {merge ? (
         <div className="dsh-cg-note">合并提交：以下差异是与第一个父提交的比较结果。</div>
       ) : null}
-      {shown.map((row, index) => (
-        <DiffRow key={index} row={row} />
+      {groups.map(group => (
+        <FileSection
+          key={group.id}
+          group={group}
+          collapsible={collapsible}
+          collapsed={collapsed.has(group.id)}
+          onToggle={onToggleFile}
+        />
       ))}
       {hidden > 0 ? <div className="dsh-cg-note">还有 {hidden} 行未渲染（差异过大）。</div> : null}
-      {current?.truncated === true ? <div className="dsh-cg-note">Diff 超出读取上限，内容已被截断。</div> : null}
+      {truncated ? <div className="dsh-cg-note">Diff 超出读取上限，内容已被截断。</div> : null}
     </>
   )
 }
 
 /**
- * One flattened diff row.
+ * One file of the patch: its title, its disclosure control, and the scroller its
+ * code lives in.
+ *
+ * The title sits outside that scroller on purpose — a long line moves the code
+ * under a title that stays where it is — and each file's scroller is its own, so
+ * dragging one file sideways leaves every other file where it was.
+ *
+ * @param props.group - the file and the rows under its title.
+ * @param props.collapsible - whether this patch has more than one file to tell apart.
+ * @param props.collapsed - whether this file's code is closed.
+ * @param props.onToggle - asks the owner to flip this file's state.
+ * @returns the section.
+ */
+function FileSection(props: {
+  readonly group: DiffGroup
+  readonly collapsible: boolean
+  readonly collapsed: boolean
+  readonly onToggle: (id: string) => void
+}): ReactElement {
+  const { group, collapsible, collapsed, onToggle } = props
+  const { file } = group
+
+  return (
+    <>
+      {/* The title is only drawn when a patch names more than one file; a lone
+          file's name is already in the pane header, and repeating it would be a
+          second identical line above the first hunk. */}
+      {file === null ? null : (
+        <FileHead
+          file={file}
+          id={group.id}
+          collapsible={collapsible}
+          collapsed={collapsed}
+          onToggle={onToggle}
+        />
+      )}
+      {/* The rows sit in a shrink-to-fit strip rather than directly in the
+          scroller. A scroller sizes its own children to itself, so a hunk's
+          `@@` bar would stop at the pane's edge and read as if the code beside
+          it had been cut off; inside the strip every full-width row is as wide
+          as the widest row instead. */}
+      {collapsed ? null : (
+        <div className="dsh-cg-file-body">
+          <div className="dsh-cg-file-scroll">
+            {group.body.map((row, index) => (
+              <DiffRow key={index} row={row} />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * One file's title row, and the control that closes it.
+ *
+ * @param props.file - the file the row names.
+ * @param props.id - the section's identity, which is what the control flips.
+ * @param props.collapsible - whether this patch has more than one file.
+ * @param props.collapsed - whether the file's code is closed.
+ * @param props.onToggle - asks the owner to flip this file's state.
+ * @returns the title row.
+ */
+function FileHead(props: {
+  readonly file: DiffFile
+  readonly id: string
+  readonly collapsible: boolean
+  readonly collapsed: boolean
+  readonly onToggle: (id: string) => void
+}): ReactElement {
+  const { file, id, collapsible, collapsed, onToggle } = props
+  const path = displayPath(file)
+  const { dir, name } = splitPath(path)
+
+  return (
+    <div className="dsh-cg-file-head">
+      {collapsible ? (
+        <button
+          type="button"
+          className="dsh-cg-file-toggle"
+          // The state the stylesheet turns the chevron by, and the one a screen
+          // reader announces: `aria-expanded` is the fact, the quarter turn is
+          // only how it is drawn.
+          aria-expanded={!collapsed}
+          title={collapsed ? '展开此文件的差异' : '折叠此文件的差异'}
+          aria-label={collapsed ? '展开此文件的差异' : '折叠此文件的差异'}
+          onClick={() => onToggle(id)}
+        >
+          <IconArrowRight />
+        </button>
+      ) : null}
+      {/* The path is one line whatever the pane's width, so the whole of it is
+          kept reachable through the row's own tooltip. */}
+      <span className="dsh-cg-file-path" title={path}>
+        <span className="dsh-cg-dir">{dir}</span>
+        {name}
+      </span>
+      <DiffStats additions={file.additions} deletions={file.deletions} />
+    </div>
+  )
+}
+
+/**
+ * One row under a file title.
  *
  * @param props.row - the row to draw.
  * @returns the row element.
  */
-function DiffRow({ row }: { readonly row: FlatRow }): ReactElement {
-  if (row.type === 'file') {
-    const { dir, name } = splitPath(displayPath(row.file))
-    return (
-      <div className="dsh-cg-file-head">
-        <span className="dsh-cg-file-path">
-          <span className="dsh-cg-dir">{dir}</span>
-          {name}
-        </span>
-        <DiffStats additions={row.file.additions} deletions={row.file.deletions} />
-      </div>
-    )
-  }
-
+function DiffRow({ row }: { readonly row: BodyRow }): ReactElement {
   if (row.type === 'hunk') return <div className="dsh-cg-hunk-head">{row.header}</div>
 
   const line = row.line
