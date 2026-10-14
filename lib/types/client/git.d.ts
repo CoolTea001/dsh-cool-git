@@ -11,9 +11,11 @@
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
- * answer is current, which failure the dialog is stating, and where the two
- * boundaries were left. That keeps a manual refresh honest — it re-reads `status`
- * and `log`, and the diff pane re-reads whatever it is showing.
+ * answer is current, which failure the dialog is stating, which operation is in
+ * flight — a checkout or one half of a remote round trip, either of which is what
+ * disables the other controls — and where the two boundaries were left. That keeps
+ * a manual refresh honest — it re-reads `status` and `log`, and the diff pane
+ * re-reads whatever it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host

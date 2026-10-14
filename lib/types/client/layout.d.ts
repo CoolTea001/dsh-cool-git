@@ -36,9 +36,8 @@ export declare const SIDE_DEFAULT = 340;
  *
  * The toolbar sets this floor rather than the lists do: two parts of that row may
  * give ground — the branch's name first, down to the icon alone, and then the
- * Workspace's name — while the remote control and 刷新 beside them are fixed.
- * Shorter than this and both names are gone and those controls would run over the
- * sidebar's own edge.
+ * Workspace's name — while 刷新 beside them is fixed. Shorter than this and both
+ * names are gone and that control would run over the sidebar's own edge.
  */
 export declare const SIDE_MIN = 260;
 /** The widest a drag may leave the sidebar, however wide the window is. */

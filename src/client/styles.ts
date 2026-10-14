@@ -105,9 +105,19 @@ const GIT_CSS = [
   `.${GIT_ROOT_CLASS}[data-resizing],.${GIT_ROOT_CLASS}[data-resizing] *{user-select:none}`,
   `.${GIT_ROOT_CLASS}[data-resizing=col],.${GIT_ROOT_CLASS}[data-resizing=col] *{cursor:col-resize}`,
   `.${GIT_ROOT_CLASS}[data-resizing=row],.${GIT_ROOT_CLASS}[data-resizing=row] *{cursor:row-resize}`,
-  '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
-  '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.dsh-cg-count{flex:none;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:500;line-height:15px}',
+  // A pane's header: the pane's name and its row count, separated by a middle
+  // dot, on the left, and whatever that pane's own control is on the right —
+  // 提交历史 carries the remote control there, and 变更文件区 nothing. The name is
+  // the one part that gives ground, so the count leaves with it as a unit; the
+  // control is `flex:none` through `.dsh-cg-tools`, which is what keeps the two
+  // ends from ever trading widths.
+  //
+  // The header states the layout and the title states the type: the small bold
+  // caps the title is set in would otherwise be inherited by the control beside
+  // it, which draws its own `font:inherit` — the digits inside 同步变更 would come
+  // out a weight and a tracking heavier than the same button draws in the sidebar.
+  '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
+  '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
   '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 6px 8px}',
   // Every list the tab scrolls — the sidebar's two panes here, and the branch
   // dialog's list below, which states the same binding by sharing this
@@ -133,13 +143,14 @@ const GIT_CSS = [
   '.dsh-cg-icon:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-icon:disabled:hover{background:transparent;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-icon svg{width:13px;height:13px;display:block}',
-  // 同步变更 is the toolbar's remote control wherever the branch has an upstream,
-  // and inside it sit both halves of the round trip: each arrow with its
+  // 同步变更 is the remote control in 提交历史's header wherever the branch has an
+  // upstream, and inside it sit both halves of the round trip: each arrow with its
   // divergence count beside it, because the count and the control that resolves
   // it are one thing. The button widens to take the digits, and the arrow of a
   // direction with something to move is a shade stronger than an idle one's. The
-  // name is the tooltip's and the accessible label's, not a word in the row: two
-  // arrows and two counts already fill what the sidebar's own floor has left.
+  // name is the tooltip's and the accessible label's, not a word on the header:
+  // two arrows and two counts already fill what the pane's own name and count
+  // leave of that row.
   // Where there is no upstream this button is not drawn at all — 发布分支 takes
   // its place as an ordinary single-glyph control.
   '.dsh-cg-sync{width:auto;min-width:22px;gap:4px;padding:0 5px}',
@@ -163,12 +174,13 @@ const GIT_CSS = [
   '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
-  // beside it, and then the toolbar's own group — 同步变更 (or 发布分支) and 刷新 —
-  // one hairline under all of them. Each name carries its own glyph (a directory
-  // for the Workspace, a forked commit for the branch), so the row states which is
-  // which without either label having to say it; the operations are icons rather
-  // than words because the three controls have to fit the row at its narrowest,
-  // which is the sidebar's own floor.
+  // beside it, and then the one control the row keeps — 刷新 — one hairline under
+  // all of them. Each name carries its own glyph (a directory for the Workspace, a
+  // forked commit for the branch), so the row states which is which without either
+  // label having to say it; the operation is an icon rather than a word because the
+  // controls have to fit the row at its narrowest, which is the sidebar's own floor.
+  // The remote control is not here: it lives in 提交历史's header, beside the
+  // commits it moves.
   //
   // Two of the row's parts may give ground, and the branch's name goes first: the
   // pill is the row's own item rather than a member of the group beside it, because
@@ -197,10 +209,11 @@ const GIT_CSS = [
   // that pixel swallows the fraction, and a real loss — the pill already down to
   // its icon — is still the ellipsis it should be.
   '.dsh-cg-workspace-name{min-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // `margin-left:auto` is what keeps the group at the row's right edge however
-  // long the Workspace's name is — and `flex:none` is what makes the group the
-  // fixed part of the row: neither the remote control nor 刷新 is ever asked to
-  // give up a pixel of the width its own glyph and counts need.
+  // The icon-button group both rows end with — 刷新 in the sidebar's first row and
+  // the remote control in 提交历史's header. `margin-left:auto` is what keeps the
+  // group at its row's right edge however long the name on the left is, and
+  // `flex:none` is what makes the group the fixed part of the row: the control is
+  // never asked to give up a pixel of the width its own glyph and counts need.
   '.dsh-cg-tools{flex:none;display:flex;align-items:center;margin-left:auto}',
   // The badge's gap is its own `margin` for the reason the icon's is: the pill's
   // spacing belongs to the things that stay.

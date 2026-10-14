@@ -11,9 +11,11 @@
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
- * answer is current, which failure the dialog is stating, and where the two
- * boundaries were left. That keeps a manual refresh honest — it re-reads `status`
- * and `log`, and the diff pane re-reads whatever it is showing.
+ * answer is current, which failure the dialog is stating, which operation is in
+ * flight — a checkout or one half of a remote round trip, either of which is what
+ * disables the other controls — and where the two boundaries were left. That keeps
+ * a manual refresh honest — it re-reads `status` and `log`, and the diff pane
+ * re-reads whatever it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
@@ -99,6 +101,9 @@ const KIND_LABEL: Readonly<Record<ChangeKind, string>> = {
   conflicted: '冲突',
   unknown: '未知状态',
 }
+
+/** The half of a remote round trip that is running, if any. */
+type RemoteRun = 'pull' | 'push'
 
 /** Which row the diff pane is showing, if any. */
 type Selection =
@@ -307,6 +312,21 @@ function refLabel(ref: string): string {
   return ref.replace(/^HEAD -> /, '').replace(/^tag: /, '')
 }
 
+/**
+ * One pane header's text: its label, and how many rows it is showing.
+ *
+ * The count is part of the line rather than a badge of its own, so the header
+ * reads as one sentence and stays one line however narrow the sidebar gets —
+ * the whole thing truncates as a unit instead of the count leaving first.
+ *
+ * @param label - the pane's name, e.g. `提交历史`.
+ * @param count - the rows the pane drew; nothing is added while there are none.
+ * @returns the header's text.
+ */
+function headText(label: string, count: number): string {
+  return count > 0 ? `${label} · ${count}` : label
+}
+
 /** The copy glyph. */
 const COPY_ICON = (
   <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -330,8 +350,8 @@ const CHECK_ICON = (
  * It stands in for whichever glyph the wait belongs to, so it has to carry the
  * same weight as the artwork it replaces rather than a stroke of its own.
  *
- * The Workspace, branch, pull, push and refresh marks are assets now — see
- * `icons.tsx` — because those are the glyphs the toolbar shows at rest. This
+ * The Workspace, branch, pull, push, publish and refresh marks are assets now —
+ * see `icons.tsx` — because those are the glyphs the page shows at rest. This
  * ring, the copy pair and the spinner's own turning are local because they are
  * states rather than subjects.
  */
@@ -365,6 +385,10 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
   const [log, setLog] = useState<LogPayload | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  /** The branch a checkout is in flight for, or null at rest. */
+  const [switching, setSwitching] = useState<string | null>(null)
+  /** The half of the remote round trip in flight, or null at rest. */
+  const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [doc, setDoc] = useState<DocState | null>(null)
   /** The failure the dialog is stating, or null while none is open. */
@@ -544,6 +568,103 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     void refresh()
   }, [refresh])
 
+  /**
+   * Check out the branch the dialog confirmed.
+   *
+   * A refusal is the error dialog's, like every other failure.
+   *
+   * @param branch - the branch the user picked and confirmed.
+   */
+  const handleCheckout = useCallback((branch: string): void => {
+    setSwitching(branch)
+    void checkoutBranch(sessionId, branch).then(result => {
+      setSwitching(null)
+      if (result?.ok !== true) {
+        reportError({
+          title: `切换到 ${branch} 失败`,
+          lines: [reasonOf(result, `切换到 ${branch} 失败`)],
+        })
+        return
+      }
+      handleSwitched()
+    })
+  }, [sessionId, handleSwitched, reportError])
+
+  /**
+   * Send this branch to its upstream, and report the answer.
+   *
+   * Publish and the second half of Sync run this one call, because the Host
+   * decides which of the two it is from the repository itself: a branch with no
+   * upstream is pushed to the single configured remote and recorded as its
+   * upstream. The only difference the page makes is what it calls a failure.
+   *
+   * @param title - the failure's heading, naming which of the two was asked.
+   */
+  const pushRemote = useCallback((title: string): void => {
+    setSyncing('push')
+    void pushBranch(sessionId).then(result => {
+      setSyncing(null)
+      if (result?.ok !== true) {
+        reportError({ title, lines: [reasonOf(result, title)] })
+      }
+      // A push moves nothing on disk, but a refusal moves the page's idea of the
+      // divergence just as surely, so the two answers are re-read either way.
+      handleSynced()
+    })
+  }, [sessionId, handleSynced, reportError])
+
+  /**
+   * Run the round trip: pull, then push.
+   *
+   * The order is what makes a single button safe. Fast-forwarding first means
+   * the push that follows sends a history the remote already has, so the common
+   * divergence — the remote moved on while this branch did — resolves without a
+   * second click and without the non-fast-forward refusal. A refused pull stops
+   * there instead: the two sides have diverged, and pushing into that is exactly
+   * the refusal the pull has already explained.
+   *
+   * This is only ever asked of a branch that has an upstream — without one the
+   * header offers Publish instead — so the pull has a target by construction.
+   */
+  const syncRemote = useCallback((): void => {
+    setSyncing('pull')
+    void pullBranch(sessionId).then(result => {
+      if (result?.ok !== true) {
+        setSyncing(null)
+        reportError({ title: '拉取失败', lines: [reasonOf(result, '拉取失败')] })
+        // A rejected pull still tells the user the remote has moved, so the
+        // counts are re-read even though nothing was pulled.
+        handleSynced()
+        return
+      }
+      // The pull rewrote the working tree, so the diff on screen is stale and is
+      // dropped here — the push that follows moves nothing on disk.
+      handleSwitched()
+      pushRemote('推送失败')
+    })
+  }, [sessionId, handleSwitched, handleSynced, reportError, pushRemote])
+
+  /**
+   * Publish this branch: push it to the single configured remote and let that
+   * push record the upstream, which is what turns a local branch into one the
+   * rest of the world can see.
+   *
+   * It is offered exactly when there is no upstream to sync with, and it is the
+   * honest answer for that state rather than a Sync showing `0 0`: the two counts
+   * have nothing to be counted against, and the thing the branch needs is not a
+   * comparison but a relationship. No remote, or several, is Git's refusal to
+   * guess, reported like every other failure.
+   */
+  const publishRemote = useCallback((): void => {
+    pushRemote('发布分支失败')
+  }, [pushRemote])
+
+  // One operation at a time, wherever the control that asks for it lives: the
+  // branch pill and 刷新 in the toolbar, and the remote control in 提交历史's
+  // header. Stating it once here is what keeps a second click from queueing a
+  // second checkout or a second round trip behind the first.
+  const busy = switching !== null || syncing !== null
+
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
 
@@ -609,9 +730,10 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
           status={status}
           sessionId={sessionId}
           refreshing={refreshing}
+          switching={switching}
+          busy={busy}
           onRefresh={() => void refresh()}
-          onSwitched={handleSwitched}
-          onSynced={handleSynced}
+          onCheckout={handleCheckout}
           onError={reportError}
         />
         {/* The upper pane owns the divider under it: the boundary is what its own
@@ -620,8 +742,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
             own and the panes stay the only flow children of the column. */}
         <section ref={filesPane} className="dsh-cg-pane dsh-cg-files">
           <header className="dsh-cg-head">
-            <span className="dsh-cg-head-title">文件变更</span>
-            {files.length > 0 ? <span className="dsh-cg-count">{files.length}</span> : null}
+            <span className="dsh-cg-head-title">{headText('文件变更', files.length)}</span>
           </header>
           <div className="dsh-cg-list">
             <ChangeList
@@ -643,8 +764,19 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
 
         <section className="dsh-cg-pane dsh-cg-history">
           <header className="dsh-cg-head">
-            <span className="dsh-cg-head-title">提交历史</span>
-            {commits.length > 0 ? <span className="dsh-cg-count">{commits.length}</span> : null}
+            <span className="dsh-cg-head-title">{headText('提交历史', commits.length)}</span>
+            {/* The header's own right-hand group, holding the one operation that
+                moves what is listed under it. */}
+            <div className="dsh-cg-tools">
+              <RemoteControl
+                status={status}
+                syncing={syncing}
+                busy={busy}
+                refreshing={refreshing}
+                onSync={syncRemote}
+                onPublish={publishRemote}
+              />
+            </div>
           </header>
           <div className="dsh-cg-list">
             <CommitList
@@ -718,37 +850,20 @@ function ErrorDialog(props: {
 }
 
 /**
- * The repository's toolbar, in the order the work happens: the Workspace this
- * session is in, the branch it is on, how far that branch has drifted from its
- * upstream, and then the two operations the page can perform — one remote control
- * and a re-read — plus the branch button, which opens the one dialog that
- * moves HEAD.
+ * The sidebar's first row: the Workspace this session is in, the branch it is on,
+ * and the one operation the row itself keeps — 刷新. One hairline under all of them.
  *
  * The branch switch is stated as a decision rather than an accident: the dialog
  * lists what Git reported, tags the branch already on, and applies nothing until
  * the choice is confirmed with a button of its own — the Host then runs a real
- * checkout, and a refusal is the error dialog's. Every control is disabled while
- * any other operation is in flight, so a second click cannot queue a second
- * checkout or sync behind the first.
+ * checkout, and a refusal is the error dialog's. The checkout itself is the
+ * page's (`GitView`), which owns every operation in flight and disables the rest
+ * of the page's controls while one runs, so this row closes the dialog and hands
+ * the branch over rather than running anything itself.
  *
  * The dialog is the platform's own Modal, which owns the parts that are easy to
  * get wrong — the body portal, the mask, the focus walk, Escape, and returning
  * focus to the control that opened it.
- *
- * Sync is the round trip taken in the one order that cannot rewind work: a
- * fast-forward pull, then a push of what is left. Both arrows and both counts
- * stay inside that single button — `↓` behind is what the pull brings, `↑` ahead
- * is what the push sends — so the control that states the divergence is the one
- * that resolves it, and each arrow turns while its own half is in flight. The
- * button draws those two arrows and nothing else: 同步变更 is the name the
- * tooltip and the accessible label carry, not a word in the row, which is what
- * keeps a named operation inside the width the sidebar's own floor has left for
- * the row.
- *
- * Publish takes Sync's place on a branch with no upstream, because that branch
- * has no divergence to state and no pull to take: what it needs is the push that
- * creates the remote branch and records it as the upstream. One cloud-and-arrow
- * glyph, the same tooltip-only naming, and the two are never offered together.
  *
  * The row is also where the two names inside it are spent, and the branch's goes
  * first: a sidebar too narrow for both shortens the pill, whose own name gives way
@@ -760,10 +875,10 @@ function ErrorDialog(props: {
  * @param props.status - the current status answer, for the branch already on.
  * @param props.sessionId - the session whose repository is being switched.
  * @param props.refreshing - a re-read of the repository is in flight.
+ * @param props.switching - the branch a checkout is in flight for, if any.
+ * @param props.busy - whether any repository operation is in flight.
  * @param props.onRefresh - called to re-read the repository state and history.
- * @param props.onSwitched - called after a checkout or a pull, which both rewrite
- *   the working tree, so the page drops the diff it was showing.
- * @param props.onSynced - called after a push, which moves nothing on disk.
+ * @param props.onCheckout - called with the branch the dialog confirmed.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the header row.
  */
@@ -771,40 +886,18 @@ function SideHead(props: {
   readonly status: StatusPayload | null
   readonly sessionId: string | undefined
   readonly refreshing: boolean
+  readonly switching: string | null
+  readonly busy: boolean
   readonly onRefresh: () => void
-  readonly onSwitched: () => void
-  readonly onSynced: () => void
+  readonly onCheckout: (branch: string) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
-  const { status, sessionId, refreshing, onRefresh, onSwitched, onSynced, onError } = props
+  const { status, sessionId, refreshing, switching, busy, onRefresh, onCheckout, onError } = props
   /** Whether the branch dialog is showing. */
   const [open, setOpen] = useState(false)
-  const [switching, setSwitching] = useState<string | null>(null)
-  /** The remote operation in flight, if any. */
-  const [syncing, setSyncing] = useState<'pull' | 'push' | null>(null)
 
-  // What the toolbar's remote controls are allowed to do, read from the answer
-  // the page already has. `reachable` is the repository's own word on whether
-  // there is a branch to move at all; `hasUpstream` is what makes a pull possible,
-  // what the two counts are counted against, and what decides which control the
-  // row offers — a branch with no upstream has no remote to have diverged from,
-  // so there is nothing to count and nothing to sync, and what it needs first is
-  // the push that records an upstream (Publish).
-  //
-  // Both counts are always numbers, zeros included. A control whose numbers vanish
-  // when nothing is pending reads as broken rather than as idle, and a digit that
-  // came and went as commits moved would shift the toolbar under the cursor; `0`
-  // is the honest answer for a branch in step with its upstream. The fallback
-  // below is never drawn — the sync button needs an upstream to exist — it only
-  // keeps the two counts plain numbers.
   const onBranch = status?.ok === true
   const detached = status?.detached === true
-  const reachable = onBranch && !detached
-  const hasUpstream = reachable && status?.upstream !== undefined
-  const publishable = reachable && !hasUpstream
-  const behind = hasUpstream ? status?.behind ?? 0 : 0
-  const ahead = hasUpstream ? status?.ahead ?? 0 : 0
-  const busy = switching !== null || syncing !== null
 
   /** Close the branch dialog without switching. */
   const closeDialog = useCallback((): void => {
@@ -812,98 +905,18 @@ function SideHead(props: {
   }, [])
 
   /**
-   * Check out the branch the dialog confirmed.
+   * Hand the branch the dialog confirmed to the page, which runs the checkout.
    *
    * The dialog closes first: a checkout replaces the working tree, and a picker
    * left on screen while that runs would be offering a list that is already
-   * stale. A refusal is the error dialog's, like every other failure.
+   * stale.
    *
    * @param branch - the branch the user picked and confirmed.
    */
   const choose = useCallback((branch: string): void => {
     setOpen(false)
-    setSwitching(branch)
-    void checkoutBranch(sessionId, branch).then(result => {
-      setSwitching(null)
-      if (result?.ok !== true) {
-        onError({
-          title: `切换到 ${branch} 失败`,
-          lines: [reasonOf(result, `切换到 ${branch} 失败`)],
-        })
-        return
-      }
-      onSwitched()
-    })
-  }, [sessionId, onSwitched, onError])
-
-  /**
-   * Send this branch to its upstream, and report the answer.
-   *
-   * Publish and the second half of Sync run this one call, because the Host
-   * decides which of the two it is from the repository itself: a branch with no
-   * upstream is pushed to the single configured remote and recorded as its
-   * upstream. The only difference the page makes is what it calls a failure.
-   *
-   * @param title - the failure's heading, naming which of the two was asked.
-   */
-  const push = useCallback((title: string): void => {
-    setSyncing('push')
-    void pushBranch(sessionId).then(result => {
-      setSyncing(null)
-      if (result?.ok !== true) {
-        onError({ title, lines: [reasonOf(result, title)] })
-      }
-      // A push moves nothing on disk, but a refusal moves the page's idea of the
-      // divergence just as surely, so the two answers are re-read either way.
-      onSynced()
-    })
-  }, [sessionId, onSynced, onError])
-
-  /**
-   * Run the round trip: pull, then push.
-   *
-   * The order is what makes a single button safe. Fast-forwarding first means
-   * the push that follows sends a history the remote already has, so the common
-   * divergence — the remote moved on while this branch did — resolves without a
-   * second click and without the non-fast-forward refusal. A refused pull stops
-   * there instead: the two sides have diverged, and pushing into that is exactly
-   * the refusal the pull has already explained.
-   *
-   * This is only ever asked of a branch that has an upstream — without one the
-   * row offers Publish instead — so the pull has a target by construction.
-   */
-  const sync = useCallback((): void => {
-    setSyncing('pull')
-    void pullBranch(sessionId).then(result => {
-      if (result?.ok !== true) {
-        setSyncing(null)
-        onError({ title: '拉取失败', lines: [reasonOf(result, '拉取失败')] })
-        // A rejected pull still tells the user the remote has moved, so the
-        // counts are re-read even though nothing was pulled.
-        onSynced()
-        return
-      }
-      // The pull rewrote the working tree, so the diff on screen is stale and is
-      // dropped here — the push that follows moves nothing on disk.
-      onSwitched()
-      push('推送失败')
-    })
-  }, [sessionId, onSwitched, onSynced, onError, push])
-
-  /**
-   * Publish this branch: push it to the single configured remote and let that
-   * push record the upstream, which is what turns a local branch into one the
-   * rest of the world can see.
-   *
-   * It is offered exactly when there is no upstream to sync with, and it is the
-   * honest answer for that state rather than a Sync showing `0 0`: the two counts
-   * have nothing to be counted against, and the thing the branch needs is not a
-   * comparison but a relationship. No remote, or several, is Git's refusal to
-   * guess, reported like every other failure.
-   */
-  const publish = useCallback((): void => {
-    push('发布分支失败')
-  }, [push])
+    onCheckout(branch)
+  }, [onCheckout])
 
   const label = detached
     ? `HEAD ${status?.head?.short ?? ''}`.trim()
@@ -973,69 +986,6 @@ function SideHead(props: {
         {/* The tooltip's anchor is the span, not the button: a disabled button
             emits no pointer events, so anchoring on it would lose the hover
             exactly when the bubble has the most to explain. */}
-        {/* Which remote control the row offers is the branch's own answer rather
-            than a setting. An upstream means the two counts have something to be
-            counted against and Sync is what resolves them; no upstream means
-            there is nothing to count, and the branch needs a relationship before
-            it needs a comparison — that is Publish. Neither control is ever asked
-            to show a number it cannot stand behind. */}
-        {publishable
-          ? (
-            <Tooltip label="发布分支" side="bottom" portal>
-              <span className="dsh-cg-tip">
-                <button
-                  type="button"
-                  className="dsh-cg-icon"
-                  aria-label="发布分支"
-                  data-busy={syncing === 'push'}
-                  disabled={!reachable || busy || refreshing}
-                  onClick={publish}
-                >
-                  {syncing === 'push' ? SPINNER_ICON : <IconPublish />}
-                </button>
-              </span>
-            </Tooltip>
-          )
-          : (
-            /* One control for both directions of the round trip. The two arrows
-               and their counts stay inside it — each beside its own glyph, each
-               turning while its own half is in flight — so the button that states
-               the divergence is the button that resolves it. No word in the
-               button itself: 同步变更 is this tooltip's label and the button's
-               accessible name. */
-            <Tooltip label="同步变更" side="bottom" portal>
-              <span className="dsh-cg-tip">
-                <button
-                  type="button"
-                  className="dsh-cg-icon dsh-cg-sync"
-                  aria-label="同步变更"
-                  // No `data-busy` on the button itself: each arrow marks its own
-                  // half of the round trip, and one on the button would turn both.
-                  disabled={!reachable || busy || refreshing}
-                  onClick={sync}
-                >
-                  <span
-                    className="dsh-cg-sync-arrow"
-                    data-busy={syncing === 'pull'}
-                    data-pending={behind > 0}
-                    aria-hidden="true"
-                  >
-                    {syncing === 'pull' ? SPINNER_ICON : <IconPull />}
-                    <span className="dsh-cg-sync-count">{behind}</span>
-                  </span>
-                  <span
-                    className="dsh-cg-sync-arrow"
-                    data-busy={syncing === 'push'}
-                    data-pending={ahead > 0}
-                    aria-hidden="true"
-                  >
-                    {syncing === 'push' ? SPINNER_ICON : <IconPush />}
-                    <span className="dsh-cg-sync-count">{ahead}</span>
-                  </span>
-                </button>
-              </span>
-            </Tooltip>
-          )}
         <Tooltip label="刷新" side="bottom" portal>
           <span className="dsh-cg-tip">
             <button
@@ -1053,6 +1003,123 @@ function SideHead(props: {
       </div>
     </div>
   )
+}
+
+/**
+ * The remote control that lives in 提交历史's header: 同步变更 on a branch with an
+ * upstream, 发布分支 on one without.
+ *
+ * It stands where the commits it moves are listed rather than in the toolbar
+ * above the panes, opposite the pane's own name and count: what the two counts
+ * are counted against, and what the round trip brings and sends, is the history
+ * under it. It stays an icon because that row is the sidebar's narrowest place —
+ * the name and count share it with this button — and 同步变更 / 发布分支 are the
+ * names its tooltip and its accessible label carry.
+ *
+ * Sync is the round trip taken in the one order that cannot rewind work: a
+ * fast-forward pull, then a push of what is left. Both arrows and both counts
+ * stay inside that single button — `↓` behind is what the pull brings, `↑` ahead
+ * is what the push sends — so the control that states the divergence is the one
+ * that resolves it, and each arrow turns while its own half is in flight.
+ *
+ * Publish takes Sync's place on a branch with no upstream, because that branch
+ * has no divergence to state and no pull to take: what it needs is the push that
+ * creates the remote branch and records it as the upstream. One cloud-and-arrow
+ * glyph, the same tooltip-only naming, and the two are never offered together.
+ *
+ * Which control that is, is the branch's own answer rather than a setting, read
+ * from the answer the page already has. `reachable` is the repository's own word
+ * on whether there is a branch to move at all; `hasUpstream` is what makes a pull
+ * possible, what the two counts are counted against, and what decides which of
+ * the two is drawn — a branch with no upstream has no remote to have diverged
+ * from, so there is nothing to count and nothing to sync. Neither control is ever
+ * asked to show a number it cannot stand behind.
+ *
+ * Both counts are always numbers, zeros included. A control whose numbers vanish
+ * when nothing is pending reads as broken rather than as idle, and a digit that
+ * came and went as commits moved would shift the header under the cursor; `0` is
+ * the honest answer for a branch in step with its upstream. The fallback below is
+ * never drawn — the sync button needs an upstream to exist — it only keeps the two
+ * counts plain numbers.
+ *
+ * @param props.status - the current status answer, for the branch already on.
+ * @param props.syncing - the half of the round trip in flight, if any.
+ * @param props.busy - whether any repository operation is in flight.
+ * @param props.refreshing - a re-read of the repository is in flight.
+ * @param props.onSync - called to run the pull-then-push round trip.
+ * @param props.onPublish - called to push a branch that has no upstream yet.
+ * @returns the control the branch's own state calls for.
+ */
+function RemoteControl(props: {
+  readonly status: StatusPayload | null
+  readonly syncing: RemoteRun | null
+  readonly busy: boolean
+  readonly refreshing: boolean
+  readonly onSync: () => void
+  readonly onPublish: () => void
+}): ReactElement {
+  const { status, syncing, busy, refreshing, onSync, onPublish } = props
+  const reachable = status?.ok === true && status?.detached !== true
+  const hasUpstream = reachable && status?.upstream !== undefined
+  const publishable = reachable && !hasUpstream
+  const behind = hasUpstream ? status?.behind ?? 0 : 0
+  const ahead = hasUpstream ? status?.ahead ?? 0 : 0
+
+  // The tooltip's anchor is the span, not the button: a disabled button emits no
+  // pointer events, so anchoring on it would lose the hover exactly when the
+  // bubble has the most to explain.
+  return publishable
+    ? (
+      <Tooltip label="发布分支" side="bottom" portal>
+        <span className="dsh-cg-tip">
+          <button
+            type="button"
+            className="dsh-cg-icon"
+            aria-label="发布分支"
+            data-busy={syncing === 'push'}
+            disabled={!reachable || busy || refreshing}
+            onClick={onPublish}
+          >
+            {syncing === 'push' ? SPINNER_ICON : <IconPublish />}
+          </button>
+        </span>
+      </Tooltip>
+    )
+    : (
+      /* One control for both directions of the round trip. No `data-busy` on the
+         button itself: each arrow marks its own half of the round trip, and one on
+         the button would turn both. */
+      <Tooltip label="同步变更" side="bottom" portal>
+        <span className="dsh-cg-tip">
+          <button
+            type="button"
+            className="dsh-cg-icon dsh-cg-sync"
+            aria-label="同步变更"
+            disabled={!reachable || busy || refreshing}
+            onClick={onSync}
+          >
+            <span
+              className="dsh-cg-sync-arrow"
+              data-busy={syncing === 'pull'}
+              data-pending={behind > 0}
+              aria-hidden="true"
+            >
+              {syncing === 'pull' ? SPINNER_ICON : <IconPull />}
+              <span className="dsh-cg-sync-count">{behind}</span>
+            </span>
+            <span
+              className="dsh-cg-sync-arrow"
+              data-busy={syncing === 'push'}
+              data-pending={ahead > 0}
+              aria-hidden="true"
+            >
+              {syncing === 'push' ? SPINNER_ICON : <IconPush />}
+              <span className="dsh-cg-sync-count">{ahead}</span>
+            </span>
+          </button>
+        </span>
+      </Tooltip>
+    )
 }
 
 /**
