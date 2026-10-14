@@ -390,10 +390,12 @@ const GIT_CSS = [
   '.dsh-cg-commit-input:disabled{cursor:not-allowed}',
   '.dsh-cg-commit-send{width:100%}',
 
-  // Changed-path rows.
+  // Changed-path rows. The selected row reads exactly like a hovered one, the
+  // way the branch dialog's rows already do: the fill says which row the page
+  // or the pointer is on, and a second, stronger fill would read as a different
+  // state rather than the same one.
   '.dsh-cg-row{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-  '.dsh-cg-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
+  '.dsh-cg-row:hover,.dsh-cg-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-badge{flex:none;width:13px;text-align:center;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;font-weight:700;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-badge[data-kind=added]{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-badge[data-kind=modified]{color:var(--dsw-alias-state-warn-primary)}',
@@ -403,8 +405,13 @@ const GIT_CSS = [
   '.dsh-cg-badge[data-kind=copied]{color:var(--dsw-alias-brand-primary)}',
   '.dsh-cg-badge[data-kind=typechange]{color:var(--dsw-alias-state-warn-primary)}',
   '.dsh-cg-badge[data-kind=untracked]{color:var(--dsw-alias-state-idle-primary)}',
-  '.dsh-cg-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px}',
+  // The row's path reads `name · parent`; the name keeps its width while the
+  // parent gives way first, because the name is what the row is about.
+  '.dsh-cg-path{display:flex;align-items:baseline;gap:4px;flex:1 1 auto;min-width:0;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px}',
+  '.dsh-cg-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-dot{flex:none;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-dir{color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-path .dsh-cg-dir{flex:0 100000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   // The stage dot marks a row whose index side has content, so a file that is
   // both staged and edited again is not mistaken for a plain modification.
   '.dsh-cg-stage{flex:none;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-brand-primary)}',
@@ -412,8 +419,7 @@ const GIT_CSS = [
 
   // Commit rows.
   '.dsh-cg-commit{display:flex;flex-direction:column;gap:2px;width:100%;padding:5px 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-commit:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-  '.dsh-cg-commit[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
+  '.dsh-cg-commit:hover,.dsh-cg-commit[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-meta{display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-hash{font-family:var(--ds-font-family-code,ui-monospace,monospace)}',

@@ -79,6 +79,17 @@ const MAX_DIFF_ROWS = 6000
 /** How long the copy button reports success before returning to its idle label. */
 const COPY_FEEDBACK_MS = 1200
 
+/**
+ * The width cap this plugin puts on every hover bubble.
+ *
+ * The primitive's own cap is half the viewport, which makes a bubble's shape a
+ * function of the window rather than of its text: the same label reads as one
+ * line on a laptop and as a slab across a wide screen. A fixed cap keeps the
+ * bubble the same size wherever the page is open, and it only ever bites a
+ * label long enough to need it — a short one still shrink-wraps its text.
+ */
+const TOOLTIP_MAX_WIDTH = 500
+
 /** The single letter each changed-path row shows. */
 const KIND_LETTER: Readonly<Record<ChangeKind, string>> = {
   added: 'A',
@@ -330,14 +341,16 @@ function refLabel(ref: string): string {
  *
  * The count is part of the line rather than a badge of its own, so the header
  * reads as one sentence and stays one line however narrow the sidebar gets —
- * the whole thing truncates as a unit instead of the count leaving first.
+ * the whole thing truncates as a unit instead of the count leaving first. It is
+ * written even at zero, because an empty pane and a pane the page never filled
+ * are two different states and only the count tells them apart.
  *
  * @param label - the pane's name, e.g. `提交历史`.
- * @param count - the rows the pane drew; nothing is added while there are none.
+ * @param count - the rows the pane drew.
  * @returns the header's text.
  */
 function headText(label: string, count: number): string {
-  return count > 0 ? `${label} · ${count}` : label
+  return `${label} · ${count}`
 }
 
 /** The copy glyph. */
@@ -1013,7 +1026,7 @@ function SideHead(props: {
           controls below state: a disabled button emits no pointer events, and a
           pill that has lost its name is exactly the one whose hover has the most to
           say. */}
-      <Tooltip label={label} side="bottom" portal>
+      <Tooltip label={label} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
         <span className="dsh-cg-tip dsh-cg-branch-tip">
           <button
             type="button"
@@ -1048,7 +1061,7 @@ function SideHead(props: {
         {/* The tooltip's anchor is the span, not the button: a disabled button
             emits no pointer events, so anchoring on it would lose the hover
             exactly when the bubble has the most to explain. */}
-        <Tooltip label="刷新" side="bottom" portal>
+        <Tooltip label="刷新" side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
           <span className="dsh-cg-tip">
             <button
               type="button"
@@ -1142,7 +1155,7 @@ function RemoteControl(props: {
   // bubble has the most to explain.
   return publishable
     ? (
-      <Tooltip label="发布分支" side="bottom" portal>
+      <Tooltip label="发布分支" side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
         <span className="dsh-cg-tip">
           <button
             type="button"
@@ -1161,7 +1174,7 @@ function RemoteControl(props: {
       /* One control for both directions of the round trip. No `data-busy` on the
          button itself: each arrow marks its own half of the round trip, and one on
          the button would turn both. */
-      <Tooltip label={syncLabel} side="bottom" portal>
+      <Tooltip label={syncLabel} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
         <span className="dsh-cg-tip">
           <button
             type="button"
@@ -1668,7 +1681,11 @@ function CommitBar(props: {
 }
 
 /**
- * The changed-path list, or the reason it is empty.
+ * The changed-path list, or the reason there is none to draw.
+ *
+ * A clean working tree draws nothing at all: the header's own count already
+ * says zero, so a line inside the pane would only say it a second time.
+ *
  * @param props.status - the current status answer.
  * @param props.loaded - at least one answer has arrived.
  * @param props.files - the rows to render.
@@ -1691,26 +1708,51 @@ function ChangeList(props: {
     return <Note text={status.reason === 'no-repo' ? '当前会话目录不是 Git 仓库' : '读取仓库状态失败'} />
   }
   if (!loaded && status === null) return <Note text="正在读取仓库…" />
-  if (files.length === 0) return <Note text="工作区没有未提交的改动" />
+  if (files.length === 0) return <></>
 
   return (
     <>
       {files.map(file => (
-        <button
+        // The bubble is the row's own statement about itself — the whole path
+        // with a rename's old path trailing it, then the state in words — because
+        // the row itself has room for a letter and an elided tail at most. It is
+        // portaled so it can sit beside the sidebar instead of inside the list's
+        // own scroll box, which would clip it; a path too long for the cap wraps
+        // inside the bubble.
+        <Tooltip
           key={file.path}
-          type="button"
-          className="dsh-cg-row"
-          aria-selected={selection?.kind === 'file' && selection.file.path === file.path}
-          title={`${KIND_LABEL[file.kind]}${file.origPath === undefined ? '' : ` ← ${file.origPath}`}`}
-          onClick={() => onSelect(file)}
+          label={rowLabel(file)}
+          side="right"
+          portal
+          maxWidth={TOOLTIP_MAX_WIDTH}
         >
-          <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
-          <PathLabel path={file.path} />
-          <span className="dsh-cg-stage" data-staged={file.staged} title={file.staged ? '已暂存' : '未暂存'} />
-        </button>
+          <button
+            type="button"
+            className="dsh-cg-row"
+            aria-selected={selection?.kind === 'file' && selection.file.path === file.path}
+            onClick={() => onSelect(file)}
+          >
+            <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
+            <PathLabel path={file.path} />
+            <span className="dsh-cg-stage" data-staged={file.staged} title={file.staged ? '已暂存' : '未暂存'} />
+          </button>
+        </Tooltip>
       ))}
     </>
   )
+}
+
+/**
+ * What a changed-path row says about itself when hovered: its path first — a
+ * rename's old path trailing it — then its state, spelled out rather than
+ * lettered, the same `· ` separator the pane headers use.
+ *
+ * @param file - the row's changed path.
+ * @returns the tooltip's text.
+ */
+function rowLabel(file: ChangedFile): string {
+  const renamed = file.origPath === undefined ? '' : ` ← ${file.origPath}`
+  return `${file.path}${renamed} · ${KIND_LABEL[file.kind]}`
 }
 
 /**
@@ -1767,17 +1809,25 @@ function CommitList(props: {
 }
 
 /**
- * A changed path, split so its directory reads dimmer than its name.
+ * A changed path, named first and parented second: `name · parent/dir`, with the
+ * parent dimmer than the name. A path at the repository root has no parent, so
+ * it carries no separator.
  *
  * @param props.path - the repository-relative path.
  * @returns the path element.
  */
 function PathLabel({ path }: { readonly path: string }): ReactElement {
   const { dir, name } = splitPath(path)
+  const parent = dir.replace(/\/$/, '')
   return (
     <span className="dsh-cg-path">
-      {dir === '' ? null : <span className="dsh-cg-dir">{dir}</span>}
-      {name}
+      <span className="dsh-cg-name">{name}</span>
+      {parent === '' ? null : (
+        <>
+          <span className="dsh-cg-dot">·</span>
+          <span className="dsh-cg-dir">{parent}</span>
+        </>
+      )}
     </span>
   )
 }
