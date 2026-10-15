@@ -45,35 +45,12 @@ import {
   type CommitPayload,
   type CommitSummary,
   type DiffPayload,
-  type Failure,
   type FailureCode,
   type LogPayload,
   type StatusPayload,
   type SyncPayload,
 } from '../shared/contract.js'
-
-/**
- * How one read refused, in the two forms the payloads carry.
- *
- * A refusal this plugin can name is a code, because the page is what knows the
- * language to word it in; anything else is text another program wrote — Git's
- * own diagnosis above all — which no dictionary can own. Every function below
- * that can refuse therefore answers one of these rather than a sentence.
- */
-type Refusal =
-  | { readonly failure: Failure }
-  | { readonly error: string }
-
-/**
- * One coded refusal, shaped as a payload carries it.
- *
- * @param code - the refusal, whose sentence the page owns.
- * @param params - the values that sentence interpolates, when it has any.
- * @returns the payload fragment to spread into an `ok: false` answer.
- */
-function coded(code: FailureCode, params?: Readonly<Record<string, string | number>>): Refusal {
-  return { failure: params === undefined ? { code } : { code, params } }
-}
+import { coded, type Refusal } from './refusal.js'
 
 /** Wall-clock bound per Git invocation; a hung command is killed, not waited on. */
 const GIT_TIMEOUT_MS = 20_000
@@ -94,10 +71,10 @@ const MAX_STDOUT_BYTES = 4 * 1024 * 1024
 export const DEFAULT_LOG_LIMIT = 60
 
 /** Upper bound on commits per request, so one call cannot walk a whole history. */
-export const MAX_LOG_LIMIT = 300
+const MAX_LOG_LIMIT = 300
 
 /** Upper bound on branches returned, so a huge ref list cannot flood the menu. */
-export const MAX_BRANCHES = 200
+const MAX_BRANCHES = 200
 
 /**
  * Characters a ref name may use, and the shapes Git forbids inside one.
@@ -108,6 +85,33 @@ export const MAX_BRANCHES = 200
  * confusing ref-format error instead of a plain "this branch does not exist".
  */
 const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
+
+/**
+ * What Git prints when it refuses to touch a working tree that is not clean.
+ *
+ * `checkout`, `pull` and `push` each word the refusal their own way, and the page
+ * has one sentence per action for it, so the three spellings are one pattern.
+ */
+const DIRTY_WORKTREE = /local changes|would be overwritten|commit your changes or stash/i
+
+/**
+ * What Git prints when the remote refused the credentials this machine holds.
+ *
+ * Each transport words it differently — HTTPS asks for a username a
+ * non-interactive session cannot supply, SSH names the key it could not use —
+ * and every one of them is the same authentication failure to the page, which
+ * never prompts for credentials of its own.
+ */
+const AUTH_FAILURE = new RegExp(
+  [
+    'could not read Username',
+    'Authentication failed',
+    'Permission denied \\(publickey\\)',
+    'no such identity',
+    'terminal prompts disabled',
+  ].join('|'),
+  'i',
+)
 
 /** Field separator inside one formatted record; `%x1f` is expanded by Git. */
 const FIELD = '\x1f'
@@ -144,7 +148,7 @@ const GIT_ENV: Readonly<Record<string, string>> = {
 }
 
 /** One Git invocation's outcome, resolved rather than thrown. */
-export interface GitRun {
+interface GitRun {
   /** The process exit code, or null when it was killed by a signal. */
   readonly code: number | null
   readonly stdout: string
@@ -614,10 +618,10 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
  *
  * A tracked path is diffed against HEAD rather than against the index, so a
  * file with both staged and unstaged edits shows everything that differs from
- * the last commit in one patch — which is what "查看这个文件的改动" means. An
- * untracked path has no HEAD side at all, so it is diffed against `/dev/null`;
- * a repository without commits compares against the index or the worktree,
- * whichever side the row says holds the change.
+ * the last commit in one patch — which is what the row's own "show this file's
+ * changes" means. An untracked path has no HEAD side at all, so it is diffed
+ * against `/dev/null`; a repository without commits compares against the index
+ * or the worktree, whichever side the row says holds the change.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param file - the changed path, as `status` reported it.
@@ -891,7 +895,7 @@ function checkoutFailure(run: GitRun): CheckoutPayload {
   }
 
   const text = diagnosticText(run)
-  if (/local changes|would be overwritten|commit your changes or stash/i.test(text)) {
+  if (DIRTY_WORKTREE.test(text)) {
     const paths = text
       .split('\n')
       .map(line => line.trim())
@@ -1133,11 +1137,11 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
   // Git's own words, for every case below.
   const text = diagnosticText(run)
 
-  if (/could not read Username|Authentication failed|Permission denied \(publickey\)|no such identity|terminal prompts disabled/i.test(text)) {
+  if (AUTH_FAILURE.test(text)) {
     return { ok: false, ...coded('auth'), reason: 'auth', action }
   }
 
-  if (/local changes|would be overwritten|commit your changes or stash/i.test(text)) {
+  if (DIRTY_WORKTREE.test(text)) {
     return { ok: false, ...coded(ACTION_REFUSAL[action].dirty), reason: 'dirty', action }
   }
 

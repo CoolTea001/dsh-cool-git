@@ -3,11 +3,11 @@
  *
  * The page is a fixed sidebar beside an absorbing Diff pane, and both of its
  * boundaries are the reader's to move: the sidebar's right edge sets its width,
- * and the divider between 变更文件区 and 提交历史 sets how the column is split.
- * Each boundary is therefore one number — a width in CSS pixels, and the share of
- * the pane track that the changed-path list takes — and neither number is
+ * and the divider between Changed files and Commit history sets how the column is
+ * split. Each boundary is therefore one number — a width in CSS pixels, and the
+ * share of the pane track that the changed-path list takes — and neither number is
  * repository state: they are a preference for a window, kept in localStorage under
- * this plugin's own key, the way the 终端 tab keeps its own.
+ * this plugin's own key, the way the Terminal tab keeps its own.
  *
  * Every bound is stated once, here, and `styles.ts` interpolates these constants
  * into the rules that enforce them at rest. A drag and a stylesheet that disagreed
@@ -36,13 +36,13 @@ export declare const SIDE_DEFAULT = 340;
  *
  * The toolbar sets this floor rather than the lists do: two parts of that row may
  * give ground — the branch's name first, down to the icon alone, and then the
- * Workspace's name — while 刷新 beside them is fixed. Shorter than this and both
+ * Workspace's name — while Refresh beside them is fixed. Shorter than this and both
  * names are gone and that control would run over the sidebar's own edge.
  */
 export declare const SIDE_MIN = 260;
 /** The widest a drag may leave the sidebar, however wide the window is. */
 export declare const SIDE_MAX = 560;
-/** The narrowest the Diff 查看区 may be drawn, whatever the sidebar asks for. */
+/** The narrowest the Diff pane may be drawn, whatever the sidebar asks for. */
 export declare const DIFF_MIN = 320;
 /**
  * The shortest either sidebar pane may be drawn.
@@ -59,11 +59,9 @@ export type ResizeAxis = 'col' | 'row';
 export interface GitLayout {
     /** The sidebar's width, in CSS pixels. */
     readonly sideWidth: number;
-    /** The share of the sidebar's pane track that 变更文件区 takes, from 0 to 1. */
+    /** The share of the sidebar's pane track that Changed files takes, from 0 to 1. */
     readonly filesShare: number;
 }
-/** The layout of a page nobody has resized. */
-export declare const DEFAULT_LAYOUT: GitLayout;
 /**
  * The saved layout, with every part that is missing or unusable replaced by its
  * default.
@@ -89,19 +87,6 @@ export declare function readLayout(): GitLayout;
  */
 export declare function writeLayout(layout: GitLayout): void;
 /**
- * The widest the sidebar may be drawn in a page this wide.
- *
- * Two bounds at once: the width a sidebar stops being worth dragging past, and
- * what is left of the page once the Diff pane keeps its own floor. The sidebar's
- * floor wins when the window cannot hold both, so a narrow window still draws a
- * whole sidebar and leaves the Diff pane to suffer — a sidebar narrower than its
- * own toolbar would have no honest reading at all.
- *
- * @param available - the page's width, in CSS pixels.
- * @returns the widest sidebar to draw.
- */
-export declare function sideWidthCeiling(available: number): number;
-/**
  * Clamp a preferred sidebar width to what this page can draw.
  *
  * @param preferred - the width the pointer, or the saved layout, asks for.
@@ -110,17 +95,7 @@ export declare function sideWidthCeiling(available: number): number;
  */
 export declare function clampSideWidth(preferred: number, available: number): number;
 /**
- * The tallest the 变更文件区 may be drawn, inside the track it shares with 提交历史.
- *
- * A track too short to hold both floors leaves the one pane at its floor, which is
- * the same answer the stylesheet's own `min-height` gives.
- *
- * @param track - the height the two panes share, in CSS pixels.
- * @returns the tallest the upper pane may be.
- */
-export declare function splitCeiling(track: number): number;
-/**
- * Clamp a preferred 变更文件区 height to the track it shares with 提交历史.
+ * Clamp a preferred Changed files height to the track it shares with Commit history.
  *
  * @param preferred - the height the pointer asks for, in CSS pixels.
  * @param track - the height the two panes share, in CSS pixels.
@@ -136,7 +111,7 @@ export declare function clampFilesHeight(preferred: number, track: number): numb
  * no longer fits. A track too short to measure keeps the default split, and the
  * floors keep the answer strictly inside 0–1 whatever the track is.
  *
- * @param height - the 变更文件区 height, in CSS pixels.
+ * @param height - the Changed files pane's height, in CSS pixels.
  * @param track - the height the two panes share, in CSS pixels.
  * @returns the share to draw and save.
  */

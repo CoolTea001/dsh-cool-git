@@ -1,5 +1,5 @@
 /**
- * Unified-diff parsing for the Diff 查看区.
+ * Unified-diff parsing for the Diff pane.
  *
  * The Host sends Git's patch verbatim rather than a pre-chewed structure: text
  * is what `git diff` is authoritative for, and the page needs line numbers on
@@ -53,8 +53,36 @@ export interface DiffDoc {
   readonly binary: boolean
 }
 
+/** One file while it is still being built. */
+interface MutableFile {
+  header: string
+  oldPath: string
+  newPath: string
+  meta: string[]
+  hunks: MutableHunk[]
+  additions: number
+  deletions: number
+  binary: boolean
+}
+
+/** One hunk while it is still being built. */
+interface MutableHunk {
+  header: string
+  lines: DiffLine[]
+}
+
 /** Hunk header, `@@ -oldStart,oldCount +newStart,newCount @@ optional section`. */
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+
+/**
+ * A file section with nothing parsed into it yet.
+ *
+ * @param header - the `diff --git` line that opened the section.
+ * @returns the section, ready for its paths, metadata, hunks, and counts.
+ */
+function newFile(header: string): MutableFile {
+  return { header, oldPath: '', newPath: '', meta: [], hunks: [], additions: 0, deletions: 0, binary: false }
+}
 
 /**
  * Parse one unified diff into files, hunks, and line-numbered lines.
@@ -72,7 +100,7 @@ export function parsePatch(patch: string): DiffDoc {
   for (const line of patch.split('\n')) {
     if (line.startsWith('diff --git ')) {
       if (current !== null) files.push(current)
-      current = { header: line, oldPath: '', newPath: '', meta: [], hunks: [], additions: 0, deletions: 0, binary: false }
+      current = newFile(line)
       hunk = null
       continue
     }
@@ -141,31 +169,13 @@ export function parsePatch(patch: string): DiffDoc {
   }
 }
 
-/** One file while it is still being built. */
-interface MutableFile {
-  header: string
-  oldPath: string
-  newPath: string
-  meta: string[]
-  hunks: MutableHunk[]
-  additions: number
-  deletions: number
-  binary: boolean
-}
-
-/** One hunk while it is still being built. */
-interface MutableHunk {
-  header: string
-  lines: DiffLine[]
-}
-
 /**
  * Drop the `a/` or `b/` prefix Git puts on diff paths.
  *
  * @param value - the path as it appeared after `--- ` or `+++ `.
  * @returns the repository-relative path, with `/dev/null` left alone.
  */
-export function stripPrefix(value: string): string {
+function stripPrefix(value: string): string {
   const path = value.trim()
   if (path === '/dev/null') return path
   if (path.startsWith('a/') || path.startsWith('b/')) return path.slice(2)

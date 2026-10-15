@@ -38,23 +38,6 @@
 import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type LogPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
-/** Upper bound on commits per request, so one call cannot walk a whole history. */
-export declare const MAX_LOG_LIMIT = 300;
-/** Upper bound on branches returned, so a huge ref list cannot flood the menu. */
-export declare const MAX_BRANCHES = 200;
-/** One Git invocation's outcome, resolved rather than thrown. */
-export interface GitRun {
-    /** The process exit code, or null when it was killed by a signal. */
-    readonly code: number | null;
-    readonly stdout: string;
-    readonly stderr: string;
-    /** The collected stdout hit the Host's bound; the text is incomplete. */
-    readonly truncated: boolean;
-    /** Infrastructure failure (missing service, spawn error) — not a Git failure. */
-    readonly failure?: string;
-    /** The sandbox refused the command instead of running it. */
-    readonly denied?: boolean;
-}
 /**
  * Everything one request needs to run Git.
  *
@@ -114,10 +97,10 @@ export declare function readCommit(target: GitTarget, hash: string): Promise<Com
  *
  * A tracked path is diffed against HEAD rather than against the index, so a
  * file with both staged and unstaged edits shows everything that differs from
- * the last commit in one patch — which is what "查看这个文件的改动" means. An
- * untracked path has no HEAD side at all, so it is diffed against `/dev/null`;
- * a repository without commits compares against the index or the worktree,
- * whichever side the row says holds the change.
+ * the last commit in one patch — which is what the row's own "show this file's
+ * changes" means. An untracked path has no HEAD side at all, so it is diffed
+ * against `/dev/null`; a repository without commits compares against the index
+ * or the worktree, whichever side the row says holds the change.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param file - the changed path, as `status` reported it.

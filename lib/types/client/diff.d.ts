@@ -1,5 +1,5 @@
 /**
- * Unified-diff parsing for the Diff 查看区.
+ * Unified-diff parsing for the Diff pane.
  *
  * The Host sends Git's patch verbatim rather than a pre-chewed structure: text
  * is what `git diff` is authoritative for, and the page needs line numbers on
@@ -55,13 +55,6 @@ export interface DiffDoc {
  * @returns the parsed document.
  */
 export declare function parsePatch(patch: string): DiffDoc;
-/**
- * Drop the `a/` or `b/` prefix Git puts on diff paths.
- *
- * @param value - the path as it appeared after `--- ` or `+++ `.
- * @returns the repository-relative path, with `/dev/null` left alone.
- */
-export declare function stripPrefix(value: string): string;
 /**
  * The path a file section should be titled with.
  *

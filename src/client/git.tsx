@@ -6,12 +6,11 @@
  * Changed paths come from `git status`, the history from `git log`, and the
  * diff pane shows either one path's patch against HEAD or one commit's whole
  * patch (see `api.ts` for the routes and `diff.ts` for the patch parser). The
- * sidebar's second row is the
- * commit form — a message field and the button that stages every change the
- * changed-path list holds and records them as one commit — and the two panes
- * stack under it. Both of the sidebar's boundaries — its right edge and the
- * divider between the two lists — are the reader's to drag, and both sizes are
- * remembered between visits (see `layout.ts`).
+ * sidebar's second row is the commit form — a message field and the button that
+ * stages every change the changed-path list holds and records them as one commit
+ * — and the two panes stack under it. Both of the sidebar's boundaries — its right
+ * edge and the divider between the two lists — are the reader's to drag, and both
+ * sizes are remembered between visits (see `layout.tsx`).
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
@@ -49,10 +48,30 @@ import {
   type ReactNode,
 } from 'react'
 import { Button, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { checkoutBranch, commitAll, fetchBranches, fetchCommit, fetchDiff, fetchLog, fetchStatus, pullBranch, pushBranch } from './api.js'
+import {
+  checkoutBranch,
+  commitAll,
+  fetchBranches,
+  fetchCommit,
+  fetchDiff,
+  fetchLog,
+  fetchStatus,
+  pullBranch,
+  pushBranch,
+} from './api.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
-import { IconArrowRight, IconBranch, IconCheck, IconCopy, IconFolder, IconPublish, IconPull, IconPush, IconRefresh } from './icons.js'
+import {
+  IconArrowRight,
+  IconBranch,
+  IconCheck,
+  IconCopy,
+  IconFolder,
+  IconPublish,
+  IconPull,
+  IconPush,
+  IconRefresh,
+} from './icons.js'
 import {
   clampFilesHeight,
   clampSideWidth,
@@ -1205,9 +1224,12 @@ function SideHead(props: {
  * Both counts are always numbers, zeros included. A control whose numbers vanish
  * when nothing is pending reads as broken rather than as idle, and a digit that
  * came and went as commits moved would shift the header under the cursor; `0` is
- * the honest answer for a branch in step with its upstream. The fallback below is
- * never drawn — the sync button needs an upstream to exist — it only keeps the two
- * counts plain numbers.
+ * the honest answer for a branch in step with its upstream. The fallback in the
+ * two counts is never drawn — the sync control needs an upstream to exist — it
+ * only keeps them plain numbers.
+ *
+ * This component makes only the choice; `SyncControl` and `PublishControl` below
+ * draw the two answers, each owning the markup of exactly one control.
  *
  * @param props.t - the page's translate seat.
  * @param props.status - the current status answer, for the branch already on.
@@ -1230,71 +1252,141 @@ function RemoteControl(props: {
   const { t, status, syncing, busy, refreshing, onSync, onPublish } = props
   const reachable = status?.ok === true && status?.detached !== true
   const hasUpstream = reachable && status?.upstream !== undefined
-  const publishable = reachable && !hasUpstream
   const behind = hasUpstream ? status?.behind ?? 0 : 0
   const ahead = hasUpstream ? status?.ahead ?? 0 : 0
+  /** Both controls answer to the page's one rule: nothing while an operation runs. */
+  const disabled = !reachable || busy || refreshing
+
+  // The branch's own state decides which control is drawn: an upstream is what
+  // makes a pull possible, so a branch without one has nothing to count and
+  // nothing to sync.
+  if (reachable && !hasUpstream) {
+    return (
+      <PublishControl
+        t={t}
+        running={syncing === 'push'}
+        disabled={disabled}
+        onPublish={onPublish}
+      />
+    )
+  }
+
+  return (
+    <SyncControl
+      t={t}
+      behind={behind}
+      ahead={ahead}
+      pulling={syncing === 'pull'}
+      pushing={syncing === 'push'}
+      disabled={disabled}
+      onSync={onSync}
+    />
+  )
+}
+
+/**
+ * Publish branch: one glyph, drawn while the branch has no upstream to sync with.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.running - the push this control asked for is in flight.
+ * @param props.disabled - an operation is in flight, or the branch cannot be published.
+ * @param props.onPublish - called to push the branch and record the remote as its upstream.
+ * @returns the control.
+ */
+function PublishControl(props: {
+  readonly t: Translate
+  readonly running: boolean
+  readonly disabled: boolean
+  readonly onPublish: () => void
+}): ReactElement {
+  const { t, running, disabled, onPublish } = props
+  // The bubble hangs off the span rather than the button: a disabled button emits
+  // no pointer events of its own.
+  return (
+    <Tooltip label={t('remote.publish')} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+      <span className="dsh-cg-tip">
+        <button
+          type="button"
+          className="dsh-cg-icon"
+          aria-label={t('remote.publish')}
+          data-busy={running}
+          disabled={disabled}
+          onClick={onPublish}
+        >
+          {running ? SPINNER_ICON : <IconPublish />}
+        </button>
+      </span>
+    </Tooltip>
+  )
+}
+
+/**
+ * Sync: one button carrying both halves of the remote round trip.
+ *
+ * The bubble's text is the button's accessible name as well, so a screen reader
+ * hears the same two counts.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.behind - commits the pull brings, always a number, zero included.
+ * @param props.ahead - commits the push sends, always a number, zero included.
+ * @param props.pulling - the pull half of the round trip is in flight.
+ * @param props.pushing - the push half of the round trip is in flight.
+ * @param props.disabled - an operation is in flight, or the branch cannot be synced.
+ * @param props.onSync - called to run the pull-then-push round trip.
+ * @returns the control.
+ */
+function SyncControl(props: {
+  readonly t: Translate
+  readonly behind: number
+  readonly ahead: number
+  readonly pulling: boolean
+  readonly pushing: boolean
+  readonly disabled: boolean
+  readonly onSync: () => void
+}): ReactElement {
+  const { t, behind, ahead, pulling, pushing, disabled, onSync } = props
   // The two digits the button draws as arrows are spelled out here, in the
   // direction each one moves: the button has room for a glyph and a number and
   // nothing else, so the two halves of the sentence are what say which leg of
   // the round trip each count belongs to. Both numbers are stated either way,
   // zeros included, for the same reason the button draws them.
-  const syncLabel = t('remote.sync', { behind, ahead })
+  const label = t('remote.sync', { behind, ahead })
 
-  // The tooltip's anchor is the span, not the button: a disabled button emits no
-  // pointer events, so anchoring on it would lose the hover exactly when the
-  // bubble has the most to explain.
-  return publishable
-    ? (
-      <Tooltip label={t('remote.publish')} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
-        <span className="dsh-cg-tip">
-          <button
-            type="button"
-            className="dsh-cg-icon"
-            aria-label={t('remote.publish')}
-            data-busy={syncing === 'push'}
-            disabled={!reachable || busy || refreshing}
-            onClick={onPublish}
+  // The bubble hangs off the span rather than the button, and neither arrow is
+  // spun by the button itself: a disabled button emits no pointer events, and one
+  // `data-busy` on the button would turn both halves of the round trip.
+  return (
+    <Tooltip label={label} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+      <span className="dsh-cg-tip">
+        <button
+          type="button"
+          className="dsh-cg-icon dsh-cg-sync"
+          aria-label={label}
+          disabled={disabled}
+          onClick={onSync}
+        >
+          <span
+            className="dsh-cg-sync-arrow"
+            data-busy={pulling}
+            data-pending={behind > 0}
+            aria-hidden="true"
           >
-            {syncing === 'push' ? SPINNER_ICON : <IconPublish />}
-          </button>
-        </span>
-      </Tooltip>
-    )
-    : (
-      /* One control for both directions of the round trip. No `data-busy` on the
-         button itself: each arrow marks its own half of the round trip, and one on
-         the button would turn both. */
-      <Tooltip label={syncLabel} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
-        <span className="dsh-cg-tip">
-          <button
-            type="button"
-            className="dsh-cg-icon dsh-cg-sync"
-            aria-label={syncLabel}
-            disabled={!reachable || busy || refreshing}
-            onClick={onSync}
+            {pulling ? SPINNER_ICON : <IconPull />}
+            <span className="dsh-cg-sync-count">{behind}</span>
+          </span>
+          <span
+            className="dsh-cg-sync-arrow"
+            data-busy={pushing}
+            data-pending={ahead > 0}
+            aria-hidden="true"
           >
-            <span
-              className="dsh-cg-sync-arrow"
-              data-busy={syncing === 'pull'}
-              data-pending={behind > 0}
-              aria-hidden="true"
-            >
-              {syncing === 'pull' ? SPINNER_ICON : <IconPull />}
-              <span className="dsh-cg-sync-count">{behind}</span>
-            </span>
-            <span
-              className="dsh-cg-sync-arrow"
-              data-busy={syncing === 'push'}
-              data-pending={ahead > 0}
-              aria-hidden="true"
-            >
-              {syncing === 'push' ? SPINNER_ICON : <IconPush />}
-              <span className="dsh-cg-sync-count">{ahead}</span>
-            </span>
-          </button>
-        </span>
-      </Tooltip>
-    )
+            {pushing ? SPINNER_ICON : <IconPush />}
+            <span className="dsh-cg-sync-count">{ahead}</span>
+          </span>
+        </button>
+      </span>
+    </Tooltip>
+  )
 }
 
 /**
@@ -1568,7 +1660,11 @@ function BranchDialog(props: {
                           is where the next one starts. */}
                       {row.group === shown[index - 1]?.group
                         ? null
-                        : <span role="presentation" className="dsh-cg-branch-group">{t(BRANCH_GROUP_KEY[row.group])}</span>}
+                        : (
+                          <span role="presentation" className="dsh-cg-branch-group">
+                            {t(BRANCH_GROUP_KEY[row.group])}
+                          </span>
+                        )}
                       <button
                         type="button"
                         role="option"
@@ -2021,7 +2117,9 @@ function DiffPane(props: {
             {current.commit.short} · {current.commit.author} · {relativeTime(t, current.commit.date)}
           </span>
         )}
-        {current?.doc === undefined ? null : <DiffStats additions={current.doc.additions} deletions={current.doc.deletions} />}
+        {current?.doc === undefined ? null : (
+          <DiffStats additions={current.doc.additions} deletions={current.doc.deletions} />
+        )}
         {current?.doc === undefined || current.doc.files.length === 0 ? null : (
           <CopyButton t={t} text={buildCopyText(current)} />
         )}

@@ -42,7 +42,7 @@ export declare const IconPublish: () => ReactElement;
 /** Re-read the repository (assets/refresh.svg). */
 export declare const IconRefresh: () => ReactElement;
 /**
- * Copy the patch on screen: the Diff 查看区 header's copy control
+ * Copy the patch on screen: the Diff pane header's copy control
  * (assets/copy.svg).
  */
 export declare const IconCopy: () => ReactElement;

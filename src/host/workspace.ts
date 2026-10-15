@@ -1,9 +1,10 @@
 /**
  * Which DSH Workspace a Git request belongs to.
  *
- * The 变更文件区 header names the Workspace the session lives in, and the Workspace
- * registry is the only authority for that name — a directory's own basename is a
- * guess, and the title is user-editable. Two lookups, in order of certainty:
+ * The Changed files pane's header names the Workspace the session lives in, and
+ * the Workspace registry is the only authority for that name: a directory's own
+ * basename is a guess, and the title is user-editable. Two lookups follow, in
+ * order of certainty:
  *
  *   1. the registry's own session account: a Workspace lists the sessions whose
  *      canonical cwd equals its path, so a session id that appears in that list

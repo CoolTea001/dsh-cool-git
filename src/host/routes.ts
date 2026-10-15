@@ -23,7 +23,6 @@
  * never write.
  */
 
-import type { Failure, FailureCode } from '../shared/contract.js'
 import {
   commitAll,
   pullFromRemote,
@@ -37,6 +36,7 @@ import {
   DEFAULT_LOG_LIMIT,
   type GitTarget,
 } from './git.js'
+import { coded, type Refusal } from './refusal.js'
 import { resolveWorkspace } from './workspace.js'
 
 /** Route table, kept in one place so the two halves cannot drift. */
@@ -54,27 +54,6 @@ export const ROUTES = {
 
 /** Object names Git accepts, and all a route will pass on to the command line. */
 const OBJECT_NAME = /^[0-9a-f]{4,40}$/i
-
-/**
- * How one route refuses, in the two forms the payloads carry.
- *
- * A refusal this plugin can name is a code, because the page is what knows the
- * language to word it in; anything else is text another program wrote. See
- * `shared/contract.ts` for the two fields this shapes.
- */
-type Refusal =
-  | { readonly failure: Failure }
-  | { readonly error: string }
-
-/**
- * One coded refusal, shaped as a payload carries it.
- *
- * @param code - the refusal, whose sentence the page owns.
- * @returns the payload fragment to spread into an `ok: false` answer.
- */
-function coded(code: FailureCode): Refusal {
-  return { failure: { code } }
-}
 
 /**
  * Longest commit message a route hands to Git.

@@ -97,7 +97,7 @@ export const IconPublish = svgIcon('publish')
 export const IconRefresh = svgIcon('refresh')
 
 /**
- * Copy the patch on screen: the Diff 查看区 header's copy control
+ * Copy the patch on screen: the Diff pane header's copy control
  * (assets/copy.svg).
  */
 export const IconCopy = svgIcon('copy')

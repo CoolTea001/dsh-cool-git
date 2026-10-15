@@ -10,14 +10,15 @@
  *    the mounted View (`chrome.ts`), so the seat is gone on every frame the
  *    shell paints, not only after the mount effect has run. The selector is
  *    scoped by this plugin's own root class, which exists only while the Git tab
- *    is mounted: Chat, 轨迹 and 终端 keep their composer untouched, and the rule
- *    disappears with the View.
+ *    is mounted: Chat, Trajectory and Terminal keep their composer untouched, and
+ *    the rule disappears with the View.
  *
- * 2. The page itself: a sidebar of two stacked panes (变更文件区 above
- *    提交历史) beside a scrollable Diff 查看区. Both of the sidebar's boundaries —
- *    its right edge and the divider between the panes — are dragged, and the
- *    bounds they move within are imported from `layout.ts` rather than restated,
- *    so the width a drag may reach and the width a rule allows cannot drift apart.
+ * 2. The page itself: a sidebar of two stacked panes (Changed files above
+ *    Commit history) beside a scrollable Diff pane. Both of the sidebar's
+ *    boundaries — its right edge and the divider between the panes — are dragged,
+ *    and the bounds they move within are imported from `layout.tsx` rather than
+ *    restated, so the width a drag may reach and the width a rule allows cannot
+ *    drift apart.
  *
  * Every color is a `--dsw-*` theme token, so the tab follows the active light
  * or dark appearance — including third-party theme presets — instead of forcing
@@ -52,7 +53,7 @@ const GIT_CSS = [
   `.${GIT_ROOT_CLASS}{display:flex;flex:1 1 auto;flex-direction:row;box-sizing:border-box;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family,sans-serif);font-size:12.5px;line-height:1.5}`,
   `.${GIT_ROOT_CLASS} *{box-sizing:border-box}`,
   // The sidebar's width is the drag's to set: one custom property the page
-  // publishes on its root (see `layout.ts`), with the default width as the rule's
+  // publishes on its root (see `layout.tsx`), with the default width as the rule's
   // own fallback, so the first frame — before a saved layout has been read — is
   // already a whole page. The floor and the cap restate the drag's bounds, and
   // they are what keeps a width saved in a wide window from squeezing the Diff
@@ -107,14 +108,14 @@ const GIT_CSS = [
   `.${GIT_ROOT_CLASS}[data-resizing=row],.${GIT_ROOT_CLASS}[data-resizing=row] *{cursor:row-resize}`,
   // A pane's header: the pane's name and its row count, separated by a middle
   // dot, on the left, and whatever that pane's own control is on the right —
-  // 提交历史 carries the remote control there, and 变更文件区 nothing. The name is
-  // the one part that gives ground, so the count leaves with it as a unit; the
-  // control is `flex:none` through `.dsh-cg-tools`, which is what keeps the two
+  // Commit history carries the remote control there, and Changed files nothing. The
+  // name is the one part that gives ground, so the count leaves with it as a unit;
+  // the control is `flex:none` through `.dsh-cg-tools`, which is what keeps the two
   // ends from ever trading widths.
   //
   // The header states the layout and the title states the type: the small bold
   // caps the title is set in would otherwise be inherited by the control beside
-  // it, which draws its own `font:inherit` — the digits inside 同步变更 would come
+  // it, which draws its own `font:inherit` — the digits inside Sync would come
   // out a weight and a tracking heavier than the same button draws in the sidebar.
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
@@ -150,7 +151,7 @@ const GIT_CSS = [
   '.dsh-cg-icon:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-icon:disabled:hover{background:transparent;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-icon svg{width:13px;height:13px;display:block}',
-  // 同步变更 is the remote control in 提交历史's header wherever the branch has an
+  // Sync is the remote control in Commit history's header wherever the branch has
   // upstream, and inside it sit both halves of the round trip: each arrow with its
   // divergence count beside it, because the count and the control that resolves
   // it are one thing. The button widens to take the digits, and the arrow of a
@@ -158,7 +159,7 @@ const GIT_CSS = [
   // name is the tooltip's and the accessible label's, not a word on the header:
   // two arrows and two counts already fill what the pane's own name and count
   // leave of that row.
-  // Where there is no upstream this button is not drawn at all — 发布分支 takes
+  // Where there is no upstream this button is not drawn at all — Publish branch takes
   // its place as an ordinary single-glyph control.
   '.dsh-cg-sync{width:auto;min-width:22px;gap:4px;padding:0 5px}',
   '.dsh-cg-sync-arrow{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dsw-alias-label-tertiary)}',
@@ -181,14 +182,14 @@ const GIT_CSS = [
   '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
-  // beside it, and then the one control the row keeps — 刷新. It draws no rule of
+  // beside it, and then the one control the row keeps — Refresh. It draws no rule of
   // its own: the toolbar and the commit form below it are one block of the column,
   // closed together by the form's own hairline (see `.dsh-cg-commit-bar`). Each
   // name carries its own glyph (a directory for the Workspace, a forked commit for
   // the branch), so the row states which is which without either label having to
   // say it; the operation is an icon rather than a word because the controls have
   // to fit the row at its narrowest, which is the sidebar's own floor. The remote
-  // control is not here: it lives in 提交历史's header, beside the commits it moves.
+  // control is not here: it lives in Commit history's header, beside the commits it moves.
   //
   // Two of the row's parts may give ground, and the branch's name goes first: the
   // pill is the row's own item rather than a member of the group beside it, because
@@ -217,11 +218,11 @@ const GIT_CSS = [
   // that pixel swallows the fraction, and a real loss — the pill already down to
   // its icon — is still the ellipsis it should be.
   '.dsh-cg-workspace-name{min-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // The icon-button group both rows end with — 刷新 in the sidebar's first row and
-  // the remote control in 提交历史's header. `margin-left:auto` is what keeps the
-  // group at its row's right edge however long the name on the left is, and
-  // `flex:none` is what makes the group the fixed part of the row: the control is
-  // never asked to give up a pixel of the width its own glyph and counts need.
+  // The icon-button group both rows end with — Refresh in the sidebar's first row
+  // and the remote control in Commit history's header. `margin-left:auto` is what
+  // keeps the group at its row's right edge however long the name on the left is,
+  // and `flex:none` is what makes the group the fixed part of the row: the control
+  // is never asked to give up a pixel of the width its own glyph and counts need.
   '.dsh-cg-tools{flex:none;display:flex;align-items:center;margin-left:auto}',
   // The badge's gap is its own `margin` for the reason the icon's is: the pill's
   // spacing belongs to the things that stay.
@@ -261,13 +262,15 @@ const GIT_CSS = [
   // rest of the deficit moves on to the next item — while the fraction of a pixel
   // the Workspace is still handed is swallowed by that name's own floor.
   //
-  // A pill on a detached HEAD carries 游离 as well, and that word is fixed: two
-  // full-width glyphs at the pill's own 11px type, so 22px, with the same 4px in
-  // front of it. The floor takes the badge and both gaps with the name's place
-  // empty — 12 + 12 + 4 + 4 + 22, plus the pill's 12px of padding — or the marker
-  // would spill out of a pill shortened to its icon and sit on the button beside
-  // it. The sum is written in pixels because the tip span is not the pill: an `em`
-  // here would be measured against the span's own type, not the badge's.
+  // A pill on a detached HEAD carries the `detached` badge as well, and that badge
+  // is fixed: it is `flex:none`, so it never shrinks with the name. The floor below
+  // is therefore the pill's own parts with the name's place empty — the icon and
+  // its gap, the badge and its gap, the badge itself, and the pill's 12px of
+  // padding (12 + 4 + 4 + 22 + 12, measured from the two-glyph Chinese badge the
+  // floor was stated for) — or the marker would spill out of a pill shortened to
+  // its icon and sit on the button beside it. The sum is written in pixels because
+  // the tip span is not the pill: an `em` here would be measured against the
+  // span's own type, not the badge's.
   '.dsh-cg-branch-tip{flex:0 1000 auto;min-width:24px}',
   '.dsh-cg-branch-tip:has(.dsh-cg-divergence){min-width:54px}',
 
@@ -309,7 +312,7 @@ const GIT_CSS = [
   // cap, so the wrapper is exactly the visible box.
   '.dsh-cg-branch-list-wrap{position:relative;display:flex;flex-direction:column;min-height:0;margin-top:8px}',
   '.dsh-cg-branch-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);overflow:auto}',
-  // The two edge fades, the same rhythm as the 终端 tab's command dialog: a
+  // The two edge fades, the same rhythm as the Terminal tab's command dialog: a
   // gradient that dissolves rows into the card's own surface (layer-2 is the
   // Modal card background), shown only while that edge really hides content,
   // so a list short enough to fit does not smudge its first row. The height
@@ -325,9 +328,9 @@ const GIT_CSS = [
   // `[data-fade-*]` another plugin writes on its own scroller cannot reach in.
   '.dsh-cg-branch-list-wrap[data-fade-top] .dsh-cg-branch-fade-top{opacity:1}',
   '.dsh-cg-branch-list-wrap[data-fade-bottom] .dsh-cg-branch-fade-bottom{opacity:1}',
-  // The heading that opens each run of rows — 当前分支, 本地分支, 远程分支. It sits
-  // in the list's own column so the three groups read as one list, and the first
-  // one carries no gap above it.
+  // The heading that opens each run of rows — Current branch, Local branches,
+  // Remote branches. It sits in the list's own column so the three groups read as
+  // one list, and the first one carries no gap above it.
   '.dsh-cg-branch-group{flex:none;margin-top:8px;padding:0 8px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
   '.dsh-cg-branch-group:first-child{margin-top:0}',
   '.dsh-cg-branch-row{flex:none;display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
@@ -335,7 +338,7 @@ const GIT_CSS = [
   // way, on purpose: the fill is the dialog's one "this is the row" colour, so the
   // selected row keeps reading as selected while the pointer is away on the
   // footer's buttons. The selection itself is the click's, not the pointer's, so
-  // moving the mouse over a row can never change what 切换 would apply.
+  // moving the mouse over a row can never change what Switch would apply.
   '.dsh-cg-branch-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
@@ -343,7 +346,8 @@ const GIT_CSS = [
   // repository, no branch at all, a filter that matched nothing. A failure is the
   // error dialog's, so nothing here paints one.
   '.dsh-cg-dialog-hint{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.7}',
-  // The 分支过多 line follows the list's wrapper, not the scroller inside it.
+  // The "too many branches" line follows the list's wrapper, not the scroller
+  // inside it.
   '.dsh-cg-branch-list-wrap+.dsh-cg-dialog-hint{margin-top:8px}',
 
   // The failure lines the error dialog states, one per request that did not
@@ -387,7 +391,7 @@ const GIT_CSS = [
   // through the frame: a line is 20px and the field's own padding is 6px, so the
   // 26px it keeps at its shortest is the 28px the button beside it is once the
   // frame's border is counted, and four of those lines is the 86px past which the
-  // field scrolls instead of pushing 变更文件区 down the column.
+  // field scrolls instead of pushing the Changed files pane down the column.
   '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
   '.dsh-cg-commit-frame{display:block;box-sizing:border-box;width:100%;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
   '.dsh-cg-commit-frame:focus-within{border-color:var(--dsw-alias-state-business-primary)}',

@@ -50,7 +50,7 @@ interface LocaleService {
   bind(ns: string): Translate
 }
 
-export function apply(ctx: any) {
+export function apply(ctx: any): void {
   const slots = ctx.get('slots')
   if (slots === undefined) return
   const locale: LocaleService = ctx.get('locale')
