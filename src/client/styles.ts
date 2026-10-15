@@ -375,9 +375,9 @@ const GIT_CSS = [
   // read a message in at the pane's floor, and the button's own label is the part
   // that must never be cut. Their gutters are the toolbar's, so all three of the
   // sidebar's rows start and end on the same two edges. The field owns the first
-  // row and the two controls share the second (see `.dsh-cg-commit-actions`);
-  // what the model's check found, when it found anything, is the line between
-  // them.
+  // row — with the Generate square held inside its own frame, which is narrow
+  // enough to share the row with the message — and Commit owns the second; what
+  // the model's check found, when it found anything, is the line between them.
   //
   // The button is the platform's own primitive, so its fill, radius, type scale,
   // and focus colour are the platform's and follow the theme without a rule here.
@@ -398,30 +398,56 @@ const GIT_CSS = [
   // The height is one line's worth and is then measured to its content by the
   // component (see `CommitBar`), capped here at four lines. The arithmetic runs
   // through the frame: a line is 20px and the field's own padding is 6px, so the
-  // 26px it keeps at its shortest is the 28px the row below it is once the
-  // frame's border is counted, and four of those lines is the 86px past which the
+  // 26px it keeps at its shortest is the 28px the button below it is once the
+  // frame's border is counted — and it is also what the square inside the frame is
+  // sized against, so neither the square nor the button can make the form taller
+  // than the field it belongs to. Four of those lines is the 86px past which the
   // field scrolls instead of pushing the Changed files pane down the column.
   '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
-  '.dsh-cg-commit-frame{display:block;box-sizing:border-box;width:100%;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+  // The frame draws the field and holds the Generate glyph, and the two are laid
+  // out independently: the field is the frame's only box in flow and spans it
+  // whole, and the glyph is positioned against the frame's own corner. That is
+  // what keeps the field's own right edge — and therefore the scroll bar the
+  // platform draws inside it when the message passes four lines — against the
+  // frame's right border rather than a column short of it, where a bar floating
+  // in the middle of the field would read as belonging to nothing. The glyph's
+  // place is then reserved by the field's own right padding, so what the two
+  // share is the box rather than the line: no character of the message can reach
+  // the glyph's column at any width.
+  '.dsh-cg-commit-frame{position:relative;box-sizing:border-box;width:100%;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
   '.dsh-cg-commit-frame:focus-within{border-color:var(--dsw-alias-state-business-primary)}',
   '.dsh-cg-commit-frame:has(.dsh-cg-commit-input:disabled){opacity:.6}',
-  '.dsh-cg-commit-input{display:block;box-sizing:border-box;width:100%;min-height:26px;max-height:86px;padding:3px 8px;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:20px;resize:none;overflow-y:auto}',
+  // The right padding is the glyph's column: its 24px, the 7px it is held off the
+  // border by (see below), and a pixel of air. The field is a `textarea` whose
+  // scroll bar the platform draws inside its own right edge, so the padding is
+  // what keeps the message clear of the glyph while the bar still lands on the
+  // border.
+  '.dsh-cg-commit-input{display:block;box-sizing:border-box;width:100%;min-height:26px;max-height:86px;padding:3px 32px 3px 8px;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:20px;resize:none;overflow-y:auto}',
   '.dsh-cg-commit-input::placeholder{color:var(--dsw-alias-label-dimmed)}',
   '.dsh-cg-commit-input:disabled{cursor:not-allowed}',
-  // The form's last row is the two controls that act on the field above it:
-  // Generate on the left, square because it is a glyph and the commit's own
-  // height because the pair has to read as one row, and Commit taking what is
-  // left. Both are the platform's primary button — the same fill, corner, and
-  // focus colour as the field's own submit — so the row reads as one pair of
-  // actions rather than as a glyph sitting beside a button: the square simply
-  // drops the `sm` button's horizontal padding, which is all that makes it
-  // square. Only its artwork needs a size here, since the platform's icon seat
-  // is 16px and this glyph is drawn a shade smaller than that; its fill, its
-  // hover, its disabled fade, and its corner are the primitive's own.
-  '.dsh-cg-commit-actions{display:flex;align-items:center;gap:6px}',
-  '.dsh-cg-commit-generate{flex:none;width:28px;padding:0}',
-  '.dsh-cg-commit-generate svg{width:14px;height:14px}',
-  '.dsh-cg-commit-send{flex:1 1 auto;min-width:0}',
+  // The Generate glyph: a bare button with no fill, no border, and no radius of
+  // its own, because anything drawn around it would be a second box inside the
+  // field's box — a button beside the message rather than something done to it.
+  // It rides the frame's top-right corner rather than the field's, so it stays on
+  // the message's first line while the field grows to four of them, and it is held
+  // off the right border by the width of the scroll bar the platform draws there
+  // plus a pixel of air: the bar is 5px of the field's own box, and a glyph drawn
+  // over the strip it scrolls in would cover the message's own scroll thumb.
+  //
+  // Its 24px and its 1px offset are the field's own 26px at rest, which is what
+  // keeps the frame from growing taller than the button below it. The only thing
+  // the glyph says on hover is that it is live: its colour steps up from the
+  // toolbar icons' own tertiary to the primary label, and nothing else moves or
+  // appears.
+  '.dsh-cg-commit-generate{position:absolute;top:1px;right:calc(2px + var(--dsh-scrollbar-width,5px));display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;transition:color .12s ease}',
+  '.dsh-cg-commit-generate:hover:not(:disabled){color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-commit-generate:disabled{color:var(--dsw-alias-label-tertiary);opacity:.45;cursor:default}',
+  // The glyph is drawn a shade smaller than the field's own type, so it reads as
+  // a mark on the row rather than as a character of the message.
+  '.dsh-cg-commit-generate svg{width:14px;height:14px;display:block}',
+  // Commit is a row of its own across the whole width: what it records is every
+  // change the pane lists, under whatever the field above holds.
+  '.dsh-cg-commit-send{width:100%}',
   // What the model's own pre-commit check found: one line under the field, in
   // the warning colour, because it is about the commit rather than about the
   // message — the message above it is written either way. It wraps rather than

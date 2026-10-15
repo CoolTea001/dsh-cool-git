@@ -1957,7 +1957,17 @@ function CommitBar(props: {
           field draws them: the box that grows has to carry no border at all, or
           the height measured for it would be a pixel short of what it is drawn
           at. The frame is what carries the theme's focus colour as well, since
-          the field inside it is borderless and has nothing to light up. */}
+          the field inside it is borderless and has nothing to light up.
+
+          The frame holds two things, one row of them: the field itself, and the
+          Generate glyph at the field's right end. It belongs inside the frame
+          rather than beside the field because it is about the text in the field —
+          it writes that text — and because the row under it is the one decision
+          this form asks for (commit everything), which the button there states on
+          its own across the whole width. It is a glyph rather than a word because
+          a label at the field's right end would take the room the message needs;
+          its accessible name says what it does, and it carries no bubble, so
+          nothing hangs over the text it writes into. */}
       <span className="dsh-cg-commit-frame">
         <textarea
           ref={field}
@@ -1979,38 +1989,37 @@ function CommitBar(props: {
             submit()
           }}
         />
-      </span>
-      {warning === '' ? null : (
-        <p className="dsh-cg-commit-note" role="status">{t('commit.warning', { text: warning })}</p>
-      )}
-      <div className="dsh-cg-commit-actions">
-        {/* Two controls of one family, on one row, in the order the two acts
-            belong in: the model writes the message, and the button beside it
-            records the changes under whatever the field then holds. The square
-            is a glyph rather than a word because the row has to keep the
-            button's own label at the sidebar's floor, and it carries its
-            accessible name for a screen reader; there is no bubble over it,
-            so the two controls read as the one pair of buttons they are. */}
-        <Button
+        {/* The Generate control is a bare glyph rather than a button: it stands
+            inside the field, at the end of the text it writes, so a fill or a
+            frame of its own would draw a second box inside the field's box and
+            read as a button beside the message rather than as something done to
+            it. It is still a real button — it takes focus, it can be disabled,
+            and it carries its own accessible name — and the only thing it says
+            on hover is that it is live, by deepening its own colour (see
+            `styles.ts`). */}
+        <button
+          type="button"
           className="dsh-cg-commit-generate"
-          variant="primary"
-          size="sm"
-          icon={generating ? SPINNER_ICON : <IconGenerate />}
           aria-label={generating ? t('commit.generating') : t('commit.generate')}
           data-busy={generating}
           disabled={disabled || committing || generating}
           onClick={generate}
-        />
-        <Button
-          className="dsh-cg-commit-send"
-          variant="primary"
-          size="sm"
-          disabled={disabled || committing || generating || message.trim() === ''}
-          onClick={submit}
         >
-          {committing ? t('commit.busy') : t('commit.button')}
-        </Button>
-      </div>
+          {generating ? SPINNER_ICON : <IconGenerate />}
+        </button>
+      </span>
+      {warning === '' ? null : (
+        <p className="dsh-cg-commit-note" role="status">{t('commit.warning', { text: warning })}</p>
+      )}
+      <Button
+        className="dsh-cg-commit-send"
+        variant="primary"
+        size="sm"
+        disabled={disabled || committing || generating || message.trim() === ''}
+        onClick={submit}
+      >
+        {committing ? t('commit.busy') : t('commit.button')}
+      </Button>
     </div>
   )
 }
