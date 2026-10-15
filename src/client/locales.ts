@@ -52,11 +52,13 @@ type UiKey =
   | 'label.log'
   | 'label.commit'
   | 'label.diff'
+  | 'label.message'
   /** What that line says when the answer gave no reason at all. */
   | 'fallback.status'
   | 'fallback.log'
   | 'fallback.diff'
   | 'fallback.branches'
+  | 'fallback.message'
   /** The heading over each failure the page can report. */
   | 'title.switchBranch'
   | 'title.refresh'
@@ -66,6 +68,7 @@ type UiKey =
   | 'title.commit'
   | 'title.diff'
   | 'title.branches'
+  | 'title.message'
   /** The error dialog's own two controls. */
   | 'dialog.close'
   | 'dialog.ok'
@@ -98,6 +101,10 @@ type UiKey =
   | 'commit.placeholder'
   | 'commit.button'
   | 'commit.busy'
+  /** The commit form's Generate control, and what the model asked be read first. */
+  | 'commit.generate'
+  | 'commit.generating'
+  | 'commit.warning'
   /** The changed-path pane's empty and loading states. */
   | 'list.notRepo'
   | 'list.statusFailed'
@@ -171,11 +178,13 @@ export const en = {
   'label.log': 'Reading commit history',
   'label.commit': 'Reading the commit',
   'label.diff': 'Reading the file diff',
+  'label.message': 'Generating the commit message',
 
   'fallback.status': 'Could not read the repository status',
   'fallback.log': 'Could not read the commit history',
   'fallback.diff': 'Could not read the diff',
   'fallback.branches': 'Could not read the branch list',
+  'fallback.message': 'Could not generate a commit message',
 
   'title.switchBranch': 'Could not switch to {branch}',
   'title.refresh': 'Refresh failed',
@@ -185,6 +194,7 @@ export const en = {
   'title.commit': 'Commit failed',
   'title.diff': 'Could not read the diff',
   'title.branches': 'Could not read the branch list',
+  'title.message': 'Could not generate a commit message',
 
   'dialog.close': 'Close',
   'dialog.ok': 'Got it',
@@ -217,6 +227,9 @@ export const en = {
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
   'commit.busy': 'Commit…',
+  'commit.generate': 'Generate a commit message',
+  'commit.generating': 'Generating…',
+  'commit.warning': 'Before you commit: {text}',
 
   'list.notRepo': 'This session\'s directory is not a Git repository',
   'list.statusFailed': 'Could not read the repository status',
@@ -288,6 +301,11 @@ export const en = {
   'error.commit-clean': 'There is nothing to commit',
   'error.commit-conflict': 'Unresolved conflicts remain; resolve them before committing',
   'error.commit-denied': 'The current permission mode does not allow committing: it needs to write the workspace',
+
+  'error.no-llm': 'The model service is unavailable, so no commit message can be written',
+  'error.no-model': 'No default model is configured, so no commit message can be written',
+  'error.model-timeout': 'The model did not answer in time',
+  'error.empty-message': 'The model returned no commit message',
 } satisfies Record<MessageKey, string>
 
 /** The Chinese copy, key for key the same page. */
@@ -317,11 +335,13 @@ export const zh: typeof en = {
   'label.log': '读取提交历史',
   'label.commit': '读取提交',
   'label.diff': '读取文件差异',
+  'label.message': '生成提交信息',
 
   'fallback.status': '读取仓库状态失败',
   'fallback.log': '读取提交历史失败',
   'fallback.diff': '读取 Diff 失败',
   'fallback.branches': '读取分支列表失败',
+  'fallback.message': '生成提交信息失败',
 
   'title.switchBranch': '切换到 {branch} 失败',
   'title.refresh': '刷新仓库失败',
@@ -331,6 +351,7 @@ export const zh: typeof en = {
   'title.commit': '提交失败',
   'title.diff': '读取 Diff 失败',
   'title.branches': '读取分支列表失败',
+  'title.message': '生成提交信息失败',
 
   'dialog.close': '关闭',
   'dialog.ok': '知道了',
@@ -363,6 +384,9 @@ export const zh: typeof en = {
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
   'commit.busy': 'Commit…',
+  'commit.generate': '自动生成提交信息',
+  'commit.generating': '正在生成…',
+  'commit.warning': '提交前请检查：{text}',
 
   'list.notRepo': '当前会话目录不是 Git 仓库',
   'list.statusFailed': '读取仓库状态失败',
@@ -434,4 +458,9 @@ export const zh: typeof en = {
   'error.commit-clean': '工作区没有需要提交的改动',
   'error.commit-conflict': '存在未解决的冲突文件，请先解决冲突再提交',
   'error.commit-denied': '当前权限模式不允许提交：该操作需要写入工作区',
+
+  'error.no-llm': '模型服务不可用，无法生成提交信息',
+  'error.no-model': '未配置默认模型，无法生成提交信息',
+  'error.model-timeout': '模型未在限定时间内返回结果',
+  'error.empty-message': '模型未返回提交信息',
 }

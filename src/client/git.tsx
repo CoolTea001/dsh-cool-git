@@ -56,6 +56,7 @@ import {
   fetchDiff,
   fetchLog,
   fetchStatus,
+  generateMessage,
   pullBranch,
   pushBranch,
 } from './api.js'
@@ -67,6 +68,7 @@ import {
   IconCheck,
   IconCopy,
   IconFolder,
+  IconGenerate,
   IconPublish,
   IconPull,
   IconPush,
@@ -824,11 +826,46 @@ export function GitView(props: {
     })
   }, [sessionId, handleSynced, handleSwitched, reportError, t])
 
+  /**
+   * Ask the Host for a commit message written for the changes on disk.
+   *
+   * The page owns this call because it owns the session and the error dialog: the
+   * route resolves the repository from the session's own header and takes the
+   * model from the deployment's current default selection, so the request names
+   * neither — and a refusal, from a clean tree to a missing model, is reported the
+   * way every other failed request is.
+   *
+   * Nothing is re-read on success: writing a message changes no file and no
+   * history, so the status, the commit list, and the patch on screen are all still
+   * what they were, and a refresh here would only repaint the page under the
+   * pointer — and drop the selection the reader was looking at.
+   *
+   * @returns the message and whatever the model asked be read first, or null when
+   * the request failed and the dialog is already stating why.
+   */
+  const handleGenerateMessage = useCallback((): Promise<GeneratedMessage | null> => {
+    return generateMessage(sessionId).then(result => {
+      if (result?.ok !== true || typeof result.message !== 'string' || result.message === '') {
+        reportError({
+          title: t('title.message'),
+          lines: [failureLine(t, 'label.message', result ?? {}, 'fallback.message')],
+        })
+        return null
+      }
+      // One sentence with the findings on lines of their own: the stylesheet's
+      // `pre-line` is what breaks them, so no word has to be spent between them.
+      const warnings = result.warnings ?? []
+      return { message: result.message, ...(warnings.length === 0 ? {} : { warning: warnings.join('\n') }) }
+    })
+  }, [sessionId, reportError, t])
+
   // One operation at a time, wherever the control that asks for it lives: the
   // branch pill and Refresh in the toolbar, the remote control in the history
   // pane's header, and the commit in the changed-path pane's. Stating it once
   // here is what keeps a second click from queueing a second checkout, a second
-  // round trip, or a second commit behind the first.
+  // round trip, or a second commit behind the first. Generation is not one of
+  // these: it writes nothing, so it is the form's own state rather than the
+  // page's, and a slow model call must not lock the branch pill or Refresh.
   const busy = switching !== null || syncing !== null || committing
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
@@ -909,16 +946,17 @@ export function GitView(props: {
         {/* The commit form is the sidebar's own third row, under the toolbar and
             above both panes: what it commits is the changed-path pane's list, but
             what it acts on is the whole working tree, so it belongs to the column
-            rather than to either pane. The form is `flex:none` so it keeps its two
-            rows whatever height the panes are dragged to, and its own bottom
-            hairline is the one line above the Changed files header — nothing is
-            drawn between it and the toolbar, so the two rows above that line read
-            as one block. */}
+            rather than to either pane. The form is `flex:none` so it keeps its rows
+            whatever height the panes are dragged to, and its own bottom hairline
+            is the one line above the Changed files header — nothing is drawn
+            between it and the toolbar, so the rows above that line read as one
+            block. */}
         <CommitBar
           t={t}
           disabled={status?.ok !== true || files.length === 0 || busy || refreshing}
           committing={committing}
           onCommit={handleCommit}
+          onGenerate={handleGenerateMessage}
         />
         {/* The upper pane owns the divider under it: the boundary is what its own
             height is measured to, and the handle is placed on that pane's bottom
@@ -1769,15 +1807,36 @@ function workspaceFallback(status: StatusPayload | null): string {
 }
 
 /**
- * The sidebar's commit form: a message field with the button that commits
- * everything the changed-path list holds.
+ * One generated message, as the form takes it: the text to fill the field with,
+ * and whatever the model asked be read before the commit is made.
+ */
+interface GeneratedMessage {
+  /** The message the model wrote. */
+  readonly message: string
+  /** The model's findings, already joined into one sentence, when it had any. */
+  readonly warning?: string
+}
+
+/**
+ * The sidebar's commit form: a message field, the control that writes a message
+ * for it, and the button that commits everything the changed-path list holds.
  *
  * It is the column's own row — under the toolbar and above both panes — rather
- * than a part of the pane whose list it commits. Both rows are full width and the
- * button is a row of its own under the field: the sidebar is narrow, and a field
- * sharing one line with the button would leave neither of them a readable width at
- * the pane's floor. The two are small — the field opens at 28px, the button's own
- * `sm` — so the pair costs the lists about one changed-path row each.
+ * than a part of the pane whose list it commits. The field is a row of its own
+ * and the two controls share the row under it: the sidebar is narrow, and a field
+ * sharing one line with the buttons would leave none of them a readable width at
+ * the pane's floor. The field opens at 28px and the controls are their own `sm`
+ * height, so the pair costs the lists about one changed-path row each.
+ *
+ * Generate is the left-hand control of that row and the Commit button the right,
+ * in the order the two acts belong in: the model writes a message from the
+ * changes on disk, and the button beside it records those same changes under
+ * whatever the field then holds. Both are the platform's own primary button, so
+ * the pair reads as one row of actions; the Generate one is a square rather than
+ * a word because the row has to keep the button's label at the sidebar's floor,
+ * and its accessible name is what says what the glyph does. It carries no bubble:
+ * one over a control that sits just under the field would cover the very text it
+ * writes into.
  *
  * The field is a `textarea` of this plugin's own rather than the platform's
  * `Input`, because a commit message is not one line: a subject and the note under
@@ -1786,7 +1845,7 @@ function workspaceFallback(status: StatusPayload | null): string {
  * submits from the keyboard; the button is the plain path. The field grows with
  * what is typed and stops at four lines, past which it scrolls — a message
  * longer than that must not push the changed-path pane down the column. Its
- * corner is the button's own, which is what makes the two read as one form (see
+ * corner is the controls' own, which is what makes the three read as one form (see
  * `styles.ts`).
  *
  * It is a form of one decision, and that decision is the plain one: everything
@@ -1800,9 +1859,15 @@ function workspaceFallback(status: StatusPayload | null): string {
  * request carries it and the answer decides whether it is cleared — so it stays
  * here, one render per keystroke over one field.
  *
- * A commit empties the field; a refusal keeps it, because a message Git would not
- * take is the one thing the answer is about. The field is disabled for the length
- * of the request, so what is sent cannot be edited after it was read.
+ * A commit empties the field and takes the findings with it, because both were
+ * about the changes it just recorded; a refusal keeps the message, because a
+ * message Git would not take is the one thing the answer is about. The field is
+ * disabled for the length
+ * of the request, so what is sent cannot be edited after it was read. Generation
+ * is stated the same way and disables the same two controls for its own length: a
+ * second Generate behind the first would only be a second model call, and a
+ * Commit taken mid-generation would race the answer into a field it no longer
+ * describes.
  *
  * @param props.t - the page's translate seat.
  * @param props.disabled - whether the repository can take a commit right now:
@@ -1810,6 +1875,9 @@ function workspaceFallback(status: StatusPayload | null): string {
  * else.
  * @param props.committing - the commit this form asked for is in flight.
  * @param props.onCommit - runs the commit; resolves true when one was made.
+ * @param props.onGenerate - asks the Host for a message; resolves null when the
+ * request failed and the page has already reported it, in which case the field is
+ * left exactly as it was.
  * @returns the form element.
  */
 function CommitBar(props: {
@@ -1817,9 +1885,12 @@ function CommitBar(props: {
   readonly disabled: boolean
   readonly committing: boolean
   readonly onCommit: (message: string) => Promise<boolean>
+  readonly onGenerate: () => Promise<GeneratedMessage | null>
 }): ReactElement {
-  const { t, disabled, committing, onCommit } = props
+  const { t, disabled, committing, onCommit, onGenerate } = props
   const [message, setMessage] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [warning, setWarning] = useState('')
   const field = useRef<HTMLTextAreaElement | null>(null)
 
   /**
@@ -1849,11 +1920,36 @@ function CommitBar(props: {
    */
   const submit = useCallback((): void => {
     const trimmed = message.trim()
-    if (trimmed === '' || disabled || committing) return
+    if (trimmed === '' || disabled || committing || generating) return
     void onCommit(trimmed).then(made => {
-      if (made) setMessage('')
+      if (!made) return
+      // The findings belonged to the changes this commit just recorded, so they
+      // leave with the message rather than hanging over a form with nothing in it.
+      setMessage('')
+      setWarning('')
     })
-  }, [message, disabled, committing, onCommit])
+  }, [message, disabled, committing, generating, onCommit])
+
+  /**
+   * Ask the Host for a message and put it in the field.
+   *
+   * The answer replaces whatever the field held, because the request is about the
+   * changes on disk rather than about the text on screen; the model's findings
+   * replace the last answer's for the same reason. A failed request leaves both
+   * alone: the page has already opened its dialog on it, and clearing a message
+   * the user typed would be this control taking a failure out on their work.
+   */
+  const generate = useCallback((): void => {
+    if (disabled || committing || generating) return
+    setGenerating(true)
+    setWarning('')
+    void onGenerate().then(result => {
+      setGenerating(false)
+      if (result === null) return
+      setMessage(result.message)
+      setWarning(result.warning ?? '')
+    })
+  }, [disabled, committing, generating, onGenerate])
 
   return (
     <div className="dsh-cg-commit-bar">
@@ -1870,8 +1966,13 @@ function CommitBar(props: {
           placeholder={t('commit.placeholder')}
           aria-label={t('commit.placeholder')}
           rows={1}
-          disabled={committing}
-          onChange={event => setMessage(event.target.value)}
+          disabled={committing || generating}
+          onChange={event => {
+            setMessage(event.target.value)
+            // The findings belonged to the message that was generated; the moment
+            // it is edited they describe a draft this form no longer holds.
+            if (warning !== '') setWarning('')
+          }}
           onKeyDown={event => {
             if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
             event.preventDefault()
@@ -1879,15 +1980,37 @@ function CommitBar(props: {
           }}
         />
       </span>
-      <Button
-        className="dsh-cg-commit-send"
-        variant="primary"
-        size="sm"
-        disabled={disabled || committing || message.trim() === ''}
-        onClick={submit}
-      >
-        {committing ? t('commit.busy') : t('commit.button')}
-      </Button>
+      {warning === '' ? null : (
+        <p className="dsh-cg-commit-note" role="status">{t('commit.warning', { text: warning })}</p>
+      )}
+      <div className="dsh-cg-commit-actions">
+        {/* Two controls of one family, on one row, in the order the two acts
+            belong in: the model writes the message, and the button beside it
+            records the changes under whatever the field then holds. The square
+            is a glyph rather than a word because the row has to keep the
+            button's own label at the sidebar's floor, and it carries its
+            accessible name for a screen reader; there is no bubble over it,
+            so the two controls read as the one pair of buttons they are. */}
+        <Button
+          className="dsh-cg-commit-generate"
+          variant="primary"
+          size="sm"
+          icon={generating ? SPINNER_ICON : <IconGenerate />}
+          aria-label={generating ? t('commit.generating') : t('commit.generate')}
+          data-busy={generating}
+          disabled={disabled || committing || generating}
+          onClick={generate}
+        />
+        <Button
+          className="dsh-cg-commit-send"
+          variant="primary"
+          size="sm"
+          disabled={disabled || committing || generating || message.trim() === ''}
+          onClick={submit}
+        >
+          {committing ? t('commit.busy') : t('commit.button')}
+        </Button>
+      </div>
     </div>
   )
 }

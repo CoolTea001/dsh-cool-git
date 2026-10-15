@@ -72,6 +72,11 @@ export type FailureCode =
   | 'commit-clean'
   | 'commit-conflict'
   | 'commit-denied'
+  // Writing a commit message with the default model.
+  | 'no-llm'
+  | 'no-model'
+  | 'model-timeout'
+  | 'empty-message'
 
 /**
  * One coded refusal, with the values its sentence interpolates.
@@ -331,6 +336,48 @@ export interface CommitAllPayload {
   readonly reason?: 'no-repo' | 'error' | 'denied' | 'clean' | 'conflict'
   /** The commit that was just created, once it succeeded. */
   readonly commit?: CommitSummary
+}
+
+/**
+ * `POST /message`: one commit message the default model wrote for the pending
+ * changes.
+ *
+ * The request says only which session is asking: *what* the model is shown —
+ * the changed paths, the tracked patch, and the untracked files a patch against
+ * HEAD cannot reach — is the Host's own read of the repository, exactly as every
+ * other route resolves its own subject. So the page cannot ask for a message
+ * about changes that are not on disk, and the model only ever describes the tree
+ * Git reported.
+ *
+ * `message` is the model's own words and therefore carries no code, the same way
+ * Git's diagnosis does not: it is another program's text, except that here it is
+ * the answer rather than a refusal. The refusals this route words itself are the
+ * ones the page can act on — there is nothing to describe, there is no model to
+ * describe it with, or the model answered with nothing usable.
+ */
+export interface MessagePayload {
+  readonly ok: boolean
+  /** Raw diagnostic text: the model adapter's own failure, or a seam message. */
+  readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
+  /**
+   * Why no message was written, when the page can act on it: there is no
+   * repository, the model is missing, unconfigured, or timed out, it answered
+   * with nothing, or the working tree holds nothing to describe.
+   */
+  readonly reason?: 'no-repo' | 'error' | 'clean'
+  /** The message the form takes: a subject, and a body when one is needed. */
+  readonly message?: string
+  /**
+   * What the model's own pre-commit check flagged in these changes — a temp file,
+   * an oversized file, or something that looks like a credential.
+   *
+   * The message is written either way; these are the lines worth reading before
+   * the commit is made, and the page states them beside the form rather than
+   * inside it, because a warning is not part of a commit message.
+   */
+  readonly warnings?: readonly string[]
 }
 
 /** Porcelain `XY` pairs Git uses for an unmerged path. */

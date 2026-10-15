@@ -13,6 +13,7 @@ import type {
   CommitPayload,
   DiffPayload,
   LogPayload,
+  MessagePayload,
   StatusPayload,
   SyncPayload,
 } from '../shared/contract.js'
@@ -113,6 +114,21 @@ export function commitAll(
   message: string,
 ): Promise<CommitAllPayload> {
   return postJson('/commit-all', { sessionId, message })
+}
+
+/**
+ * Ask the Host to write a commit message for the changes on disk.
+ *
+ * The request names no changes and no model: which paths the model is shown, and
+ * which model writes the message, are the Host's own reads — the repository's
+ * state and the deployment's current default selection. The answer is a draft for
+ * the form, never a commit: this call leaves the index and the history alone.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the message payload, with the model's own findings beside it.
+ */
+export function generateMessage(sessionId: string | undefined): Promise<MessagePayload> {
+  return postJson('/message', { sessionId })
 }
 
 /**

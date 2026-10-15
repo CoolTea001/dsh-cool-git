@@ -36,6 +36,7 @@
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
 import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type LogPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
 /**
@@ -107,6 +108,63 @@ export declare function readCommit(target: GitTarget, hash: string): Promise<Com
  * @returns the unified diff, or the reason there is none.
  */
 export declare function readDiff(target: GitTarget, file: Pick<ChangedFile, 'path' | 'staged' | 'untracked'>): Promise<DiffPayload>;
+/** One untracked path, as the message prompt sees it. */
+export interface UntrackedPreview {
+    /** Worktree-relative path. */
+    readonly path: string;
+    /**
+     * What Git printed for this path against `/dev/null`: its `--stat` line —
+     * which is where a binary file's byte size appears — and then its patch, cut
+     * at the Host's bound.
+     */
+    readonly text: string;
+    /** The preview was cut, so the file is longer than what is shown. */
+    readonly truncated: boolean;
+}
+/**
+ * Everything the message generator reads out of the working tree.
+ *
+ * A refusal is the reader's own rather than a payload, because the route wraps
+ * it the way every other route wraps its reader's: the three fields below are
+ * the material, and there is nothing to say about a repository that could not be
+ * read.
+ */
+export type ChangeDigest = {
+    readonly ok: true;
+    /** Every changed path, in the order `git status` named them. */
+    readonly files: readonly ChangedFile[];
+    /**
+     * `git diff --stat` of the tracked changes: one line per path, following the
+     * patch's own shape but carrying the file's magnitude — the only place a
+     * binary file's size appears at all.
+     */
+    readonly stat: string;
+    /** Unified patch of the tracked changes, staged and unstaged alike. */
+    readonly patch: string;
+    /** The patch was cut at {@link MAX_DIGEST_PATCH_CHARS}. */
+    readonly patchTruncated: boolean;
+    /** Untracked paths' contents, each bounded and at most `MAX_PREVIEW_FILES`. */
+    readonly untracked: readonly UntrackedPreview[];
+} | {
+    readonly ok: false;
+    readonly refusal: Refusal;
+    readonly reason: 'no-repo' | 'error';
+};
+/**
+ * Read the working tree as one block of material for a generated commit message.
+ *
+ * This is the reader `readStatus` and `readDiff` would give if they were asked
+ * together and once: the changed paths, the tracked patch with its `--stat`, and
+ * the untracked files a patch against HEAD cannot reach. It exists as one read
+ * because the prompt is one request — a message generator that walked the tree
+ * path by path would run three commands per changed file — and because the model
+ * is meant to see the changes as one change set rather than as an answer per
+ * row.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the digest, or why the repository could not be read.
+ */
+export declare function readChangeDigest(target: GitTarget): Promise<ChangeDigest>;
 /**
  * Read the branches a switch may pick: the local ones and the remote-tracking
  * ones.

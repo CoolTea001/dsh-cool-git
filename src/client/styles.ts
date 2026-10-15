@@ -178,11 +178,14 @@ const GIT_CSS = [
   '.dsh-cg-tip .dsh-cg-icon:disabled,.dsh-cg-tip .dsh-cg-branch:disabled{pointer-events:none}',
   '@keyframes dsh-cg-spin{to{transform:rotate(360deg)}}',
   // One spin for every glyph that marks a wait: the branch pill, the two halves
-  // of the sync button, and the refresh control. The sync button's arrows turn
+  // of the sync button, the refresh control, and the commit form's Generate
+  // square — which the rule names rather than the toolbar's `.dsh-cg-icon`
+  // because that one is the platform's primary button and wears no class of the
+  // toolbar's own. The sync button's arrows turn
   // one at a time, which is why the rule names the arrow span and not the
   // button: spinning the whole button would turn the arrow of the half that is
   // not running.
-  '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
+  '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg,.dsh-cg-commit-generate[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
   // beside it, and then the one control the row keeps — Refresh. It draws no rule of
@@ -205,7 +208,7 @@ const GIT_CSS = [
   // control to its right is fixed, so once the pill has been shortened to its icon
   // this name is the only thing left that can end in an ellipsis rather than run
   // over the sidebar's own edge.
-  '.dsh-cg-workspace{flex:1 1 auto;display:flex;align-items:center;gap:4px;min-width:0;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-workspace{flex:1 1 auto;display:flex;align-items:center;gap:4px;min-width:0;margin-right:6px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-workspace-icon{flex:none;display:inline-flex;align-items:center;width:13px;height:13px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-workspace-icon svg{width:13px;height:13px;display:block}',
   // The name is the part of the Workspace that gives ground, and the ellipsis is
@@ -371,7 +374,10 @@ const GIT_CSS = [
   // narrow: a field sharing a line with the button would be a field too small to
   // read a message in at the pane's floor, and the button's own label is the part
   // that must never be cut. Their gutters are the toolbar's, so all three of the
-  // sidebar's rows start and end on the same two edges.
+  // sidebar's rows start and end on the same two edges. The field owns the first
+  // row and the two controls share the second (see `.dsh-cg-commit-actions`);
+  // what the model's check found, when it found anything, is the line between
+  // them.
   //
   // The button is the platform's own primitive, so its fill, radius, type scale,
   // and focus colour are the platform's and follow the theme without a rule here.
@@ -380,7 +386,7 @@ const GIT_CSS = [
   // atom is the appearance — the half-pixel border, the layer fill, the dimmed
   // placeholder, and the business token on focus — so the two still read as the
   // app's field; what it does not borrow is the radius, which is the `sm` button's
-  // own corner above it, because these two rows are one form.
+  // own corner below it, because these rows are one form.
   //
   // The frame and the field are separate boxes for one reason: the component
   // measures the field's height to its own content, and a box that is measured has
@@ -392,7 +398,7 @@ const GIT_CSS = [
   // The height is one line's worth and is then measured to its content by the
   // component (see `CommitBar`), capped here at four lines. The arithmetic runs
   // through the frame: a line is 20px and the field's own padding is 6px, so the
-  // 26px it keeps at its shortest is the 28px the button beside it is once the
+  // 26px it keeps at its shortest is the 28px the row below it is once the
   // frame's border is counted, and four of those lines is the 86px past which the
   // field scrolls instead of pushing the Changed files pane down the column.
   '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
@@ -402,7 +408,28 @@ const GIT_CSS = [
   '.dsh-cg-commit-input{display:block;box-sizing:border-box;width:100%;min-height:26px;max-height:86px;padding:3px 8px;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:20px;resize:none;overflow-y:auto}',
   '.dsh-cg-commit-input::placeholder{color:var(--dsw-alias-label-dimmed)}',
   '.dsh-cg-commit-input:disabled{cursor:not-allowed}',
-  '.dsh-cg-commit-send{width:100%}',
+  // The form's last row is the two controls that act on the field above it:
+  // Generate on the left, square because it is a glyph and the commit's own
+  // height because the pair has to read as one row, and Commit taking what is
+  // left. Both are the platform's primary button — the same fill, corner, and
+  // focus colour as the field's own submit — so the row reads as one pair of
+  // actions rather than as a glyph sitting beside a button: the square simply
+  // drops the `sm` button's horizontal padding, which is all that makes it
+  // square. Only its artwork needs a size here, since the platform's icon seat
+  // is 16px and this glyph is drawn a shade smaller than that; its fill, its
+  // hover, its disabled fade, and its corner are the primitive's own.
+  '.dsh-cg-commit-actions{display:flex;align-items:center;gap:6px}',
+  '.dsh-cg-commit-generate{flex:none;width:28px;padding:0}',
+  '.dsh-cg-commit-generate svg{width:14px;height:14px}',
+  '.dsh-cg-commit-send{flex:1 1 auto;min-width:0}',
+  // What the model's own pre-commit check found: one line under the field, in
+  // the warning colour, because it is about the commit rather than about the
+  // message — the message above it is written either way. It wraps rather than
+  // scrolling: the sidebar has no room for a second scroller, and the sentence is
+  // short enough to read as two or three lines when it has to. `pre-line` is what
+  // puts each finding the model reported on a line of its own, since the findings
+  // travel as one sentence separated by newlines.
+  '.dsh-cg-commit-note{margin:0;white-space:pre-line;color:var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:1.45}',
 
   // Changed-path rows. The selected row reads exactly like a hovered one, the
   // way the branch dialog's rows already do: the fill says which row the page

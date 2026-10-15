@@ -5,7 +5,7 @@
  * `{ ok: false }` result the caller reports in the error dialog, so the page has
  * exactly one failure shape to render no matter how the answer went wrong.
  */
-import type { BranchesPayload, CheckoutPayload, CommitAllPayload, CommitPayload, DiffPayload, LogPayload, StatusPayload, SyncPayload } from '../shared/contract.js';
+import type { BranchesPayload, CheckoutPayload, CommitAllPayload, CommitPayload, DiffPayload, LogPayload, MessagePayload, StatusPayload, SyncPayload } from '../shared/contract.js';
 /**
  * Ask the Host for the session's repository state and changed paths.
  *
@@ -55,6 +55,18 @@ export declare function fetchCommit(sessionId: string | undefined, hash: string)
  * @returns the commit-all payload.
  */
 export declare function commitAll(sessionId: string | undefined, message: string): Promise<CommitAllPayload>;
+/**
+ * Ask the Host to write a commit message for the changes on disk.
+ *
+ * The request names no changes and no model: which paths the model is shown, and
+ * which model writes the message, are the Host's own reads — the repository's
+ * state and the deployment's current default selection. The answer is a draft for
+ * the form, never a commit: this call leaves the index and the history alone.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the message payload, with the model's own findings beside it.
+ */
+export declare function generateMessage(sessionId: string | undefined): Promise<MessagePayload>;
 /**
  * Ask the Host for the branches a switch may pick, local and remote-tracking.
  *

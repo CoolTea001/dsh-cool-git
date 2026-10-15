@@ -34,11 +34,11 @@ type UiKey =
 /** The page's own refusal for a path the newest status no longer lists. */
  | 'fallback.fileGone'
 /** What each request is called, as the error dialog's line prefix. */
- | 'label.status' | 'label.log' | 'label.commit' | 'label.diff'
+ | 'label.status' | 'label.log' | 'label.commit' | 'label.diff' | 'label.message'
 /** What that line says when the answer gave no reason at all. */
- | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches'
+ | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches'
+ | 'title.switchBranch' | 'title.refresh' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.message'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -51,6 +51,8 @@ type UiKey =
  | 'branch.title' | 'branch.description' | 'branch.cancel' | 'branch.confirm' | 'branch.search' | 'branch.list' | 'branch.current' | 'branch.local' | 'branch.remote' | 'branch.notRepo' | 'branch.none' | 'branch.loading' | 'branch.noMatch' | 'branch.truncated'
 /** The commit form. */
  | 'commit.placeholder' | 'commit.button' | 'commit.busy'
+/** The commit form's Generate control, and what the model asked be read first. */
+ | 'commit.generate' | 'commit.generating' | 'commit.warning'
 /** The changed-path pane's empty and loading states. */
  | 'list.notRepo' | 'list.statusFailed' | 'list.loading'
 /** Whether a row's change is in the index. */
@@ -93,10 +95,12 @@ export declare const en: {
     'label.log': string;
     'label.commit': string;
     'label.diff': string;
+    'label.message': string;
     'fallback.status': string;
     'fallback.log': string;
     'fallback.diff': string;
     'fallback.branches': string;
+    'fallback.message': string;
     'title.switchBranch': string;
     'title.refresh': string;
     'title.pull': string;
@@ -105,6 +109,7 @@ export declare const en: {
     'title.commit': string;
     'title.diff': string;
     'title.branches': string;
+    'title.message': string;
     'dialog.close': string;
     'dialog.ok': string;
     'head.currentBranch': string;
@@ -131,6 +136,9 @@ export declare const en: {
     'commit.placeholder': string;
     'commit.button': string;
     'commit.busy': string;
+    'commit.generate': string;
+    'commit.generating': string;
+    'commit.warning': string;
     'list.notRepo': string;
     'list.statusFailed': string;
     'list.loading': string;
@@ -192,6 +200,10 @@ export declare const en: {
     'error.commit-clean': string;
     'error.commit-conflict': string;
     'error.commit-denied': string;
+    'error.no-llm': string;
+    'error.no-model': string;
+    'error.model-timeout': string;
+    'error.empty-message': string;
 };
 /** The Chinese copy, key for key the same page. */
 export declare const zh: typeof en;

@@ -36,6 +36,7 @@ import {
   DEFAULT_LOG_LIMIT,
   type GitTarget,
 } from './git.js'
+import { generateCommitMessage } from './message.js'
 import { coded, type Refusal } from './refusal.js'
 import { resolveWorkspace } from './workspace.js'
 
@@ -46,6 +47,7 @@ export const ROUTES = {
   diff: '/dsh-cool-git/api/diff',
   commit: '/dsh-cool-git/api/commit',
   commitAll: '/dsh-cool-git/api/commit-all',
+  message: '/dsh-cool-git/api/message',
   branches: '/dsh-cool-git/api/branches',
   checkout: '/dsh-cool-git/api/checkout',
   pull: '/dsh-cool-git/api/pull',
@@ -433,6 +435,16 @@ export function registerRoutes(ctx: any): () => void {
       if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
       return commitAll(target, message)
     })),
+
+    // The commit form's other request, and a read: it writes a message for the
+    // changes on disk, which is why the Commit button stays the only control that
+    // stages or records anything. Which model writes it is the Host's business
+    // too — the deployment's current default selection — so the page asks for a
+    // message and never names the model that writes it. The session id is passed
+    // on only as the model call's own attribution; the repository is resolved from
+    // it by `handle`, never from anything the body holds.
+    route(ROUTES.message, (req, res) => handle(ctx, req, res, 'read', (body, target) =>
+      generateCommitMessage(ctx, target, typeof body.sessionId === 'string' ? body.sessionId : undefined))),
 
     route(ROUTES.checkout, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const branch = readBranch(body)

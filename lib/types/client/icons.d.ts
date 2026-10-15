@@ -63,4 +63,14 @@ export declare const IconCheck: () => ReactElement;
  * states and the glyph reads as the same control either way.
  */
 export declare const IconArrowRight: () => ReactElement;
+/**
+ * The commit form's Generate control: the model writes the message that the
+ * Commit button beside it would otherwise be handed (assets/generate.svg).
+ *
+ * A spark rather than a pen or a wand, because what it asks for is not an edit
+ * of the text in the field but a reading of the changes behind it. It is the one
+ * glyph on the page that stands for a model call, and it sits at the field's own
+ * left edge so the pair reads as "write this, then commit it".
+ */
+export declare const IconGenerate: () => ReactElement;
 //# sourceMappingURL=icons.d.ts.map

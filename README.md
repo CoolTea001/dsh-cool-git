@@ -17,6 +17,7 @@ DeepSeek Harness Git plugin — adds Git management to the session tab bar, cove
 - **Sync:** one-click Pull & Push to sync changes
 - **Diff view:** view per-file change diffs
 - **Commit history:** browse the commit history and view the file diffs
+- **Generated commit message:** write one from the pending changes with DSH's current default model, following the project's own commit rules (see `AGENTS.md`); the model's pre-commit checks are stated beside the field
 
 ## Installation
 

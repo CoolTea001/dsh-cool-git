@@ -667,6 +667,210 @@ export async function readDiff(
 }
 
 /**
+ * Largest tracked patch the message prompt carries, in characters.
+ *
+ * The prompt is one model request, so the patch inside it is bounded here rather
+ * than by the read: `runGit`'s own bound is four megabytes, which is a fine
+ * answer for a pane to scroll and far too much to put in a prompt beside a file
+ * list and a set of previews.
+ */
+const MAX_DIGEST_PATCH_CHARS = 120_000
+
+/**
+ * Largest preview one untracked path contributes to the prompt.
+ *
+ * A patch of an untracked path is its whole content, so without this a single
+ * new lockfile could fill the request; the size line `--stat` prints outside the
+ * cap is what still tells the model the file is large.
+ */
+const MAX_PREVIEW_CHARS = 12_000
+
+/** Total preview budget across every untracked path. */
+const MAX_PREVIEW_TOTAL_CHARS = 48_000
+
+/** How many untracked paths' contents the prompt describes. */
+const MAX_PREVIEW_FILES = 20
+
+/** One untracked path, as the message prompt sees it. */
+export interface UntrackedPreview {
+  /** Worktree-relative path. */
+  readonly path: string
+  /**
+   * What Git printed for this path against `/dev/null`: its `--stat` line —
+   * which is where a binary file's byte size appears — and then its patch, cut
+   * at the Host's bound.
+   */
+  readonly text: string
+  /** The preview was cut, so the file is longer than what is shown. */
+  readonly truncated: boolean
+}
+
+/**
+ * Everything the message generator reads out of the working tree.
+ *
+ * A refusal is the reader's own rather than a payload, because the route wraps
+ * it the way every other route wraps its reader's: the three fields below are
+ * the material, and there is nothing to say about a repository that could not be
+ * read.
+ */
+export type ChangeDigest =
+  | {
+    readonly ok: true
+    /** Every changed path, in the order `git status` named them. */
+    readonly files: readonly ChangedFile[]
+    /**
+     * `git diff --stat` of the tracked changes: one line per path, following the
+     * patch's own shape but carrying the file's magnitude — the only place a
+     * binary file's size appears at all.
+     */
+    readonly stat: string
+    /** Unified patch of the tracked changes, staged and unstaged alike. */
+    readonly patch: string
+    /** The patch was cut at {@link MAX_DIGEST_PATCH_CHARS}. */
+    readonly patchTruncated: boolean
+    /** Untracked paths' contents, each bounded and at most `MAX_PREVIEW_FILES`. */
+    readonly untracked: readonly UntrackedPreview[]
+  }
+  | { readonly ok: false; readonly refusal: Refusal; readonly reason: 'no-repo' | 'error' }
+
+/**
+ * Run the one diff that covers every tracked change.
+ *
+ * `git diff HEAD` is the whole of it when the branch has a commit: index and
+ * worktree are both compared against HEAD, so a staged edit and a further
+ * unstaged one appear under the path they belong to. An unborn branch has no
+ * HEAD to compare against, so the staged half is asked for by name — the index
+ * against the empty tree — and the unstaged half follows; the two are
+ * concatenated rather than merged because both are already in the same format
+ * and neither can name a path the other does not.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param hasHead - HEAD resolves to a commit.
+ * @param format - the diff's own switches, e.g. `--stat`.
+ * @returns the invocation's outcome; never rejects.
+ */
+async function runTrackedDiff(
+  root: GitTarget,
+  hasHead: boolean,
+  format: readonly string[],
+): Promise<GitRun> {
+  const base = ['-M', '--no-color', '--no-ext-diff', ...format]
+  if (hasHead) return runGit(root, ['diff', 'HEAD', ...base])
+  const staged = await runGit(root, ['diff', '--cached', ...base])
+  if (staged.code !== 0) return staged
+  const unstaged = await runGit(root, ['diff', ...base])
+  if (unstaged.code !== 0) return unstaged
+  return {
+    ...staged,
+    stdout: staged.stdout + unstaged.stdout,
+    truncated: staged.truncated || unstaged.truncated,
+  }
+}
+
+/**
+ * Cut one block of Git's output at a character bound, on a line boundary.
+ *
+ * A block cut mid-line would hand the model half a hunk header or half a line of
+ * code, which reads as a change that is not there; cutting at the last newline
+ * inside the bound leaves whole lines only, and the flag is what tells the model
+ * the picture is incomplete.
+ *
+ * @param text - the text as Git printed it.
+ * @param limit - the most characters the caller may carry.
+ * @returns the text to carry, and whether anything was dropped.
+ */
+function cutAtLine(text: string, limit: number): { readonly text: string; readonly truncated: boolean } {
+  if (text.length <= limit) return { text, truncated: false }
+  const head = text.slice(0, limit)
+  const lastBreak = head.lastIndexOf('\n')
+  return { text: lastBreak < 0 ? head : head.slice(0, lastBreak + 1), truncated: true }
+}
+
+/**
+ * Read every untracked path's content, each against `/dev/null`.
+ *
+ * `--no-index` is the one place Git compares two paths instead of a path against
+ * a tree, which is the only way an untracked file's content is reachable at all:
+ * it is in no tree, so no `diff HEAD` can name it. Exit code 1 is the normal
+ * answer here — the two sides always differ, an empty file included — and the
+ * `--stat` line is asked for in the same invocation as the patch, because it is
+ * where a binary file's size appears and a second command would only repeat the
+ * same walk.
+ *
+ * A path whose read fails is left out of the previews: it stays on the list the
+ * prompt opens with, because `git status` named it, and the alternative — one
+ * unreadable file failing the whole request — would take the message away over a
+ * file the model was only ever going to look at.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param files - every changed path; the untracked ones are the subject here.
+ * @returns one bounded preview per untracked path, in status order.
+ */
+async function readUntrackedPreviews(
+  root: GitTarget,
+  files: readonly ChangedFile[],
+): Promise<readonly UntrackedPreview[]> {
+  const previews: UntrackedPreview[] = []
+  let budget = MAX_PREVIEW_TOTAL_CHARS
+  for (const file of files) {
+    if (!file.untracked || previews.length >= MAX_PREVIEW_FILES || budget <= 0) continue
+    const run = await runGit(root, [
+      'diff', '--no-index', '--stat', '-p', '--no-color', '--no-ext-diff', '--', '/dev/null', file.path,
+    ], [0, 1])
+    if (run.code !== 0 && run.code !== 1) continue
+    if (run.stdout.trim() === '') continue
+    const cut = cutAtLine(run.stdout, Math.min(MAX_PREVIEW_CHARS, budget))
+    budget -= cut.text.length
+    previews.push({ path: file.path, text: cut.text, truncated: cut.truncated || run.truncated })
+  }
+  return previews
+}
+
+/**
+ * Read the working tree as one block of material for a generated commit message.
+ *
+ * This is the reader `readStatus` and `readDiff` would give if they were asked
+ * together and once: the changed paths, the tracked patch with its `--stat`, and
+ * the untracked files a patch against HEAD cannot reach. It exists as one read
+ * because the prompt is one request — a message generator that walked the tree
+ * path by path would run three commands per changed file — and because the model
+ * is meant to see the changes as one change set rather than as an answer per
+ * row.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the digest, or why the repository could not be read.
+ */
+export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, refusal: repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  const status = await runGit(root, [
+    'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all',
+  ])
+  if (status.code !== 0) return { ok: false, refusal: refusalOf(status), reason: 'error' }
+  const files = parseStatus(status.stdout).files
+  if (files.length === 0) {
+    return { ok: true, files, stat: '', patch: '', patchTruncated: false, untracked: [] }
+  }
+
+  const stat = await runTrackedDiff(root, repo.hasHead, ['--stat'])
+  if (stat.code !== 0) return { ok: false, refusal: refusalOf(stat), reason: 'error' }
+  const diff = await runTrackedDiff(root, repo.hasHead, ['--unified=3'])
+  if (diff.code !== 0) return { ok: false, refusal: refusalOf(diff), reason: 'error' }
+  const patch = cutAtLine(diff.stdout, MAX_DIGEST_PATCH_CHARS)
+
+  return {
+    ok: true,
+    files,
+    stat: stat.stdout.trim(),
+    patch: patch.text,
+    patchTruncated: patch.truncated || diff.truncated,
+    untracked: await readUntrackedPreviews(root, files),
+  }
+}
+
+/**
  * One namespace's branch names, and whether the cap cut the list.
  *
  * A failure is reported as the reason rather than as a payload, because the two
