@@ -45,10 +45,35 @@ import {
   type CommitPayload,
   type CommitSummary,
   type DiffPayload,
+  type Failure,
+  type FailureCode,
   type LogPayload,
   type StatusPayload,
   type SyncPayload,
 } from '../shared/contract.js'
+
+/**
+ * How one read refused, in the two forms the payloads carry.
+ *
+ * A refusal this plugin can name is a code, because the page is what knows the
+ * language to word it in; anything else is text another program wrote — Git's
+ * own diagnosis above all — which no dictionary can own. Every function below
+ * that can refuse therefore answers one of these rather than a sentence.
+ */
+type Refusal =
+  | { readonly failure: Failure }
+  | { readonly error: string }
+
+/**
+ * One coded refusal, shaped as a payload carries it.
+ *
+ * @param code - the refusal, whose sentence the page owns.
+ * @param params - the values that sentence interpolates, when it has any.
+ * @returns the payload fragment to spread into an `ok: false` answer.
+ */
+function coded(code: FailureCode, params?: Readonly<Record<string, string | number>>): Refusal {
+  return { failure: params === undefined ? { code } : { code, params } }
+}
 
 /** Wall-clock bound per Git invocation; a hung command is killed, not waited on. */
 const GIT_TIMEOUT_MS = 20_000
@@ -135,7 +160,7 @@ export interface GitRun {
 /** A resolved repository, or the reason it cannot be used. */
 type RepoResolution =
   | { readonly root: string; readonly hasHead: boolean }
-  | { readonly error: string; readonly reason: 'no-repo' | 'error' }
+  | { readonly refusal: Refusal; readonly reason: 'no-repo' | 'error' }
 
 /**
  * Everything one request needs to run Git.
@@ -267,19 +292,22 @@ function diagnosticText(run: GitRun): string {
 }
 
 /**
- * The one-line reason a command failed, for the page to render.
+ * The one-line refusal a failed command amounts to, for the page to render.
  *
  * Git writes its diagnosis to stderr; a sandbox denial is reported by the seam
- * instead and would otherwise read as an empty message.
+ * instead and would otherwise read as an empty message. Only the two cases the
+ * page words itself are coded — a denial, and a command that said nothing at
+ * all — because every other refusal is Git's own first line, which is more
+ * specific than anything this half could invent and cannot be translated.
  *
  * @param run - the failed invocation.
- * @returns a human-readable reason.
+ * @returns the coded refusal, or the text Git printed.
  */
-function failureText(run: GitRun): string {
-  if (run.denied === true) return '当前权限模式不允许执行 Git 命令'
+function refusalOf(run: GitRun): Refusal {
+  if (run.denied === true) return coded('git-denied')
   const text = diagnosticText(run)
-  if (text === '') return `git 退出码 ${run.code ?? 'null'}`
-  return text.split('\n')[0] ?? text
+  if (text === '') return coded('git-exit', { code: run.code ?? 'null' })
+  return { error: text.split('\n')[0] ?? text }
 }
 
 /**
@@ -295,10 +323,10 @@ function failureText(run: GitRun): string {
  */
 async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
   const top = await runGit(target, ['rev-parse', '--show-toplevel'])
-  if (top.failure !== undefined) return { error: top.failure, reason: 'error' }
-  if (top.code !== 0) return { error: failureText(top), reason: 'no-repo' }
+  if (top.failure !== undefined) return { refusal: { error: top.failure }, reason: 'error' }
+  if (top.code !== 0) return { refusal: refusalOf(top), reason: 'no-repo' }
   const root = top.stdout.trim()
-  if (root === '') return { error: 'git 未返回仓库根目录', reason: 'no-repo' }
+  if (root === '') return { refusal: coded('no-root'), reason: 'no-repo' }
 
   // `--quiet` keeps an unborn branch from writing "fatal: Needed a single
   // revision" to stderr, and exit code 1 is then a normal "no commits yet".
@@ -314,7 +342,7 @@ async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
  */
 export async function readStatus(target: GitTarget): Promise<StatusPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   // `--branch` adds the `## ...` header as the first NUL-terminated record, and
   // `--untracked-files=all` names every untracked file rather than collapsing
@@ -322,7 +350,7 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
   const status = await runGit(inDir(target, repo.root), [
     'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all',
   ])
-  if (status.code !== 0) return { ok: false, error: failureText(status), reason: 'error' }
+  if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
   const parsed = parseStatus(status.stdout)
 
@@ -511,7 +539,7 @@ function changedFile(path: string, origPath: string | undefined, x: string, y: s
  */
 export async function readLog(target: GitTarget, limit: number): Promise<LogPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   if (!repo.hasHead) return { ok: true, commits: [], empty: true }
 
   const count = clampLimit(limit)
@@ -521,7 +549,7 @@ export async function readLog(target: GitTarget, limit: number): Promise<LogPayl
   const log = await runGit(inDir(target, repo.root), [
     'log', '-z', `--max-count=${count}`, `--pretty=format:${LOG_FORMAT}`,
   ])
-  if (log.code !== 0) return { ok: false, error: failureText(log), reason: 'error' }
+  if (log.code !== 0) return { ok: false, ...refusalOf(log), reason: 'error' }
 
   const commits: CommitSummary[] = []
   for (const record of log.stdout.split('\0')) {
@@ -548,18 +576,18 @@ export async function readLog(target: GitTarget, limit: number): Promise<LogPayl
  */
 export async function readCommit(target: GitTarget, hash: string): Promise<CommitPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
-  if (!repo.hasHead) return { ok: false, error: '该仓库还没有任何提交', reason: 'error' }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  if (!repo.hasHead) return { ok: false, ...coded('no-commits'), reason: 'error' }
 
   const meta = await runGit(inDir(target, repo.root), [
     'log', '-1', `--pretty=format:${DETAIL_FORMAT}`, hash,
   ])
-  if (meta.code !== 0) return { ok: false, error: failureText(meta), reason: 'error' }
+  if (meta.code !== 0) return { ok: false, ...refusalOf(meta), reason: 'error' }
 
   const cut = meta.stdout.indexOf(RECORD)
   const fields = (cut < 0 ? meta.stdout : meta.stdout.slice(0, cut)).split(FIELD)
   const summary = parseSummary(fields)
-  if (summary === undefined) return { ok: false, error: '无法解析该提交', reason: 'error' }
+  if (summary === undefined) return { ok: false, ...coded('unparsable-commit'), reason: 'error' }
   const body = fields[BODY_FIELD] ?? ''
 
   const merge = summary.parents.length > 1
@@ -570,7 +598,7 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
     : await runGit(inDir(target, repo.root), [
         'diff', '--no-color', '--no-ext-diff', '-M', '-U3', `${hash}^`, hash,
       ])
-  if (patchRun.code !== 0) return { ok: false, error: failureText(patchRun), reason: 'error' }
+  if (patchRun.code !== 0) return { ok: false, ...refusalOf(patchRun), reason: 'error' }
 
   return {
     ok: true,
@@ -600,7 +628,7 @@ export async function readDiff(
   file: Pick<ChangedFile, 'path' | 'staged' | 'untracked'>,
 ): Promise<DiffPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const base = ['--no-color', '--no-ext-diff']
   const root = inDir(target, repo.root)
@@ -621,7 +649,7 @@ export async function readDiff(
   }
 
   if (diff.code !== 0 && diff.code !== 1) {
-    return { ok: false, error: failureText(diff), reason: 'error' }
+    return { ok: false, ...refusalOf(diff), reason: 'error' }
   }
 
   const patch = diff.stdout
@@ -642,7 +670,7 @@ export async function readDiff(
  */
 type RefNames =
   | { readonly ok: true; readonly names: readonly string[]; readonly truncated: boolean }
-  | { readonly ok: false; readonly error: string }
+  | { readonly ok: false; readonly refusal: Refusal }
 
 /**
  * Read the short names under one ref namespace, newest commit date first.
@@ -664,7 +692,7 @@ async function readRefNames(root: GitTarget, namespace: string): Promise<RefName
     'for-each-ref', '--sort=-committerdate', `--count=${MAX_BRANCHES + 1}`,
     '--format=%(refname:short)%00%(symref)', namespace,
   ])
-  if (list.code !== 0) return { ok: false, error: failureText(list) }
+  if (list.code !== 0) return { ok: false, refusal: refusalOf(list) }
 
   const names: string[] = []
   let truncated = false
@@ -698,13 +726,13 @@ async function readRefNames(root: GitTarget, namespace: string): Promise<RefName
  */
 export async function readBranches(target: GitTarget): Promise<BranchesPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
   const locals = await readRefNames(root, 'refs/heads/')
-  if (!locals.ok) return { ok: false, error: locals.error, reason: 'error' }
+  if (!locals.ok) return { ok: false, ...locals.refusal, reason: 'error' }
   const remotes = await readRefNames(root, 'refs/remotes/')
-  if (!remotes.ok) return { ok: false, error: remotes.error, reason: 'error' }
+  if (!remotes.ok) return { ok: false, ...remotes.refusal, reason: 'error' }
 
   const current = await currentBranch(root)
 
@@ -747,9 +775,9 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
  */
 export async function switchBranch(target: GitTarget, name: string): Promise<CheckoutPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   if (!BRANCH_NAME.test(name) || name.includes('..') || name.includes('@{')) {
-    return { ok: false, error: `分支名不合法：${name}`, reason: 'unknown-branch' }
+    return { ok: false, ...coded('invalid-branch', { name }), reason: 'unknown-branch' }
   }
 
   const root = inDir(target, repo.root)
@@ -757,12 +785,12 @@ export async function switchBranch(target: GitTarget, name: string): Promise<Che
     return switchTo(root, ['switch', name], ['checkout', name], name)
   }
   if (!await refExists(root, `refs/remotes/${name}`)) {
-    return { ok: false, error: `分支不存在：${name}`, reason: 'unknown-branch' }
+    return { ok: false, ...coded('unknown-branch', { name }), reason: 'unknown-branch' }
   }
 
   const local = await localNameForRemote(root, name)
   if (local === null) {
-    return { ok: false, error: `无法从远程分支推导本地分支名：${name}`, reason: 'error' }
+    return { ok: false, ...coded('remote-local-name', { name }), reason: 'error' }
   }
   // The local branch may already track this remote: then the pick is a plain
   // switch, which is also the case where Git's own `--track` would refuse with
@@ -859,7 +887,7 @@ async function localNameForRemote(root: GitTarget, ref: string): Promise<string 
  */
 function checkoutFailure(run: GitRun): CheckoutPayload {
   if (run.denied === true) {
-    return { ok: false, error: '当前权限模式不允许切换分支：该操作需要写入工作区', reason: 'denied' }
+    return { ok: false, ...coded('checkout-denied'), reason: 'denied' }
   }
 
   const text = diagnosticText(run)
@@ -869,15 +897,15 @@ function checkoutFailure(run: GitRun): CheckoutPayload {
       .map(line => line.trim())
       .filter(line => line !== '' && !/^(?:error|fatal|Please|Aborting|note:)/i.test(line) && !line.includes(' '))
       .slice(0, 5)
-    const detail = paths.length === 0 ? '' : `（${paths.join('、')}）`
-    return {
-      ok: false,
-      error: `有未提交的改动会被覆盖${detail}，请先提交或暂存后再切换`,
-      reason: 'dirty',
-    }
+    // The paths travel unsplit: the sentence is the page's, and a list joined
+    // for it here is the same list in either language.
+    const refusal = paths.length === 0
+      ? coded('checkout-dirty')
+      : coded('checkout-dirty-paths', { paths: paths.join(', ') })
+    return { ok: false, ...refusal, reason: 'dirty' }
   }
 
-  return { ok: false, error: failureText(run), reason: 'error' }
+  return { ok: false, ...refusalOf(run), reason: 'error' }
 }
 
 /**
@@ -928,11 +956,33 @@ async function remotesOf(root: GitTarget): Promise<readonly string[]> {
   return list.stdout.split('\n').map(name => name.trim()).filter(name => name !== '')
 }
 
-/** How each remote operation names itself in a message. */
-const ACTION_LABEL: Readonly<Record<'pull' | 'push', string>> = { pull: 'Pull', push: 'Push' }
-
-/** The verb each remote operation uses about the branch it moves. */
-const ACTION_VERB: Readonly<Record<'pull' | 'push', string>> = { pull: '拉取', push: '推送' }
+/**
+ * The refusal each half of the round trip reports for a state it cannot move.
+ *
+ * Both halves ask the same three questions before either touches the network,
+ * so the answers differ only in which operation they name — and that name is
+ * the first word of a code, because the sentences belong to the page and read
+ * differently in each language.
+ */
+const ACTION_REFUSAL: Readonly<Record<'pull' | 'push', {
+  readonly noCommits: FailureCode
+  readonly detached: FailureCode
+  readonly denied: FailureCode
+  readonly dirty: FailureCode
+}>> = {
+  pull: {
+    noCommits: 'pull-no-commits',
+    detached: 'pull-detached',
+    denied: 'pull-denied',
+    dirty: 'pull-dirty',
+  },
+  push: {
+    noCommits: 'push-no-commits',
+    detached: 'push-detached',
+    denied: 'push-denied',
+    dirty: 'push-dirty',
+  },
+}
 
 /** Where a pull or a push would run, or why it cannot run at all. */
 type Handoff =
@@ -954,18 +1004,13 @@ type Handoff =
  */
 async function resolveHandoff(target: GitTarget, action: 'pull' | 'push'): Promise<Handoff> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) {
-    return { ok: false, payload: { ok: false, error: repo.error, reason: repo.reason, action } }
+  if ('refusal' in repo) {
+    return { ok: false, payload: { ok: false, ...repo.refusal, reason: repo.reason, action } }
   }
   if (!repo.hasHead) {
     return {
       ok: false,
-      payload: {
-        ok: false,
-        error: `当前分支还没有任何提交，无法 ${ACTION_LABEL[action]}`,
-        reason: 'error',
-        action,
-      },
+      payload: { ok: false, ...coded(ACTION_REFUSAL[action].noCommits), reason: 'error', action },
     }
   }
 
@@ -974,12 +1019,7 @@ async function resolveHandoff(target: GitTarget, action: 'pull' | 'push'): Promi
   if (branch === null) {
     return {
       ok: false,
-      payload: {
-        ok: false,
-        error: `HEAD 处于游离状态，没有可${ACTION_VERB[action]}的分支`,
-        reason: 'detached',
-        action,
-      },
+      payload: { ok: false, ...coded(ACTION_REFUSAL[action].detached), reason: 'detached', action },
     }
   }
   return { ok: true, root, branch }
@@ -1006,7 +1046,7 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
   if (upstream === undefined) {
     return {
       ok: false,
-      error: `分支 ${handoff.branch} 没有上游分支，无法 Pull`,
+      ...coded('pull-no-upstream', { branch: handoff.branch }),
       reason: 'no-upstream',
       action: 'pull',
     }
@@ -1020,8 +1060,8 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
 
   const output = `${run.stdout}\n${run.stderr}`
   const summary = /Already up[ -]to[ -]date/i.test(output)
-    ? `已是最新：${upstream} 没有需要拉取的提交`
-    : `已从 ${upstream} 拉取更新`
+    ? `Already up to date with ${upstream}`
+    : `Pulled from ${upstream}`
   return { ok: true, action: 'pull', summary }
 }
 
@@ -1048,12 +1088,12 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
     const remotes = await remotesOf(root)
     const remote = remotes[0]
     if (remote === undefined) {
-      return { ok: false, error: '该仓库没有配置远程仓库，无法 Push', reason: 'no-remote', action: 'push' }
+      return { ok: false, ...coded('push-no-remote'), reason: 'no-remote', action: 'push' }
     }
     if (remotes.length > 1) {
       return {
         ok: false,
-        error: `有多个远程仓库（${remotes.join('、')}），无法确定推送目标`,
+        ...coded('push-ambiguous-remote', { remotes: remotes.join(', ') }),
         reason: 'ambiguous-remote',
         action: 'push',
       }
@@ -1068,8 +1108,8 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
 
   const output = `${run.stdout}\n${run.stderr}`
   const summary = /Everything up[ -]to[ -]date/i.test(output)
-    ? '远程已是最新，没有需要推送的提交'
-    : `已推送到 ${ref}`
+    ? `Everything up to date with ${ref}`
+    : `Pushed to ${ref}`
   return { ok: true, action: 'push', summary }
 }
 
@@ -1086,58 +1126,32 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
  * @returns the payload the page renders.
  */
 function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
-  const label = ACTION_LABEL[action]
   if (run.denied === true) {
-    return {
-      ok: false,
-      error: `当前权限模式不允许 ${label}：该操作需要写入工作区`,
-      reason: 'denied',
-      action,
-    }
+    return { ok: false, ...coded(ACTION_REFUSAL[action].denied), reason: 'denied', action }
   }
 
   // Git's own words, for every case below.
   const text = diagnosticText(run)
 
   if (/could not read Username|Authentication failed|Permission denied \(publickey\)|no such identity|terminal prompts disabled/i.test(text)) {
-    return {
-      ok: false,
-      error: '远程认证失败：请先在该仓库配置好凭据（本插件不弹出任何凭据输入）',
-      reason: 'auth',
-      action,
-    }
+    return { ok: false, ...coded('auth'), reason: 'auth', action }
   }
 
   if (/local changes|would be overwritten|commit your changes or stash/i.test(text)) {
-    return {
-      ok: false,
-      error: `有未提交的改动会被覆盖，请先提交或暂存后再 ${label}`,
-      reason: 'dirty',
-      action,
-    }
+    return { ok: false, ...coded(ACTION_REFUSAL[action].dirty), reason: 'dirty', action }
   }
 
   if (action === 'pull' && /Not possible to fast-forward|diverging branches|divergent branches/i.test(text)) {
-    return {
-      ok: false,
-      error: '本地与远程已经分叉，本插件只做快进式拉取：请先合并或变基',
-      reason: 'diverged',
-      action,
-    }
+    return { ok: false, ...coded('pull-diverged'), reason: 'diverged', action }
   }
 
   if (action === 'push' && /non-fast-forward|fetch first|behind its remote|\[rejected\]/i.test(text)) {
-    return {
-      // The one button pulls before it pushes, so this refusal means the remote
-      // moved again between the two halves rather than that nobody pulled.
-      ok: false,
-      error: '远程在同步过程中又有了新提交，请再同步一次',
-      reason: 'diverged',
-      action,
-    }
+    // The one button pulls before it pushes, so this refusal means the remote
+    // moved again between the two halves rather than that nobody pulled.
+    return { ok: false, ...coded('push-behind'), reason: 'diverged', action }
   }
 
-  return { ok: false, error: failureText(run), reason: 'error', action }
+  return { ok: false, ...refusalOf(run), reason: 'error', action }
 }
 
 /**
@@ -1162,11 +1176,11 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
  */
 export async function commitAll(target: GitTarget, message: string): Promise<CommitAllPayload> {
   const repo = await resolveRepo(target)
-  if ('error' in repo) return { ok: false, error: repo.error, reason: repo.reason }
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
   const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-  if (status.code !== 0) return { ok: false, error: failureText(status), reason: 'error' }
+  if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
   const files = parseStatus(status.stdout).files
   if (files.length === 0) return emptyCommit()
@@ -1196,12 +1210,12 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
 
 /** The answer for a tree that holds nothing to commit. */
 function emptyCommit(): CommitAllPayload {
-  return { ok: false, error: '工作区没有需要提交的改动', reason: 'clean' }
+  return { ok: false, ...coded('commit-clean'), reason: 'clean' }
 }
 
 /** The answer for a tree whose merge is not finished. */
 function conflictedCommit(): CommitAllPayload {
-  return { ok: false, error: '存在未解决的冲突文件，请先解决冲突再提交', reason: 'conflict' }
+  return { ok: false, ...coded('commit-conflict'), reason: 'conflict' }
 }
 
 /**
@@ -1220,14 +1234,14 @@ function conflictedCommit(): CommitAllPayload {
  */
 function commitFailure(run: GitRun): CommitAllPayload {
   if (run.denied === true) {
-    return { ok: false, error: '当前权限模式不允许提交：该操作需要写入工作区', reason: 'denied' }
+    return { ok: false, ...coded('commit-denied'), reason: 'denied' }
   }
 
   const text = diagnosticText(run)
   if (/unmerged|merging is not possible|you have unmerged files/i.test(text)) return conflictedCommit()
   if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(text)) return emptyCommit()
 
-  return { ok: false, error: failureText(run), reason: 'error' }
+  return { ok: false, ...refusalOf(run), reason: 'error' }
 }
 
 /**

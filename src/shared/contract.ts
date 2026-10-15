@@ -11,7 +11,82 @@
  * browser reports in its error dialog, never a rejected promise. The one
  * exception is a transport failure, which the fetch wrapper turns into the
  * same shape.
+ *
+ * An `ok: false` answer says why in one of two ways, and the two are not
+ * interchangeable. `failure` is a code plus the values its sentence
+ * interpolates: the refusal is one this plugin names, and only the browser
+ * knows the language to name it in, so the page words it from its own
+ * dictionaries (see `client/locales.ts`). `error` is raw diagnostic text —
+ * Git's own first line, or a transport or seam message — which no dictionary
+ * can own because another program wrote it. A coded refusal carries no
+ * `error`, and text carries no `failure`.
  */
+
+/**
+ * Every refusal this plugin can name, as a code rather than a sentence.
+ *
+ * The page renders each one from its own dictionary, so the same refusal reads
+ * in whatever language the browser is set to; a code is therefore the wire
+ * form, and the sentences live in `client/locales.ts` keyed `error.<code>`.
+ * The set is closed on purpose: a refusal that is not one of these is Git's
+ * own words and travels as `error` text instead.
+ */
+export type FailureCode =
+  // The route's own guards, before a repository is ever resolved.
+  | 'not-ready'
+  | 'no-workdir'
+  | 'no-shell'
+  | 'missing-path'
+  | 'bad-hash'
+  | 'missing-message'
+  | 'missing-branch'
+  // Reading the repository.
+  | 'git-denied'
+  | 'git-exit'
+  | 'no-root'
+  | 'no-commits'
+  | 'unparsable-commit'
+  // Switching branches.
+  | 'invalid-branch'
+  | 'unknown-branch'
+  | 'remote-local-name'
+  | 'checkout-denied'
+  | 'checkout-dirty'
+  | 'checkout-dirty-paths'
+  // Handing off to the remote.
+  | 'pull-no-commits'
+  | 'push-no-commits'
+  | 'pull-detached'
+  | 'push-detached'
+  | 'pull-no-upstream'
+  | 'pull-denied'
+  | 'push-denied'
+  | 'pull-dirty'
+  | 'push-dirty'
+  | 'auth'
+  | 'pull-diverged'
+  | 'push-behind'
+  | 'push-no-remote'
+  | 'push-ambiguous-remote'
+  // Committing.
+  | 'commit-clean'
+  | 'commit-conflict'
+  | 'commit-denied'
+
+/**
+ * One coded refusal, with the values its sentence interpolates.
+ *
+ * The values are already in their final form — a branch name, a count, a list
+ * joined by `, ` — because the page only substitutes them into a template and
+ * never reformats them. A sentence with no placeholder takes no `params` at
+ * all.
+ */
+export interface Failure {
+  /** The refusal, whose sentence is the page's `error.<code>` entry. */
+  readonly code: FailureCode
+  /** Values for the sentence's `{name}` placeholders. */
+  readonly params?: Readonly<Record<string, string | number>>
+}
 
 /** How one path differs from the index or from HEAD, collapsed to one label. */
 export type ChangeKind =
@@ -58,7 +133,10 @@ export interface HeadInfo {
 /** `POST /status`: the repository HEAD, its branch, and every changed path. */
 export interface StatusPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   /**
    * Why an `ok: false` answer happened, so the page can tell "this directory is
    * not a repository" (a normal empty state) from a real Git failure.
@@ -93,7 +171,10 @@ export interface WorkspaceInfo {
 /** `POST /branches`: the branches a switch may pick. */
 export interface BranchesPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   readonly reason?: 'no-repo' | 'error'
   /** The checked-out branch, or null while HEAD is detached. */
   readonly current?: string | null
@@ -114,7 +195,10 @@ export interface BranchesPayload {
 /** `POST /checkout`: the outcome of switching the working tree to a branch. */
 export interface CheckoutPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   /**
    * Why a switch failed, when the page can act on it: the directory is not a
    * repository, the named branch does not exist, the session may not write, or
@@ -128,7 +212,10 @@ export interface CheckoutPayload {
 /** `POST /pull` and `POST /push`: the outcome of one hand-off with the remote. */
 export interface SyncPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   /**
    * Why the operation did not happen, when the page can act on it: there is no
    * repository, the session may not write, HEAD is detached, the branch has no
@@ -148,11 +235,18 @@ export interface SyncPayload {
     | 'auth'
   /** Which operation answered, so a caller can label its own report. */
   readonly action?: 'pull' | 'push'
-  /** One line saying what the operation did, on success. */
+  /**
+   * The Host's own one-line account of what the operation did, on success.
+   *
+   * It is the Host's report rather than the page's copy — the same register as
+   * Git's own output — and the page does not draw it today: a successful
+   * operation is reported by the re-read state, and the error dialog is the
+   * only place a failed one is worded.
+   */
   readonly summary?: string
 }
 
-/** One row of 提交历史. */
+/** One row of the commit history. */
 export interface CommitSummary {
   readonly hash: string
   readonly short: string
@@ -170,7 +264,10 @@ export interface CommitSummary {
 /** `POST /log`: the newest commits of the current branch. */
 export interface LogPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   readonly reason?: 'no-repo' | 'error'
   readonly commits?: readonly CommitSummary[]
   /** The repository has no commits yet, so the history is legitimately empty. */
@@ -180,7 +277,10 @@ export interface LogPayload {
 /** `POST /diff`: one path's patch against HEAD. */
 export interface DiffPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   readonly reason?: 'no-repo' | 'error'
   /** The path this patch answers for, echoed back for the page's own checks. */
   readonly path?: string
@@ -195,7 +295,10 @@ export interface DiffPayload {
 /** `POST /commit`: one commit's message plus its whole patch. */
 export interface CommitPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   readonly reason?: 'no-repo' | 'error'
   readonly commit?: CommitSummary & { readonly body: string }
   /** Unified diff of the commit against its first parent. */
@@ -215,7 +318,10 @@ export interface CommitPayload {
  */
 export interface CommitAllPayload {
   readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   /**
    * Why no commit was made, when the page can act on it: there is no repository,
    * the session may not write, there was nothing to commit, or the tree still

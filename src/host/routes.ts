@@ -23,6 +23,7 @@
  * never write.
  */
 
+import type { Failure, FailureCode } from '../shared/contract.js'
 import {
   commitAll,
   pullFromRemote,
@@ -53,6 +54,27 @@ export const ROUTES = {
 
 /** Object names Git accepts, and all a route will pass on to the command line. */
 const OBJECT_NAME = /^[0-9a-f]{4,40}$/i
+
+/**
+ * How one route refuses, in the two forms the payloads carry.
+ *
+ * A refusal this plugin can name is a code, because the page is what knows the
+ * language to word it in; anything else is text another program wrote. See
+ * `shared/contract.ts` for the two fields this shapes.
+ */
+type Refusal =
+  | { readonly failure: Failure }
+  | { readonly error: string }
+
+/**
+ * One coded refusal, shaped as a payload carries it.
+ *
+ * @param code - the refusal, whose sentence the page owns.
+ * @returns the payload fragment to spread into an `ok: false` answer.
+ */
+function coded(code: FailureCode): Refusal {
+  return { failure: { code } }
+}
 
 /**
  * Longest commit message a route hands to Git.
@@ -200,13 +222,13 @@ async function resolveTarget(
   ctx: any,
   sessionId: unknown,
   effect: RouteEffect,
-): Promise<{ workdir: string; sandboxPolicy?: unknown } | { error: string }> {
+): Promise<{ workdir: string; sandboxPolicy?: unknown } | Refusal> {
   if (typeof sessionId === 'string' && sessionId !== '') {
     const live = liveTarget(ctx, sessionId)
     if (live !== undefined) return live
     const persisted = await persistedWorkdir(ctx, sessionId)
     if (persisted !== undefined) {
-      return effect === 'write' ? { error: '会话尚未就绪，请稍后重试' } : { workdir: persisted }
+      return effect === 'write' ? coded('not-ready') : { workdir: persisted }
     }
   }
 
@@ -219,7 +241,7 @@ async function resolveTarget(
       /* fall through to the process directory */
     }
   }
-  return { error: '无法确定该会话的工作目录' }
+  return coded('no-workdir')
 }
 
 /**
@@ -243,10 +265,10 @@ function filePolicyFor(ctx: any, session: any): unknown {
 }
 
 /** The `shell` capability, or the reason Git cannot run at all. */
-function resolveShell(ctx: any): { shell: any } | { error: string } {
+function resolveShell(ctx: any): { shell: any } | Refusal {
   const shell = ctx.get('shell')
   if (shell === undefined || typeof shell.execute !== 'function') {
-    return { error: 'shell 服务不可用，无法执行 Git 命令' }
+    return coded('no-shell')
   }
   return { shell }
 }
@@ -283,14 +305,14 @@ async function handle(
   }
 
   const resolved = await resolveTarget(ctx, body.sessionId, effect)
-  if ('error' in resolved) {
-    sendJson(res, 200, { ok: false, error: resolved.error })
+  if (!('workdir' in resolved)) {
+    sendJson(res, 200, { ok: false, ...resolved })
     return
   }
 
   const capability = resolveShell(ctx)
-  if ('error' in capability) {
-    sendJson(res, 200, { ok: false, error: capability.error })
+  if (!('shell' in capability)) {
+    sendJson(res, 200, { ok: false, ...capability })
     return
   }
 
@@ -406,7 +428,7 @@ export function registerRoutes(ctx: any): () => void {
 
     route(ROUTES.diff, (req, res) => handle(ctx, req, res, 'read', (body, target) => {
       const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, error: '缺少文件路径' })
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
       return readDiff(target, {
         path,
         staged: body.staged === true,
@@ -416,7 +438,7 @@ export function registerRoutes(ctx: any): () => void {
 
     route(ROUTES.commit, (req, res) => handle(ctx, req, res, 'read', (body, target) => {
       const hash = readHash(body)
-      if (hash === undefined) return Promise.resolve({ ok: false, error: '提交标识不合法' })
+      if (hash === undefined) return Promise.resolve({ ok: false, ...coded('bad-hash') })
       return readCommit(target, hash)
     })),
 
@@ -429,13 +451,13 @@ export function registerRoutes(ctx: any): () => void {
     // the second request.
     route(ROUTES.commitAll, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const message = readMessage(body)
-      if (message === undefined) return Promise.resolve({ ok: false, error: '缺少提交信息' })
+      if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
       return commitAll(target, message)
     })),
 
     route(ROUTES.checkout, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const branch = readBranch(body)
-      if (branch === undefined) return Promise.resolve({ ok: false, error: '缺少分支名' })
+      if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
       return switchBranch(target, branch)
     })),
 

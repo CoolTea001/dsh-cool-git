@@ -1,13 +1,14 @@
 /**
  * The Git conversation view.
  *
- * The page is the whole of the tab: a sidebar carrying 变更文件区 above 提交历史,
- * and a Diff 查看区 taking every remaining pixel. Changed paths come from
- * `git status`, the history from `git log`, and the diff pane shows either one
- * path's patch against HEAD or one commit's whole patch (see `api.ts` for the
- * routes and `diff.ts` for the patch parser). The sidebar's second row is the
- * commit form — a message field and the button that stages every change
- * 变更文件区 lists and records them as one commit — and 变更文件区 and 提交历史
+ * The page is the whole of the tab: a sidebar carrying the changed-path list
+ * above the commit history, and a diff pane taking every remaining pixel.
+ * Changed paths come from `git status`, the history from `git log`, and the
+ * diff pane shows either one path's patch against HEAD or one commit's whole
+ * patch (see `api.ts` for the routes and `diff.ts` for the patch parser). The
+ * sidebar's second row is the
+ * commit form — a message field and the button that stages every change the
+ * changed-path list holds and records them as one commit — and the two panes
  * stack under it. Both of the sidebar's boundaries — its right edge and the
  * divider between the two lists — are the reader's to drag, and both sizes are
  * remembered between visits (see `layout.ts`).
@@ -15,10 +16,11 @@
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
  * answer is current, which failure the dialog is stating, which operation is in
- * flight — a checkout, one half of a remote round trip, or the commit 变更文件区
- * asks for — each of which is what disables the other controls, and where the two
- * boundaries were left. That keeps a manual refresh honest — it re-reads `status`
- * and `log`, and the diff pane re-reads whatever it is showing.
+ * flight — a checkout, one half of a remote round trip, or the commit the
+ * changed-path list asks for — each of which is what disables the other
+ * controls, and where the two boundaries were left. That keeps a manual refresh
+ * honest — it re-reads `status` and `log`, and the diff pane re-reads whatever
+ * it is showing.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
@@ -27,8 +29,8 @@
  * one exception is `no-repo`: a directory that is not a repository is the panes'
  * own empty state, not a failure, and it never opens a dialog.
  *
- * The page is full-bleed, the same way the 终端 tab is: the root class gives the
- * stylesheet a handle on this subtree, the root declares the shell's
+ * The page is full-bleed, the same way the terminal tab is: the root class gives
+ * the stylesheet a handle on this subtree, the root declares the shell's
  * composer-overlay hook (which drops the transcript width handles), and the
  * mounted View suppresses the composer seat the shell mounts for every View —
  * see `chrome.ts`.
@@ -61,11 +63,13 @@ import {
   type GitLayout,
   type ResizeAxis,
 } from './layout.js'
+import type { MessageKey, Translate } from './locales.js'
 import { GIT_ROOT_CLASS } from './styles.js'
 import type {
   ChangedFile,
   ChangeKind,
   CommitSummary,
+  Failure,
   LogPayload,
   StatusPayload,
 } from '../shared/contract.js'
@@ -103,17 +107,17 @@ const KIND_LETTER: Readonly<Record<ChangeKind, string>> = {
   unknown: '?',
 }
 
-/** The tooltip each changed-path row carries. */
-const KIND_LABEL: Readonly<Record<ChangeKind, string>> = {
-  added: '新增',
-  modified: '修改',
-  deleted: '删除',
-  renamed: '重命名',
-  copied: '复制',
-  typechange: '类型变更',
-  untracked: '未跟踪',
-  conflicted: '冲突',
-  unknown: '未知状态',
+/** The dictionary entry each changed-path row names its state with. */
+const KIND_KEY: Readonly<Record<ChangeKind, MessageKey>> = {
+  added: 'kind.added',
+  modified: 'kind.modified',
+  deleted: 'kind.deleted',
+  renamed: 'kind.renamed',
+  copied: 'kind.copied',
+  typechange: 'kind.typeChange',
+  untracked: 'kind.untracked',
+  conflicted: 'kind.conflicted',
+  unknown: 'kind.unknown',
 }
 
 /** The half of a remote round trip that is running, if any. */
@@ -172,7 +176,10 @@ interface DiffGroup {
  */
 interface RouteOutcome {
   readonly ok?: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
   readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
   readonly reason?: string
 }
 
@@ -227,14 +234,14 @@ function selectionKey(selection: Selection | null): string {
  * here is a payload or nothing at all — never a bare value — and the guard only
  * has to ask whether the answer said `ok`.
  *
+ * @param t - the page's translate seat, for the reason the answer did not give.
  * @param key - the selection identity this answer belongs to.
  * @param result - the payload the route returned.
  * @returns the pane state to render.
  */
-function buildDoc(key: string, result: RouteAnswer | null | undefined): DocState {
+function buildDoc(t: Translate, key: string, result: RouteAnswer | null | undefined): DocState {
   if (result?.ok !== true) {
-    const error = typeof result?.error === 'string' && result.error !== '' ? result.error : '未知错误'
-    return { key, loading: false, error }
+    return { key, loading: false, error: reasonOf(t, result ?? {}, 'fallback.unknown') }
   }
 
   const patch = typeof result.patch === 'string' ? result.patch : ''
@@ -266,24 +273,50 @@ function isNoRepo(payload: RouteOutcome): boolean {
 /**
  * The reason one route answer gave for not answering.
  *
+ * Three sources, in the order the answer offers them. A coded refusal is the
+ * page's to word, so it is read from the dictionary here — this is the one
+ * place a refusal becomes a sentence. Text is another program's and is passed
+ * through untouched. The fallback is the page's own line for an answer that
+ * said nothing at all, and takes the params its sentence interpolates because
+ * a heading such as `title.switchBranch` names what failed.
+ *
+ * @param t - the page's translate seat.
  * @param payload - the route's answer.
- * @param fallback - the reason to state when the answer carried none.
- * @returns the Host's or the transport's own words.
+ * @param fallback - the entry to state when the answer carried no reason.
+ * @param params - the values that entry's placeholders take.
+ * @returns the sentence to show.
  */
-function reasonOf(payload: RouteOutcome, fallback: string): string {
-  return typeof payload.error === 'string' && payload.error !== '' ? payload.error : fallback
+function reasonOf(
+  t: Translate,
+  payload: RouteOutcome,
+  fallback: MessageKey,
+  params?: Readonly<Record<string, string | number>>,
+): string {
+  const { failure } = payload
+  if (failure !== undefined) return t(`error.${failure.code}`, failure.params)
+  return typeof payload.error === 'string' && payload.error !== '' ? payload.error : t(fallback, params)
 }
 
 /**
  * State one failed request as the error dialog's line for it.
  *
- * @param label - the request that did not answer, e.g. `读取分支列表`.
+ * The separator between the two halves is the dictionary's rather than a
+ * literal here, because the colon that reads correctly between Chinese words is
+ * not the one English wants.
+ *
+ * @param t - the page's translate seat.
+ * @param label - the entry naming the request that did not answer.
  * @param payload - the route's answer.
- * @param fallback - the reason to state when the answer carried none.
- * @returns one `label：reason` line.
+ * @param fallback - the entry to state when the answer carried no reason.
+ * @returns one `label: reason` line.
  */
-function failureLine(label: string, payload: RouteOutcome, fallback: string): string {
-  return `${label}：${reasonOf(payload, fallback)}`
+function failureLine(
+  t: Translate,
+  label: MessageKey,
+  payload: RouteOutcome,
+  fallback: MessageKey,
+): string {
+  return t('error.line', { label: t(label), reason: reasonOf(t, payload, fallback) })
 }
 
 /**
@@ -344,20 +377,21 @@ function groupFiles(rows: readonly FlatRow[]): DiffGroup[] {
 /**
  * Render a short relative age for one ISO-8601 timestamp.
  *
+ * @param t - the page's translate seat.
  * @param iso - the timestamp Git printed.
- * @returns `刚刚`, a counted unit, or the calendar date once it is old enough.
+ * @returns `just now`, a counted unit, or the calendar date once it is old enough.
  */
-function relativeTime(iso: string): string {
+function relativeTime(t: Translate, iso: string): string {
   const at = Date.parse(iso)
   if (!Number.isFinite(at)) return ''
   const delta = Date.now() - at
   const minute = 60_000
   const hour = 60 * minute
   const day = 24 * hour
-  if (delta < minute) return '刚刚'
-  if (delta < hour) return `${Math.floor(delta / minute)} 分钟前`
-  if (delta < day) return `${Math.floor(delta / hour)} 小时前`
-  if (delta < 30 * day) return `${Math.floor(delta / day)} 天前`
+  if (delta < minute) return t('time.now')
+  if (delta < hour) return t('time.minutes', { count: Math.floor(delta / minute) })
+  if (delta < day) return t('time.hours', { count: Math.floor(delta / hour) })
+  if (delta < 30 * day) return t('time.days', { count: Math.floor(delta / day) })
   const date = new Date(at)
   const pad = (value: number): string => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
@@ -394,7 +428,7 @@ function refLabel(ref: string): string {
  * written even at zero, because an empty pane and a pane the page never filled
  * are two different states and only the count tells them apart.
  *
- * @param label - the pane's name, e.g. `提交历史`.
+ * @param label - the pane's name, already worded by the page's dictionary.
  * @param count - the rows the pane drew.
  * @returns the header's text.
  */
@@ -431,12 +465,18 @@ const PAGE: CSSProperties = {
 /**
  * Render the Git tab's body.
  *
- * @param props - the standard conversation-View props; the session id is used.
+ * @param props - the standard conversation-View props; the session id is used,
+ *   and `t` is the locale seat the framework hands every entry that declares a
+ *   dictionary namespace.
  * @returns the Git page element.
  */
-export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
+export function GitView(props: {
+  readonly sessionId?: unknown
+  readonly t: Translate
+}): ReactElement {
+  const { t } = props
   const page = useRef<HTMLDivElement | null>(null)
-  /** The sidebar itself, and the 变更文件区 pane at the top of it. */
+  /** The sidebar itself, and the changed-path pane at the top of it. */
   const side = useRef<HTMLElement | null>(null)
   const filesPane = useRef<HTMLElement | null>(null)
   const sessionId = typeof props?.sessionId === 'string' ? props.sessionId : undefined
@@ -449,7 +489,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
   const [switching, setSwitching] = useState<string | null>(null)
   /** The half of the remote round trip in flight, or null at rest. */
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
-  /** Whether 变更文件区's commit is in flight. */
+  /** Whether the changed-path pane's commit is in flight. */
   const [committing, setCommitting] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [doc, setDoc] = useState<DocState | null>(null)
@@ -593,17 +633,17 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
       // so the dialog states them together instead of one hiding the other.
       const lines: string[] = []
       if (nextStatus?.ok !== true && !isNoRepo(nextStatus)) {
-        lines.push(failureLine('读取仓库状态', nextStatus, '读取仓库状态失败'))
+        lines.push(failureLine(t, 'label.status', nextStatus, 'fallback.status'))
       }
       if (nextLog?.ok !== true && !isNoRepo(nextLog)) {
-        lines.push(failureLine('读取提交历史', nextLog, '读取提交历史失败'))
+        lines.push(failureLine(t, 'label.log', nextLog, 'fallback.log'))
       }
-      if (lines.length > 0) reportError({ title: '刷新仓库失败', lines })
+      if (lines.length > 0) reportError({ title: t('title.refresh'), lines })
     } finally {
       setRefreshing(false)
       setLoaded(true)
     }
-  }, [sessionId, reportError])
+  }, [sessionId, reportError, t])
 
   // Mounting is the refresh trigger: the shell renders exactly one View at a
   // time, so switching to this tab is what re-reads the repository. A session
@@ -643,15 +683,13 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     void checkoutBranch(sessionId, branch).then(result => {
       setSwitching(null)
       if (result?.ok !== true) {
-        reportError({
-          title: `切换到 ${branch} 失败`,
-          lines: [reasonOf(result, `切换到 ${branch} 失败`)],
-        })
+        const title = t('title.switchBranch', { branch })
+        reportError({ title, lines: [reasonOf(t, result, 'title.switchBranch', { branch })] })
         return
       }
       handleSwitched()
     })
-  }, [sessionId, handleSwitched, reportError])
+  }, [sessionId, handleSwitched, reportError, t])
 
   /**
    * Send this branch to its upstream, and report the answer.
@@ -661,20 +699,20 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
    * upstream is pushed to the single configured remote and recorded as its
    * upstream. The only difference the page makes is what it calls a failure.
    *
-   * @param title - the failure's heading, naming which of the two was asked.
+   * @param title - the entry naming which of the two was asked.
    */
-  const pushRemote = useCallback((title: string): void => {
+  const pushRemote = useCallback((title: MessageKey): void => {
     setSyncing('push')
     void pushBranch(sessionId).then(result => {
       setSyncing(null)
       if (result?.ok !== true) {
-        reportError({ title, lines: [reasonOf(result, title)] })
+        reportError({ title: t(title), lines: [reasonOf(t, result, title)] })
       }
       // A push moves nothing on disk, but a refusal moves the page's idea of the
       // divergence just as surely, so the two answers are re-read either way.
       handleSynced()
     })
-  }, [sessionId, handleSynced, reportError])
+  }, [sessionId, handleSynced, reportError, t])
 
   /**
    * Run the round trip: pull, then push.
@@ -694,7 +732,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     void pullBranch(sessionId).then(result => {
       if (result?.ok !== true) {
         setSyncing(null)
-        reportError({ title: '拉取失败', lines: [reasonOf(result, '拉取失败')] })
+        reportError({ title: t('title.pull'), lines: [reasonOf(t, result, 'title.pull')] })
         // A rejected pull still tells the user the remote has moved, so the
         // counts are re-read even though nothing was pulled.
         handleSynced()
@@ -703,9 +741,9 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
       // The pull rewrote the working tree, so the diff on screen is stale and is
       // dropped here — the push that follows moves nothing on disk.
       handleSwitched()
-      pushRemote('推送失败')
+      pushRemote('title.push')
     })
-  }, [sessionId, handleSwitched, handleSynced, reportError, pushRemote])
+  }, [sessionId, handleSwitched, handleSynced, reportError, pushRemote, t])
 
   /**
    * Publish this branch: push it to the single configured remote and let that
@@ -719,11 +757,12 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
    * guess, reported like every other failure.
    */
   const publishRemote = useCallback((): void => {
-    pushRemote('发布分支失败')
+    pushRemote('title.publish')
   }, [pushRemote])
 
   /**
-   * Commit every change 变更文件区 is listing, under the message the form holds.
+   * Commit every change the changed-path list is showing, under the message the
+   * form holds.
    *
    * The page asks for the whole thing — the stage and the commit — in one call,
    * because that is the one decision the form offers: there is no per-path
@@ -741,7 +780,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     return commitAll(sessionId, message).then(result => {
       setCommitting(false)
       if (result?.ok !== true) {
-        reportError({ title: '提交失败', lines: [reasonOf(result, '提交失败')] })
+        reportError({ title: t('title.commit'), lines: [reasonOf(t, result, 'title.commit')] })
         handleSynced()
         return false
       }
@@ -751,13 +790,13 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
       handleSwitched()
       return true
     })
-  }, [sessionId, handleSynced, handleSwitched, reportError])
+  }, [sessionId, handleSynced, handleSwitched, reportError, t])
 
   // One operation at a time, wherever the control that asks for it lives: the
-  // branch pill and 刷新 in the toolbar, the remote control in 提交历史's header,
-  // and the commit in 变更文件区's. Stating it once here is what keeps a second
-  // click from queueing a second checkout, a second round trip, or a second
-  // commit behind the first.
+  // branch pill and Refresh in the toolbar, the remote control in the history
+  // pane's header, and the commit in the changed-path pane's. Stating it once
+  // here is what keeps a second click from queueing a second checkout, a second
+  // round trip, or a second commit behind the first.
   const busy = switching !== null || syncing !== null || committing
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
@@ -785,23 +824,26 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     const request = selection.kind === 'commit'
       ? fetchCommit(sessionId, selection.commit.hash)
       : activeFile === null
-        ? Promise.resolve({ ok: false, error: '该文件已不在变更列表中' })
+        // The one refusal no route answers — the row was re-read out of the list
+        // between the click and this request — so the page words it itself, as
+        // the text a route would otherwise have carried.
+        ? Promise.resolve({ ok: false, error: t('fallback.fileGone') })
         : fetchDiff(sessionId, activeFile)
 
     void request.then(result => {
       if (cancelled) return
-      setDoc(buildDoc(key, result))
+      setDoc(buildDoc(t, key, result))
       // A `no-repo` answer is the empty state the pane already shows; every other
       // refusal is the dialog's, including the local "the file disappeared" case.
       if (result?.ok !== true && !isNoRepo(result)) {
-        const label = selection.kind === 'commit' ? '读取提交' : '读取文件差异'
-        reportError({ title: '读取 Diff 失败', lines: [failureLine(label, result, '读取 Diff 失败')] })
+        const label: MessageKey = selection.kind === 'commit' ? 'label.commit' : 'label.diff'
+        reportError({ title: t('title.diff'), lines: [failureLine(t, label, result, 'fallback.diff')] })
       }
     })
     return () => {
       cancelled = true
     }
-  }, [selection, activeFile, sessionId, reportError])
+  }, [selection, activeFile, sessionId, reportError, t])
 
   const current = doc !== null && doc.key === selectionKey(selection) ? doc : null
 
@@ -810,7 +852,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
       ref={page}
       className={GIT_ROOT_CLASS}
       data-dsh-cool-git="view"
-      // The shell's full-bleed opt-in, the hook 轨迹 and the terminal view
+      // The shell's full-bleed opt-in, the hook the trajectory and terminal views
       // declare: the shell then drops the transcript width handles and gives
       // this View the whole conversation body.
       data-conversation-composer-overlay=""
@@ -822,6 +864,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
     >
       <aside ref={side} className="dsh-cg-side">
         <SideHead
+          t={t}
           status={status}
           sessionId={sessionId}
           refreshing={refreshing}
@@ -832,13 +875,15 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
           onError={reportError}
         />
         {/* The commit form is the sidebar's own third row, under the toolbar and
-            above both panes: what it commits is 变更文件区's list, but what it acts
-            on is the whole working tree, so it belongs to the column rather than
-            to either pane. The form is `flex:none` so it keeps its two rows
-            whatever height the panes are dragged to, and its own bottom hairline
-            is the one line above 文件变更's header — nothing is drawn between it
-            and the toolbar, so the two rows above that line read as one block. */}
+            above both panes: what it commits is the changed-path pane's list, but
+            what it acts on is the whole working tree, so it belongs to the column
+            rather than to either pane. The form is `flex:none` so it keeps its two
+            rows whatever height the panes are dragged to, and its own bottom
+            hairline is the one line above the Changed files header — nothing is
+            drawn between it and the toolbar, so the two rows above that line read
+            as one block. */}
         <CommitBar
+          t={t}
           disabled={status?.ok !== true || files.length === 0 || busy || refreshing}
           committing={committing}
           onCommit={handleCommit}
@@ -849,10 +894,11 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
             own and the panes stay the only flow children of the column. */}
         <section ref={filesPane} className="dsh-cg-pane dsh-cg-files">
           <header className="dsh-cg-head">
-            <span className="dsh-cg-head-title">{headText('文件变更', files.length)}</span>
+            <span className="dsh-cg-head-title">{headText(t('pane.files'), files.length)}</span>
           </header>
           <div className="dsh-cg-list">
             <ChangeList
+              t={t}
               status={status}
               loaded={loaded}
               files={files}
@@ -871,11 +917,12 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
 
         <section className="dsh-cg-pane dsh-cg-history">
           <header className="dsh-cg-head">
-            <span className="dsh-cg-head-title">{headText('提交历史', commits.length)}</span>
+            <span className="dsh-cg-head-title">{headText(t('pane.history'), commits.length)}</span>
             {/* The header's own right-hand group, holding the one operation that
                 moves what is listed under it. */}
             <div className="dsh-cg-tools">
               <RemoteControl
+                t={t}
                 status={status}
                 syncing={syncing}
                 busy={busy}
@@ -887,6 +934,7 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
           </header>
           <div className="dsh-cg-list">
             <CommitList
+              t={t}
               log={log}
               loaded={loaded}
               commits={commits}
@@ -908,10 +956,10 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
       </aside>
 
       <main className="dsh-cg-main">
-        <DiffPane status={status} selection={selection} current={current} />
+        <DiffPane t={t} status={status} selection={selection} current={current} />
       </main>
 
-      <ErrorDialog error={error} onClose={() => setError(null)} />
+      <ErrorDialog t={t} error={error} onClose={() => setError(null)} />
     </div>
   )
 }
@@ -924,26 +972,28 @@ export function GitView(props: { readonly sessionId?: unknown }): ReactElement {
  * explaining or scrolled away from. The platform's own Modal owns the parts that
  * are easy to get wrong — the body portal, the mask, the focus walk, Escape, and
  * returning focus to the control that opened it. This is the same composition
- * DSH's own destructive confirm uses (`client-ui-workspace`'s 删除工作区), down to
- * reporting the failure inside the card as one `role="alert"` block painted with
- * the error token.
+ * DSH's own destructive confirm uses (`client-ui-workspace`'s Delete workspace),
+ * down to reporting the failure inside the card as one `role="alert"` block
+ * painted with the error token.
  *
+ * @param props.t - the page's translate seat.
  * @param props.error - the failure to state, or null while none is open.
  * @param props.onClose - called by the close button, Escape, or the mask.
  * @returns the dialog element.
  */
 function ErrorDialog(props: {
+  readonly t: Translate
   readonly error: GitError | null
   readonly onClose: () => void
 }): ReactElement {
-  const { error, onClose } = props
+  const { t, error, onClose } = props
   return (
     <Modal
       open={error !== null}
       onClose={onClose}
       title={error?.title ?? ''}
-      closeLabel="关闭"
-      footer={<Button variant="primary" onClick={onClose}>知道了</Button>}
+      closeLabel={t('dialog.close')}
+      footer={<Button variant="primary" onClick={onClose}>{t('dialog.ok')}</Button>}
     >
       {/* One alert for the whole failure, not one per line: a screen reader
           announces it once, and the dialog still lists each failed request. */}
@@ -957,10 +1007,10 @@ function ErrorDialog(props: {
 }
 
 /**
- * The sidebar's first row: the Workspace this session is in, the branch it is on,
- * and the one operation the row itself keeps — 刷新. It draws no rule of its own:
- * the toolbar and the commit form under it are one block, closed together by that
- * form's own hairline.
+ * The sidebar's first row: the Workspace this session is in, the branch it is
+ * on, and the one operation the row itself keeps — Refresh. It draws no rule of
+ * its own: the toolbar and the commit form under it are one block, closed
+ * together by that form's own hairline.
  *
  * The branch switch is stated as a decision rather than an accident: the dialog
  * lists what Git reported, tags the branch already on, and applies nothing until
@@ -981,6 +1031,7 @@ function ErrorDialog(props: {
  * nothing but it — there is no other place the full name still reads once the row
  * has taken it, and an icon on its own is not an answer to which branch this is.
  *
+ * @param props.t - the page's translate seat.
  * @param props.status - the current status answer, for the branch already on.
  * @param props.sessionId - the session whose repository is being switched.
  * @param props.refreshing - a re-read of the repository is in flight.
@@ -992,6 +1043,7 @@ function ErrorDialog(props: {
  * @returns the header row.
  */
 function SideHead(props: {
+  readonly t: Translate
   readonly status: StatusPayload | null
   readonly sessionId: string | undefined
   readonly refreshing: boolean
@@ -1001,7 +1053,7 @@ function SideHead(props: {
   readonly onCheckout: (branch: string) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
-  const { status, sessionId, refreshing, switching, busy, onRefresh, onCheckout, onError } = props
+  const { t, status, sessionId, refreshing, switching, busy, onRefresh, onCheckout, onError } = props
   /** Whether the branch dialog is showing. */
   const [open, setOpen] = useState(false)
 
@@ -1030,7 +1082,7 @@ function SideHead(props: {
   const label = detached
     ? `HEAD ${status?.head?.short ?? ''}`.trim()
     : status?.branch === undefined || status.branch === ''
-      ? '当前分支'
+      ? t('head.currentBranch')
       : status.branch
   // A name the page cannot resolve yet (the first answer has not arrived, or a
   // directory with no final segment) draws no glyph either: a lone folder beside
@@ -1080,11 +1132,12 @@ function SideHead(props: {
               {switching === null ? <IconBranch /> : SPINNER_ICON}
             </span>
             <span className="dsh-cg-branch-name">{label}</span>
-            {detached ? <span className="dsh-cg-divergence">游离</span> : null}
+            {detached ? <span className="dsh-cg-divergence">{t('head.detached')}</span> : null}
           </button>
         </span>
       </Tooltip>
       <BranchDialog
+        t={t}
         open={open}
         sessionId={sessionId}
         onClose={closeDialog}
@@ -1095,12 +1148,12 @@ function SideHead(props: {
         {/* The tooltip's anchor is the span, not the button: a disabled button
             emits no pointer events, so anchoring on it would lose the hover
             exactly when the bubble has the most to explain. */}
-        <Tooltip label="刷新" side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+        <Tooltip label={t('head.refresh')} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
           <span className="dsh-cg-tip">
             <button
               type="button"
               className="dsh-cg-icon"
-              aria-label="刷新"
+              aria-label={t('head.refresh')}
               data-busy={refreshing}
               disabled={refreshing || busy}
               onClick={onRefresh}
@@ -1115,17 +1168,18 @@ function SideHead(props: {
 }
 
 /**
- * The remote control that lives in 提交历史's header: 同步变更 on a branch with an
- * upstream, 发布分支 on one without.
+ * The remote control that lives in the history pane's header: Sync on a branch
+ * with an upstream, Publish branch on one without.
  *
  * It stands where the commits it moves are listed rather than in the toolbar
  * above the panes, opposite the pane's own name and count: what the two counts
  * are counted against, and what the round trip brings and sends, is the history
  * under it. It stays an icon because that row is the sidebar's narrowest place —
  * the name and count share it with this button — and the bubble behind it is where
- * the names read: 同步变更 with both counts spelled out as 待拉取 and 待推送, or
- * 发布分支 alone on a branch that has nothing to count yet. The bubble's text is
- * the button's accessible name as well, so a screen reader hears the same counts.
+ * the names read: Sync with both counts spelled out as what is to be pulled and
+ * what is to be pushed, or Publish branch alone on a branch that has nothing to
+ * count yet. The bubble's text is the button's accessible name as well, so a
+ * screen reader hears the same counts.
  *
  * Sync is the round trip taken in the one order that cannot rewind work: a
  * fast-forward pull, then a push of what is left. Both arrows and both counts
@@ -1155,6 +1209,7 @@ function SideHead(props: {
  * never drawn — the sync button needs an upstream to exist — it only keeps the two
  * counts plain numbers.
  *
+ * @param props.t - the page's translate seat.
  * @param props.status - the current status answer, for the branch already on.
  * @param props.syncing - the half of the round trip in flight, if any.
  * @param props.busy - whether any repository operation is in flight.
@@ -1164,6 +1219,7 @@ function SideHead(props: {
  * @returns the control the branch's own state calls for.
  */
 function RemoteControl(props: {
+  readonly t: Translate
   readonly status: StatusPayload | null
   readonly syncing: RemoteRun | null
   readonly busy: boolean
@@ -1171,7 +1227,7 @@ function RemoteControl(props: {
   readonly onSync: () => void
   readonly onPublish: () => void
 }): ReactElement {
-  const { status, syncing, busy, refreshing, onSync, onPublish } = props
+  const { t, status, syncing, busy, refreshing, onSync, onPublish } = props
   const reachable = status?.ok === true && status?.detached !== true
   const hasUpstream = reachable && status?.upstream !== undefined
   const publishable = reachable && !hasUpstream
@@ -1179,22 +1235,22 @@ function RemoteControl(props: {
   const ahead = hasUpstream ? status?.ahead ?? 0 : 0
   // The two digits the button draws as arrows are spelled out here, in the
   // direction each one moves: the button has room for a glyph and a number and
-  // nothing else, so 待拉取 / 待推送 are what say which half of the round trip
-  // each count belongs to. Both numbers are stated either way, zeros included,
-  // for the same reason the button draws them.
-  const syncLabel = `同步变更 · 待拉取 ${behind} · 待推送 ${ahead}`
+  // nothing else, so the two halves of the sentence are what say which leg of
+  // the round trip each count belongs to. Both numbers are stated either way,
+  // zeros included, for the same reason the button draws them.
+  const syncLabel = t('remote.sync', { behind, ahead })
 
   // The tooltip's anchor is the span, not the button: a disabled button emits no
   // pointer events, so anchoring on it would lose the hover exactly when the
   // bubble has the most to explain.
   return publishable
     ? (
-      <Tooltip label="发布分支" side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+      <Tooltip label={t('remote.publish')} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
         <span className="dsh-cg-tip">
           <button
             type="button"
             className="dsh-cg-icon"
-            aria-label="发布分支"
+            aria-label={t('remote.publish')}
             data-busy={syncing === 'push'}
             disabled={!reachable || busy || refreshing}
             onClick={onPublish}
@@ -1256,11 +1312,11 @@ interface BranchRow {
   readonly group: BranchGroup
 }
 
-/** What each run of rows is called. */
-const BRANCH_GROUP_LABEL: Readonly<Record<BranchGroup, string>> = {
-  current: '当前分支',
-  local: '本地分支',
-  remote: '远程分支',
+/** The dictionary entry naming each run of rows. */
+const BRANCH_GROUP_KEY: Readonly<Record<BranchGroup, MessageKey>> = {
+  current: 'branch.current',
+  local: 'branch.local',
+  remote: 'branch.remote',
 }
 
 /**
@@ -1269,8 +1325,8 @@ const BRANCH_GROUP_LABEL: Readonly<Record<BranchGroup, string>> = {
  * A dialog rather than a dropdown because the list here is the whole decision: a
  * repository can hold hundreds of branches, so the list scrolls inside a fixed
  * height and carries a filter of its own. The rows are the three groups a branch
- * can come from — 当前分支, 本地分支, 远程分支 — each labelled where it starts, so
- * a remote name is never mistaken for a local one of the same shape and the
+ * can come from — current, local, remote — each labelled where it starts, so a
+ * remote name is never mistaken for a local one of the same shape and the
  * branch already checked out needs no mark of its own.
  *
  * The pointer is the whole of the selection: a click marks one row — the branch
@@ -1297,21 +1353,23 @@ const BRANCH_GROUP_LABEL: Readonly<Record<BranchGroup, string>> = {
  * directory that is not a repository: that is not a failure, so the dialog says
  * so in place.
  *
+ * @param props.t - the page's translate seat.
  * @param props.open - whether the dialog is showing.
  * @param props.sessionId - the session whose repository is being read.
- * @param props.onClose - called by 取消, the close button, Escape, or the mask.
- * @param props.onConfirm - called with the picked branch when 切换 is pressed.
+ * @param props.onClose - called by Cancel, the close button, Escape, or the mask.
+ * @param props.onConfirm - called with the picked branch when Switch is pressed.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the dialog element.
  */
 function BranchDialog(props: {
+  readonly t: Translate
   readonly open: boolean
   readonly sessionId: string | undefined
   readonly onClose: () => void
   readonly onConfirm: (branch: string) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
-  const { open, sessionId, onClose, onConfirm, onError } = props
+  const { t, open, sessionId, onClose, onConfirm, onError } = props
   /** The local branches Git reported, or null while it has not answered yet. */
   const [branches, setBranches] = useState<readonly string[] | null>(null)
   /** The remote-tracking branches Git reported. */
@@ -1328,8 +1386,8 @@ function BranchDialog(props: {
   const listWrap = useRef<HTMLDivElement | null>(null)
 
   // The cleanup discards a late answer and clears the one already in state, so a
-  // reopen starts on 正在读取分支… instead of painting the previous list for the
-  // frame between the reopen and the request.
+  // reopen starts on the loading line instead of painting the previous list for
+  // the frame between the reopen and the request.
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -1341,7 +1399,10 @@ function BranchDialog(props: {
         setNoRepo(missing)
         if (!missing) {
           onClose()
-          onError({ title: '读取分支列表失败', lines: [reasonOf(result, '读取分支列表失败')] })
+          onError({
+            title: t('title.branches'),
+            lines: [reasonOf(t, result, 'fallback.branches')],
+          })
         }
         return
       }
@@ -1365,10 +1426,10 @@ function BranchDialog(props: {
       setPicked(null)
       setFilter('')
     }
-  }, [open, sessionId, onClose, onError])
+  }, [open, sessionId, onClose, onError, t])
 
   /**
-   * The list's edge fades, driven the way the 终端 tab's lists drive theirs.
+   * The list's edge fades, driven the way the terminal tab's lists drive theirs.
    *
    * A branch list can be two hundred rows long and the card cuts it at a fixed
    * height, so the two ends are where the dialog has to admit there is more: an
@@ -1461,9 +1522,9 @@ function BranchDialog(props: {
   // keeps whatever was typed while reading in it.
   let content: ReactNode
   if (noRepo) {
-    content = <p className="dsh-cg-dialog-hint">当前会话目录不是 Git 仓库</p>
+    content = <p className="dsh-cg-dialog-hint">{t('branch.notRepo')}</p>
   } else if (branches !== null && rows.length === 0) {
-    content = <p className="dsh-cg-dialog-hint">没有可切换的分支</p>
+    content = <p className="dsh-cg-dialog-hint">{t('branch.none')}</p>
   } else {
     content = (
       <>
@@ -1471,8 +1532,8 @@ function BranchDialog(props: {
           className="dsh-cg-branch-filter"
           type="text"
           value={filter}
-          placeholder="搜索分支"
-          aria-label="搜索分支"
+          placeholder={t('branch.search')}
+          aria-label={t('branch.search')}
           // The Modal's own way of choosing the initial focus: React's
           // `autoFocus` runs before the layer can note the control to return to.
           // The primitive passes the marker through to the native field, which is
@@ -1489,12 +1550,17 @@ function BranchDialog(props: {
           }}
         />
         {branches === null
-          ? <p className="dsh-cg-dialog-hint">正在读取分支…</p>
+          ? <p className="dsh-cg-dialog-hint">{t('branch.loading')}</p>
           : shown.length === 0
-            ? <p className="dsh-cg-dialog-hint">没有匹配的分支</p>
+            ? <p className="dsh-cg-dialog-hint">{t('branch.noMatch')}</p>
             : (
               <div className="dsh-cg-branch-list-wrap" ref={listWrap}>
-                <div className="dsh-cg-branch-list" role="listbox" aria-label="分支" ref={listScroll}>
+                <div
+                  className="dsh-cg-branch-list"
+                  role="listbox"
+                  aria-label={t('branch.list')}
+                  ref={listScroll}
+                >
                   {shown.map((row, index) => (
                     <Fragment key={row.name}>
                       {/* The heading opens each run of rows; the runs are in group
@@ -1502,7 +1568,7 @@ function BranchDialog(props: {
                           is where the next one starts. */}
                       {row.group === shown[index - 1]?.group
                         ? null
-                        : <span role="presentation" className="dsh-cg-branch-group">{BRANCH_GROUP_LABEL[row.group]}</span>}
+                        : <span role="presentation" className="dsh-cg-branch-group">{t(BRANCH_GROUP_KEY[row.group])}</span>}
                       <button
                         type="button"
                         role="option"
@@ -1538,7 +1604,7 @@ function BranchDialog(props: {
               </div>
             )}
         {truncated
-          ? <p className="dsh-cg-dialog-hint">分支过多，仅显示最近的部分分支</p>
+          ? <p className="dsh-cg-dialog-hint">{t('branch.truncated')}</p>
           : null}
       </>
     )
@@ -1550,9 +1616,9 @@ function BranchDialog(props: {
     <Modal
       open={open}
       onClose={onClose}
-      title="切换分支"
-      description={'选择并切换至指定分支'}
-      closeLabel="关闭"
+      title={t('branch.title')}
+      description={t('branch.description')}
+      closeLabel={t('dialog.close')}
       // The dialog is wider than the platform's default card: a branch name is a
       // path, and `origin/feature/…` cut by an ellipsis is a name no one can
       // tell from its neighbour. The class is the platform's own way of sizing a
@@ -1560,13 +1626,13 @@ function BranchDialog(props: {
       className="dsh-cg-branch-dialog"
       footer={(
         <>
-          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button variant="outline" onClick={onClose}>{t('branch.cancel')}</Button>
           <Button
             variant="primary"
             disabled={!canConfirm}
             onClick={() => { if (picked !== null) onConfirm(picked) }}
           >
-            切换
+            {t('branch.confirm')}
           </Button>
         </>
       )}
@@ -1595,7 +1661,7 @@ function workspaceFallback(status: StatusPayload | null): string {
 
 /**
  * The sidebar's commit form: a message field with the button that commits
- * everything 变更文件区 lists under it.
+ * everything the changed-path list holds.
  *
  * It is the column's own row — under the toolbar and above both panes — rather
  * than a part of the pane whose list it commits. Both rows are full width and the
@@ -1609,14 +1675,15 @@ function workspaceFallback(status: StatusPayload | null): string {
  * it are one message, and a single-line control cannot show the break between
  * them. So Enter is a line break here, and the chord (⌘/Ctrl+Enter) is what
  * submits from the keyboard; the button is the plain path. The field grows with
- * what is typed and stops at four lines, past which it scrolls — a message longer
- * than that must not push 变更文件区 down the column. Its corner is the button's
- * own, which is what makes the two read as one form (see `styles.ts`).
+ * what is typed and stops at four lines, past which it scrolls — a message
+ * longer than that must not push the changed-path pane down the column. Its
+ * corner is the button's own, which is what makes the two read as one form (see
+ * `styles.ts`).
  *
  * It is a form of one decision, and that decision is the plain one: everything
- * 变更文件区 is listing goes in — tracked edits, deletions, and untracked files
- * alike — because nothing on this page offers a per-path choice that could make
- * the set smaller.
+ * the changed-path list holds goes in — tracked edits, deletions, and untracked
+ * files alike — because nothing on this page offers a per-path choice that could
+ * make the set smaller.
  *
  * The message is this component's own state rather than the page's, and that is
  * deliberate: the page renders thousands of diff rows, so a keystroke that
@@ -1628,6 +1695,7 @@ function workspaceFallback(status: StatusPayload | null): string {
  * take is the one thing the answer is about. The field is disabled for the length
  * of the request, so what is sent cannot be edited after it was read.
  *
+ * @param props.t - the page's translate seat.
  * @param props.disabled - whether the repository can take a commit right now:
  * there is none to name, nothing is changed, or the page is busy with something
  * else.
@@ -1636,11 +1704,12 @@ function workspaceFallback(status: StatusPayload | null): string {
  * @returns the form element.
  */
 function CommitBar(props: {
+  readonly t: Translate
   readonly disabled: boolean
   readonly committing: boolean
   readonly onCommit: (message: string) => Promise<boolean>
 }): ReactElement {
-  const { disabled, committing, onCommit } = props
+  const { t, disabled, committing, onCommit } = props
   const [message, setMessage] = useState('')
   const field = useRef<HTMLTextAreaElement | null>(null)
 
@@ -1689,8 +1758,8 @@ function CommitBar(props: {
           ref={field}
           className="dsh-cg-commit-input"
           value={message}
-          placeholder="Commit Message"
-          aria-label="Commit Message"
+          placeholder={t('commit.placeholder')}
+          aria-label={t('commit.placeholder')}
           rows={1}
           disabled={committing}
           onChange={event => setMessage(event.target.value)}
@@ -1708,7 +1777,7 @@ function CommitBar(props: {
         disabled={disabled || committing || message.trim() === ''}
         onClick={submit}
       >
-        {committing ? 'Commit…' : 'Commit'}
+        {committing ? t('commit.busy') : t('commit.button')}
       </Button>
     </div>
   )
@@ -1720,6 +1789,7 @@ function CommitBar(props: {
  * A clean working tree draws nothing at all: the header's own count already
  * says zero, so a line inside the pane would only say it a second time.
  *
+ * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
  * @param props.loaded - at least one answer has arrived.
  * @param props.files - the rows to render.
@@ -1728,20 +1798,21 @@ function CommitBar(props: {
  * @returns the list body.
  */
 function ChangeList(props: {
+  readonly t: Translate
   readonly status: StatusPayload | null
   readonly loaded: boolean
   readonly files: readonly ChangedFile[]
   readonly selection: Selection | null
   readonly onSelect: (file: ChangedFile) => void
 }): ReactElement {
-  const { status, loaded, files, selection, onSelect } = props
+  const { t, status, loaded, files, selection, onSelect } = props
 
   // A failed read is stated by the error dialog; the pane keeps only the fact
   // that there is nothing to list, so the two do not say the same thing twice.
   if (status !== null && status.ok !== true) {
-    return <Note text={status.reason === 'no-repo' ? '当前会话目录不是 Git 仓库' : '读取仓库状态失败'} />
+    return <Note text={t(status.reason === 'no-repo' ? 'list.notRepo' : 'list.statusFailed')} />
   }
-  if (!loaded && status === null) return <Note text="正在读取仓库…" />
+  if (!loaded && status === null) return <Note text={t('list.loading')} />
   if (files.length === 0) return <></>
 
   return (
@@ -1755,7 +1826,7 @@ function ChangeList(props: {
         // inside the bubble.
         <Tooltip
           key={file.path}
-          label={rowLabel(file)}
+          label={rowLabel(t, file)}
           side="right"
           portal
           maxWidth={TOOLTIP_MAX_WIDTH}
@@ -1768,7 +1839,11 @@ function ChangeList(props: {
           >
             <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
             <PathLabel path={file.path} />
-            <span className="dsh-cg-stage" data-staged={file.staged} title={file.staged ? '已暂存' : '未暂存'} />
+            <span
+              className="dsh-cg-stage"
+              data-staged={file.staged}
+              title={t(file.staged ? 'stage.staged' : 'stage.unstaged')}
+            />
           </button>
         </Tooltip>
       ))}
@@ -1781,17 +1856,19 @@ function ChangeList(props: {
  * rename's old path trailing it — then its state, spelled out rather than
  * lettered, the same `· ` separator the pane headers use.
  *
+ * @param t - the page's translate seat.
  * @param file - the row's changed path.
  * @returns the tooltip's text.
  */
-function rowLabel(file: ChangedFile): string {
+function rowLabel(t: Translate, file: ChangedFile): string {
   const renamed = file.origPath === undefined ? '' : ` ← ${file.origPath}`
-  return `${file.path}${renamed} · ${KIND_LABEL[file.kind]}`
+  return `${file.path}${renamed} · ${t(KIND_KEY[file.kind])}`
 }
 
 /**
  * The commit list, or the reason it is empty.
  *
+ * @param props.t - the page's translate seat.
  * @param props.log - the current log answer.
  * @param props.loaded - at least one answer has arrived.
  * @param props.commits - the rows to render.
@@ -1800,17 +1877,18 @@ function rowLabel(file: ChangedFile): string {
  * @returns the list body.
  */
 function CommitList(props: {
+  readonly t: Translate
   readonly log: LogPayload | null
   readonly loaded: boolean
   readonly commits: readonly CommitSummary[]
   readonly selection: Selection | null
   readonly onSelect: (commit: CommitSummary) => void
 }): ReactElement {
-  const { log, loaded, commits, selection, onSelect } = props
+  const { t, log, loaded, commits, selection, onSelect } = props
 
-  if (log !== null && log.ok !== true) return <Note text="读取提交历史失败" />
-  if (!loaded && log === null) return <Note text="正在读取提交历史…" />
-  if (commits.length === 0) return <Note text="还没有任何提交" />
+  if (log !== null && log.ok !== true) return <Note text={t('history.failed')} />
+  if (!loaded && log === null) return <Note text={t('history.loading')} />
+  if (commits.length === 0) return <Note text={t('history.empty')} />
 
   return (
     <>
@@ -1822,12 +1900,12 @@ function CommitList(props: {
           aria-selected={selection?.kind === 'commit' && selection.commit.hash === commit.hash}
           onClick={() => onSelect(commit)}
         >
-          <span className="dsh-cg-subject">{commit.subject === '' ? '（无提交信息）' : commit.subject}</span>
+          <span className="dsh-cg-subject">{commit.subject === '' ? t('commit.noMessage') : commit.subject}</span>
           <span className="dsh-cg-meta">
             <span className="dsh-cg-hash">{commit.short}</span>
             <span>{commit.author}</span>
-            <span title={commit.date}>{relativeTime(commit.date)}</span>
-            {commit.parents.length > 1 ? <span>合并</span> : null}
+            <span title={commit.date}>{relativeTime(t, commit.date)}</span>
+            {commit.parents.length > 1 ? <span>{t('commit.merge')}</span> : null}
           </span>
           {commit.refs.length > 0 ? (
             <span className="dsh-cg-refs">
@@ -1869,17 +1947,19 @@ function PathLabel({ path }: { readonly path: string }): ReactElement {
 /**
  * The diff pane: its header, its body, and its empty and error states.
  *
+ * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
  * @param props.selection - what the user picked.
  * @param props.current - the answer that belongs to that selection, if it arrived.
  * @returns the pane.
  */
 function DiffPane(props: {
+  readonly t: Translate
   readonly status: StatusPayload | null
   readonly selection: Selection | null
   readonly current: DocState | null
 }): ReactElement {
-  const { status, selection, current } = props
+  const { t, status, selection, current } = props
 
   // Which files are closed lives here, above the body's loading line, rather than
   // in the sections themselves. A re-read of the answer on screen — the refresh
@@ -1911,9 +1991,9 @@ function DiffPane(props: {
   if (status !== null && status.ok !== true) {
     return (
       <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">Diff 查看区</span>
+        <span className="dsh-cg-empty-title">{t('diff.pane')}</span>
         <span className="dsh-cg-empty-text">
-          {status.reason === 'no-repo' ? '当前会话目录不是 Git 仓库' : '无法读取仓库'}
+          {t(status.reason === 'no-repo' ? 'diff.notRepo' : 'diff.repoFailed')}
         </span>
       </div>
     )
@@ -1922,8 +2002,8 @@ function DiffPane(props: {
   if (selection === null) {
     return (
       <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">Diff 查看区</span>
-        <span className="dsh-cg-empty-text">点击左侧文件或提交，在此查看 Diff</span>
+        <span className="dsh-cg-empty-title">{t('diff.pane')}</span>
+        <span className="dsh-cg-empty-text">{t('diff.emptyHint')}</span>
       </div>
     )
   }
@@ -1935,19 +2015,20 @@ function DiffPane(props: {
     <>
       <header className="dsh-cg-main-head">
         <span className="dsh-cg-main-title" title={title}>{title}</span>
-        {selection.kind === 'file' ? <KindTag kind={selection.file.kind} /> : null}
+        {selection.kind === 'file' ? <KindTag t={t} kind={selection.file.kind} /> : null}
         {current?.commit === undefined ? null : (
           <span className="dsh-cg-main-subtitle">
-            {current.commit.short} · {current.commit.author} · {relativeTime(current.commit.date)}
+            {current.commit.short} · {current.commit.author} · {relativeTime(t, current.commit.date)}
           </span>
         )}
         {current?.doc === undefined ? null : <DiffStats additions={current.doc.additions} deletions={current.doc.deletions} />}
         {current?.doc === undefined || current.doc.files.length === 0 ? null : (
-          <CopyButton text={buildCopyText(current)} />
+          <CopyButton t={t} text={buildCopyText(current)} />
         )}
       </header>
       <div className="dsh-cg-diff">
         <DiffBody
+          t={t}
           loading={loading}
           current={current}
           kind={selection.kind === 'file' ? selection.file.kind : undefined}
@@ -2009,9 +2090,15 @@ function renderPatch(doc: DiffDoc | undefined): string {
   return out.join('\n')
 }
 
-/** The change-kind tag beside the diff title. */
-function KindTag({ kind }: { readonly kind: ChangeKind }): ReactElement {
-  return <span className="dsh-cg-main-subtitle">{KIND_LABEL[kind]}</span>
+/**
+ * The change-kind tag beside the diff title.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.kind - the selected path's change kind.
+ * @returns the tag element.
+ */
+function KindTag({ t, kind }: { readonly t: Translate; readonly kind: ChangeKind }): ReactElement {
+  return <span className="dsh-cg-main-subtitle">{t(KIND_KEY[kind])}</span>
 }
 
 /**
@@ -2033,10 +2120,11 @@ function DiffStats(props: { readonly additions: number; readonly deletions: numb
 /**
  * A button that copies the current patch and reports success briefly.
  *
+ * @param props.t - the page's translate seat.
  * @param props.text - the text to copy.
  * @returns the button element.
  */
-function CopyButton({ text }: { readonly text: string }): ReactElement {
+function CopyButton({ t, text }: { readonly t: Translate; readonly text: string }): ReactElement {
   const [copied, setCopied] = useState(false)
   const timer = useRef<number | undefined>(undefined)
 
@@ -2054,7 +2142,13 @@ function CopyButton({ text }: { readonly text: string }): ReactElement {
   }, [text])
 
   return (
-    <button type="button" className="dsh-cg-icon" title={copied ? '已复制' : '复制 Diff'} aria-label={copied ? '已复制' : '复制 Diff'} onClick={copy}>
+    <button
+      type="button"
+      className="dsh-cg-icon"
+      title={t(copied ? 'diff.copied' : 'diff.copy')}
+      aria-label={t(copied ? 'diff.copied' : 'diff.copy')}
+      onClick={copy}
+    >
       {copied ? <IconCheck /> : <IconCopy />}
     </button>
   )
@@ -2092,6 +2186,7 @@ async function writeText(text: string): Promise<boolean> {
 /**
  * The diff body: the parsed patch, a loading line, or the reason there is none.
  *
+ * @param props.t - the page's translate seat.
  * @param props.loading - the answer for this selection has not arrived yet.
  * @param props.current - the answer, when it has.
  * @param props.kind - the selected path's change kind, for a friendlier empty line.
@@ -2100,24 +2195,25 @@ async function writeText(text: string): Promise<boolean> {
  * @returns the body element.
  */
 function DiffBody(props: {
+  readonly t: Translate
   readonly loading: boolean
   readonly current: DocState | null
   readonly kind: ChangeKind | undefined
   readonly collapsed: ReadonlySet<string>
   readonly onToggleFile: (id: string) => void
 }): ReactElement {
-  const { loading, current, kind, collapsed, onToggleFile } = props
+  const { t, loading, current, kind, collapsed, onToggleFile } = props
 
-  if (loading) return <Note text="正在读取 Diff…" />
-  if (current?.error !== undefined) return <Note text="无法读取 Diff" />
+  if (loading) return <Note text={t('diff.loading')} />
+  if (current?.error !== undefined) return <Note text={t('diff.failed')} />
 
   const doc = current?.doc
   if (current === null || doc === undefined || doc.files.length === 0) {
     return (
       <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">没有可显示的文本差异</span>
+        <span className="dsh-cg-empty-title">{t('diff.noTextTitle')}</span>
         <span className="dsh-cg-empty-text">
-          {kind === 'untracked' ? '这是一个未跟踪的新文件，内容与空文件相同' : '该文件当前的改动没有文本差异（可能是二进制文件或仅权限变更）'}
+          {t(kind === 'untracked' ? 'diff.noTextUntracked' : 'diff.noTextOther')}
         </span>
       </div>
     )
@@ -2125,6 +2221,7 @@ function DiffBody(props: {
 
   return (
     <DiffFiles
+      t={t}
       doc={doc}
       merge={current.merge === true}
       truncated={current.truncated === true}
@@ -2137,6 +2234,7 @@ function DiffBody(props: {
 /**
  * The patch's file sections.
  *
+ * @param props.t - the page's translate seat.
  * @param props.doc - the parsed patch.
  * @param props.merge - whether the patch compares against a first parent.
  * @param props.truncated - whether the Host cut the patch short.
@@ -2145,13 +2243,14 @@ function DiffBody(props: {
  * @returns the sections, and the notes that qualify them.
  */
 function DiffFiles(props: {
+  readonly t: Translate
   readonly doc: DiffDoc
   readonly merge: boolean
   readonly truncated: boolean
   readonly collapsed: ReadonlySet<string>
   readonly onToggleFile: (id: string) => void
 }): ReactElement {
-  const { doc, merge, truncated, collapsed, onToggleFile } = props
+  const { t, doc, merge, truncated, collapsed, onToggleFile } = props
 
   const rows = flatten(doc)
   const shown = rows.length > MAX_DIFF_ROWS ? rows.slice(0, MAX_DIFF_ROWS) : rows
@@ -2166,10 +2265,11 @@ function DiffFiles(props: {
   return (
     <>
       {merge ? (
-        <div className="dsh-cg-note">合并提交：以下差异是与第一个父提交的比较结果。</div>
+        <div className="dsh-cg-note">{t('diff.mergeNote')}</div>
       ) : null}
       {groups.map(group => (
         <FileSection
+          t={t}
           key={group.id}
           group={group}
           collapsible={collapsible}
@@ -2177,8 +2277,8 @@ function DiffFiles(props: {
           onToggle={onToggleFile}
         />
       ))}
-      {hidden > 0 ? <div className="dsh-cg-note">还有 {hidden} 行未渲染（差异过大）。</div> : null}
-      {truncated ? <div className="dsh-cg-note">Diff 超出读取上限，内容已被截断。</div> : null}
+      {hidden > 0 ? <div className="dsh-cg-note">{t('diff.hiddenRows', { count: hidden })}</div> : null}
+      {truncated ? <div className="dsh-cg-note">{t('diff.truncated')}</div> : null}
     </>
   )
 }
@@ -2191,6 +2291,7 @@ function DiffFiles(props: {
  * under a title that stays where it is — and each file's scroller is its own, so
  * dragging one file sideways leaves every other file where it was.
  *
+ * @param props.t - the page's translate seat.
  * @param props.group - the file and the rows under its title.
  * @param props.collapsible - whether this patch has more than one file to tell apart.
  * @param props.collapsed - whether this file's code is closed.
@@ -2198,12 +2299,13 @@ function DiffFiles(props: {
  * @returns the section.
  */
 function FileSection(props: {
+  readonly t: Translate
   readonly group: DiffGroup
   readonly collapsible: boolean
   readonly collapsed: boolean
   readonly onToggle: (id: string) => void
 }): ReactElement {
-  const { group, collapsible, collapsed, onToggle } = props
+  const { t, group, collapsible, collapsed, onToggle } = props
   const { file } = group
 
   return (
@@ -2213,6 +2315,7 @@ function FileSection(props: {
           second identical line above the first hunk. */}
       {file === null ? null : (
         <FileHead
+          t={t}
           file={file}
           id={group.id}
           collapsible={collapsible}
@@ -2241,6 +2344,7 @@ function FileSection(props: {
 /**
  * One file's title row, and the control that closes it.
  *
+ * @param props.t - the page's translate seat.
  * @param props.file - the file the row names.
  * @param props.id - the section's identity, which is what the control flips.
  * @param props.collapsible - whether this patch has more than one file.
@@ -2249,13 +2353,14 @@ function FileSection(props: {
  * @returns the title row.
  */
 function FileHead(props: {
+  readonly t: Translate
   readonly file: DiffFile
   readonly id: string
   readonly collapsible: boolean
   readonly collapsed: boolean
   readonly onToggle: (id: string) => void
 }): ReactElement {
-  const { file, id, collapsible, collapsed, onToggle } = props
+  const { t, file, id, collapsible, collapsed, onToggle } = props
   const path = displayPath(file)
   const { dir, name } = splitPath(path)
 
@@ -2269,8 +2374,8 @@ function FileHead(props: {
           // reader announces: `aria-expanded` is the fact, the quarter turn is
           // only how it is drawn.
           aria-expanded={!collapsed}
-          title={collapsed ? '展开此文件的差异' : '折叠此文件的差异'}
-          aria-label={collapsed ? '展开此文件的差异' : '折叠此文件的差异'}
+          title={t(collapsed ? 'diff.expand' : 'diff.collapse')}
+          aria-label={t(collapsed ? 'diff.expand' : 'diff.collapse')}
           onClick={() => onToggle(id)}
         >
           <IconArrowRight />
