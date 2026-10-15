@@ -48,6 +48,9 @@ export default defineConfig([
       // The icon map is built from the assets above rather than imported, so
       // the bundle carries its own artwork and fetches nothing at runtime.
       __DSH_CG_ICONS__: JSON.stringify(ICONS),
+      // The stylesheet's ownership tag has to name the id the loader registers
+      // this bundle under, so the banner and the tag read the one constant.
+      __DSH_CG_PLUGIN_ID__: JSON.stringify(PACKAGE_ID),
     },
     deps: {
       // Seed words the web boot answers before any bundle materializes

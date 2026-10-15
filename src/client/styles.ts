@@ -29,6 +29,9 @@
 
 import { DIFF_MIN, PANE_MIN, SIDE_DEFAULT, SIDE_MAX, SIDE_MIN } from './layout.js'
 
+/** Build-time define from tsdown.config.ts: the id the loader registers this bundle under. */
+declare const __DSH_CG_PLUGIN_ID__: string
+
 /** Class the Git View renders on its root; the stylesheet's only anchor. */
 export const GIT_ROOT_CLASS = 'dsh-cg-root'
 
@@ -553,10 +556,29 @@ const GIT_CSS = [
 /**
  * Insert the stylesheet once for the plugin lifetime.
  *
+ * The tag carries the platform's style-ownership record — `data-plugin` with this
+ * package's id, which is what every DSH bundle writes on the tags it injects — and
+ * it has to, because this sheet is appended from `apply()`, one step *after* this
+ * module materialized. DSH's client module system books a `<style>` by that
+ * attribute: a tag that appears while a module materializes is claimed for that
+ * module, and a tag carrying no attribute at all is claimed by whichever module
+ * materializes next, then deleted with it (`removeOwnedStyles`) when that module is
+ * reloaded, disabled, or pruned from the graph. The kernel shipped in 0.2.0-rc.2
+ * claims exactly `style:not([data-plugin])` at every materialization, so an unowned
+ * sheet is booked under an unrelated plugin and dies with it — while this tab keeps
+ * rendering, which is how the page came to draw a panel-wide folder glyph (the icon
+ * seats in this stylesheet own the sizes that are lost with it). Naming the owner
+ * here keeps the sheet this plugin's own: only a reload of `dsh-cool-git` retires
+ * it, and this effect's disposer removes it then anyway.
+ *
+ * `data-dsh-cool-git` stays as the package's own name for its sheet, for readers of
+ * the DOM and the probes under `.tmp/`.
+ *
  * @returns disposer that removes exactly this element.
  */
 export function insertGitStyles(): () => void {
   const element = document.createElement('style')
+  element.setAttribute('data-plugin', __DSH_CG_PLUGIN_ID__)
   element.setAttribute('data-dsh-cool-git', 'styles')
   element.textContent = GIT_CSS
   document.head.appendChild(element)

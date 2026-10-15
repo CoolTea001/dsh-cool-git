@@ -1,10 +1,10 @@
 # AGENTS.zh.md
 
-## 提交与推送规则
+## commit message 生成规则
 
-1. 禁止主动 commit 和 push —— 只有用户明确要求时才执行 `git commit` / `git push`。先汇报改动，由用户决定何时提交或推送。
+1. commit message 使用英文生成，内容保持简洁。
 2. commit 前检查是否包含临时文件、大文件、敏感内容（密钥、token、.env）。
-3. commit message 使用英文生成。
+3. commit message 需要添加 feat | refactor | fix | chore 等标识。
 
 ## 文档语言
 
