@@ -437,14 +437,36 @@ const GIT_CSS = [
   '.dsh-cg-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-meta{display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-hash{font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
-  '.dsh-cg-refs{display:flex;gap:4px;overflow:hidden}',
+  // The decorations a commit carries: one line of chips, which is a scroller
+  // because three names can be wider than the sidebar. The chip used to cap a
+  // name at 110px with an ellipsis, which for a name that long only wrapped it —
+  // a filled accent chip two lines tall beside its one-line neighbours, and the
+  // end of the name nowhere at all. The row is the better place for that
+  // overflow: the line stays one line (`flex-wrap:nowrap`, the default, stated
+  // for the reader), the chips keep their names whole, and what does not fit sits
+  // to the right of the row, where the pointer reaches it (`RefRow` in `git.tsx`
+  // walks it there, and a trackpad can too).
+  //
+  // The bar is hidden outright rather than bound to the platform's `transparent`
+  // thumb the panes around it use: those panes are tall, and this row is 14px, so
+  // a bar that keeps its width even while invisible would take that width out of
+  // the chips. Both spellings are needed — the standard property is what a
+  // browser reading `scrollbar-width` obeys, and the pseudo-element rule is the
+  // one Chromium honours once the platform has styled `::-webkit-scrollbar` at
+  // all. The platform's own dockkit tab strip, the one other sideways scroller in
+  // the app, hides its bar exactly this way.
+  '.dsh-cg-refs{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}',
+  '.dsh-cg-refs::-webkit-scrollbar{display:none}',
   // A branch or tag decoration is a filled chip in the theme's accent, not an
   // outlined one. The accent is `--dsw-alias-state-business-primary`, the alias
   // every accent-marked surface in the platform reads (focus rings, `Tag`'s info
   // tone), and it is the one a theme preset moves: `--dsw-alias-brand-primary`
   // would be wrong here, since the platform defines it as the foreground color
   // itself, which is what paints the monochrome primary Button.
-  '.dsh-cg-ref{flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;padding:0 4px;border-radius:var(--dsw-radius-xs,4px);background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);font-size:10px;line-height:14px}',
+  //
+  // The chip takes the width of its name and stays on one line, which is what
+  // makes the row beside it scrollable rather than the name unreadable.
+  '.dsh-cg-ref{flex:none;white-space:nowrap;padding:0 4px;border-radius:var(--dsw-radius-xs,4px);background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);font-size:10px;line-height:14px}',
 
   // Notes: empty lists and loading rows. A failure is the error dialog's, so
   // nothing here paints one.

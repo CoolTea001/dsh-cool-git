@@ -113,6 +113,19 @@ const COPY_FEEDBACK_MS = 1200
  */
 const TOOLTIP_MAX_WIDTH = 500
 
+/**
+ * How fast a hovered decoration row walks itself to the right, in pixels per
+ * second.
+ *
+ * A speed rather than a duration: the distance belongs to the names in the row,
+ * so a row with more of them should take longer to read rather than move faster.
+ * Forty is a reading pace — a character in these chips' monospace face is about
+ * 6px, so a row outrunning the sidebar is walked at roughly 0.15s per character
+ * of the names it carries, and the longest of them are read in a few seconds
+ * rather than blurred past.
+ */
+const REF_SCROLL_SPEED = 40
+
 /** The single letter each changed-path row shows. */
 const KIND_LETTER: Readonly<Record<ChangeKind, string>> = {
   added: 'A',
@@ -2003,16 +2016,95 @@ function CommitList(props: {
             <span title={commit.date}>{relativeTime(t, commit.date)}</span>
             {commit.parents.length > 1 ? <span>{t('commit.merge')}</span> : null}
           </span>
-          {commit.refs.length > 0 ? (
-            <span className="dsh-cg-refs">
-              {commit.refs.slice(0, 3).map(ref => (
-                <span key={ref} className="dsh-cg-ref">{refLabel(ref)}</span>
-              ))}
-            </span>
-          ) : null}
+          {commit.refs.length > 0 ? <RefRow refs={commit.refs.slice(0, 3)} /> : null}
         </button>
       ))}
     </>
+  )
+}
+
+/**
+ * The branch and tag decorations a commit carries, as one row of chips: a single
+ * line, and the whole of it reachable without leaving the row.
+ *
+ * A commit can carry three of these, and a name among them can be longer than
+ * the room the sidebar has for all of them put together, so the row is where the
+ * overflow goes. Two things used to happen instead, and both are wrong in the
+ * same way — a name was shortened into its chip, so the rest of it was simply
+ * gone, or it wrapped, so a chip stood two lines tall beside its one-line
+ * neighbours. Neither is a way to read a branch name, and the row is the honest
+ * one: the chips keep their names whole, the row stays one line, and what does
+ * not fit sits to the right of the row rather than missing from it.
+ *
+ * The pointer is what asks the row to move. Entering walks it to its end;
+ * leaving puts it back at its start at once, so the row always reads from its
+ * first chip unless the pointer is on it. The walk is this component's own frame
+ * loop rather than `behavior:'smooth'`, whose duration the browser picks and
+ * which cannot be asked to hold a speed, and it starts from wherever the row is,
+ * so a reader who scrolled it by hand is neither pulled back to the start nor
+ * shown the same part of it twice. Nothing here is timed out or restored on a
+ * delay: leaving is the whole of the rewind, and a walk that has reached the end
+ * stops there for as long as the pointer stays.
+ *
+ * `styles.ts` states the scrolling itself — one line of chips, the sideways
+ * overflow, and the hidden bar — so all this component owns is the walking.
+ *
+ * @param props.refs - the decorations to draw, already capped by the caller;
+ * each name's `HEAD -> ` or `tag: ` prefix is stripped by `refLabel`.
+ * @returns the row.
+ */
+function RefRow(props: { readonly refs: readonly string[] }): ReactElement {
+  const { refs } = props
+
+  /** The scroller: the row that is walked. */
+  const box = useRef<HTMLSpanElement | null>(null)
+
+  /** The frame the walk is on, or 0 at rest. */
+  const frame = useRef(0)
+
+  /** Drop a walk in flight, if there is one. */
+  const halt = useCallback((): void => {
+    if (frame.current !== 0) cancelAnimationFrame(frame.current)
+    frame.current = 0
+  }, [])
+
+  // A walk outliving the row would hold a node the page has already dropped.
+  useEffect(() => halt, [halt])
+
+  /** Walk the row from where it is to its right edge, one frame at a time. */
+  const walk = useCallback((): void => {
+    const node = box.current
+    if (node === null) return
+    const from = node.scrollLeft
+    const rest = node.scrollWidth - node.clientWidth - from
+    // A row that fits, or one already walked to its end, asks for nothing.
+    if (rest <= 0) return
+    // The first frame's own timestamp is the walk's zero: a clock read here
+    // would be a moment earlier than the frame that is about to be drawn.
+    let started = 0
+    const step = (now: number): void => {
+      if (started === 0) started = now
+      const walked = ((now - started) / 1000) * REF_SCROLL_SPEED
+      const done = walked >= rest
+      node.scrollLeft = done ? from + rest : from + walked
+      frame.current = done ? 0 : requestAnimationFrame(step)
+    }
+    halt()
+    frame.current = requestAnimationFrame(step)
+  }, [halt])
+
+  /** Put the row back at its start, at once. */
+  const rewind = useCallback((): void => {
+    halt()
+    if (box.current !== null) box.current.scrollLeft = 0
+  }, [halt])
+
+  return (
+    <span ref={box} className="dsh-cg-refs" onMouseEnter={walk} onMouseLeave={rewind}>
+      {refs.map(ref => (
+        <span key={ref} className="dsh-cg-ref">{refLabel(ref)}</span>
+      ))}
+    </span>
   )
 }
 

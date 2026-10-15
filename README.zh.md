@@ -1,3 +1,5 @@
+![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.1.0.png)
+
 # dsh-cool-git
 
 [English](./README.md) · 中文
