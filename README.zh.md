@@ -1,4 +1,4 @@
-![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.1.0.png)
+![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.2.0.png)
 
 # dsh-cool-git
 

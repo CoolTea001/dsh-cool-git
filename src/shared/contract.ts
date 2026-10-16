@@ -47,7 +47,6 @@ export type FailureCode =
   | 'no-commits'
   | 'unparsable-commit'
   // Switching branches.
-  | 'invalid-branch'
   | 'unknown-branch'
   | 'remote-local-name'
   | 'checkout-denied'

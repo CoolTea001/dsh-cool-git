@@ -276,7 +276,6 @@ export const en = {
   'error.no-commits': 'This repository has no commits yet',
   'error.unparsable-commit': 'Could not parse that commit',
 
-  'error.invalid-branch': 'Invalid branch name: {name}',
   'error.unknown-branch': 'No such branch: {name}',
   'error.remote-local-name': 'Could not derive a local branch name from the remote branch: {name}',
   'error.checkout-denied': 'The current permission mode does not allow switching branches: it needs to write the workspace',
@@ -433,7 +432,6 @@ export const zh: typeof en = {
   'error.no-commits': '该仓库还没有任何提交',
   'error.unparsable-commit': '无法解析该提交',
 
-  'error.invalid-branch': '分支名不合法：{name}',
   'error.unknown-branch': '分支不存在：{name}',
   'error.remote-local-name': '无法从远程分支推导本地分支名：{name}',
   'error.checkout-denied': '当前权限模式不允许切换分支：该操作需要写入工作区',

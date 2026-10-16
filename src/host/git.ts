@@ -77,16 +77,6 @@ const MAX_LOG_LIMIT = 300
 const MAX_BRANCHES = 200
 
 /**
- * Characters a ref name may use, and the shapes Git forbids inside one.
- *
- * The name is quoted for the shell and verified against `refs/heads/` before it
- * is ever passed to a command that acts on it, so this is not what keeps the
- * command safe; it is what keeps a typo from being answered by Git's own
- * confusing ref-format error instead of a plain "this branch does not exist".
- */
-const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
-
-/**
  * What Git prints when it refuses to touch a working tree that is not clean.
  *
  * `checkout`, `pull` and `push` each word the refusal their own way, and the page
@@ -969,6 +959,11 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
  * than left to Git's own guess so the exists-check and the branch Git is told to
  * create can never disagree.
  *
+ * What a ref name may look like is Git's rule and is not restated here: a name
+ * that no ref answers to is already an unknown branch, so a second, weaker
+ * pattern would only turn names Git accepts — non-ASCII ones among them — into a
+ * refusal of this plugin's own invention.
+ *
  * The switch itself runs as `git switch`, whose argument is unambiguously a
  * branch rather than a path; Git older than 2.23 does not have that subcommand,
  * and the retry with `checkout` is what keeps those installations working.
@@ -984,10 +979,6 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
 export async function switchBranch(target: GitTarget, name: string): Promise<CheckoutPayload> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
-  if (!BRANCH_NAME.test(name) || name.includes('..') || name.includes('@{')) {
-    return { ok: false, ...coded('invalid-branch', { name }), reason: 'unknown-branch' }
-  }
-
   const root = inDir(target, repo.root)
   if (await refExists(root, `refs/heads/${name}`)) {
     return switchTo(root, ['switch', name], ['checkout', name], name)
