@@ -439,7 +439,7 @@ const GIT_CSS = [
   // the glyph says on hover is that it is live: its colour steps up from the
   // toolbar icons' own tertiary to the primary label, and nothing else moves or
   // appears.
-  '.dsh-cg-commit-generate{position:absolute;top:1px;right:calc(2px + var(--dsh-scrollbar-width,5px));display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;transition:color .12s ease}',
+  '.dsh-cg-commit-generate{position:absolute;top:1px;right:calc(var(--dsh-scrollbar-width,5px));display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;transition:color .12s ease}',
   '.dsh-cg-commit-generate:hover:not(:disabled){color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-commit-generate:disabled{color:var(--dsw-alias-label-tertiary);opacity:.45;cursor:default}',
   // The glyph is drawn a shade smaller than the field's own type, so it reads as

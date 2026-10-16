@@ -1,6 +1,6 @@
 {
   "name": "dsh-cool-git",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DeepSeek Harness Git plugin — adds Git management to the session tab bar, covering the basics: commit | pull | push | branch | diff.",
   "type": "module",
   "license": "MIT",
