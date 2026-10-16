@@ -681,6 +681,34 @@ const MAX_PREVIEW_TOTAL_CHARS = 48_000
 /** How many untracked paths' contents the prompt describes. */
 const MAX_PREVIEW_FILES = 20
 
+/**
+ * How many recent commit messages the prompt reads as its style sample.
+ *
+ * The generator writes in the style this repository already commits in, and the
+ * sample is the evidence for that style: ten messages are enough for a pattern —
+ * a tag, a language, a body — to show, and few enough to stay a footnote beside
+ * the patch.
+ */
+const STYLE_SAMPLE_COMMITS = 10
+
+/**
+ * Longest one sampled message may be, in characters.
+ *
+ * A message is a subject and usually a few lines; the bound is here so that one
+ * enormous body — a squashed release note, a template nobody trimmed — cannot
+ * crowd the diff out of the request. A message over the bound is stored cut and
+ * marked as such, because half a message otherwise reads as all of it.
+ */
+const MAX_SAMPLE_MESSAGE_CHARS = 400
+
+/** One recent commit message, as the prompt's style evidence. */
+export interface StyleSample {
+  /** The message as it was committed: its subject, and its body when it has one. */
+  readonly text: string
+  /** The message was longer than {@link MAX_SAMPLE_MESSAGE_CHARS} and is stored cut. */
+  readonly truncated: boolean
+}
+
 /** One untracked path, as the message prompt sees it. */
 export interface UntrackedPreview {
   /** Worktree-relative path. */
@@ -720,6 +748,12 @@ export type ChangeDigest =
     readonly patchTruncated: boolean
     /** Untracked paths' contents, each bounded and at most `MAX_PREVIEW_FILES`. */
     readonly untracked: readonly UntrackedPreview[]
+    /**
+     * This branch's recent commit messages, newest first and at most
+     * `STYLE_SAMPLE_COMMITS` of them: the style the generated message is asked to
+     * match. Empty on an unborn branch, which is the same answer as no style.
+     */
+    readonly recentMessages: readonly StyleSample[]
   }
   | { readonly ok: false; readonly refusal: Refusal; readonly reason: 'no-repo' | 'error' }
 
@@ -817,6 +851,42 @@ async function readUntrackedPreviews(
 }
 
 /**
+ * Read this branch's recent commit messages, as the generator's style sample.
+ *
+ * `-z` is what makes one commit one record: a message is multi-line by nature, so
+ * the newline-separated default would need the format parsed back apart, while
+ * NUL cannot occur in a commit message and splits the records outright. Each
+ * record is cut to {@link MAX_SAMPLE_MESSAGE_CHARS} on a line boundary, by the
+ * same rule the patch is cut by.
+ *
+ * Nothing here is fatal: a branch with no commits, or a `log` that fails for any
+ * other reason, reads as no sample — the generator then falls back to the commit
+ * rules, which is a better answer than taking the message away over a style it
+ * could not read.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param hasHead - HEAD resolves to a commit, so there is history to read.
+ * @returns the sampled messages, newest first.
+ */
+async function readRecentMessages(root: GitTarget, hasHead: boolean): Promise<readonly StyleSample[]> {
+  if (!hasHead) return []
+  const log = await runGit(root, [
+    'log', `-n${STYLE_SAMPLE_COMMITS}`, '-z', '--pretty=format:%B',
+  ])
+  if (log.code !== 0) return []
+
+  return log.stdout
+    .split('\0')
+    .map(message => message.trim())
+    .filter(message => message !== '')
+    .map(message => {
+      const cut = cutAtLine(message, MAX_SAMPLE_MESSAGE_CHARS)
+      return { text: cut.text.trim(), truncated: cut.truncated }
+    })
+    .filter(sample => sample.text !== '')
+}
+
+/**
  * Read the working tree as one block of material for a generated commit message.
  *
  * This is the reader `readStatus` and `readDiff` would give if they were asked
@@ -826,6 +896,9 @@ async function readUntrackedPreviews(
  * path by path would run three commands per changed file — and because the model
  * is meant to see the changes as one change set rather than as an answer per
  * row.
+ *
+ * The one thing here that is not a change is the style sample: the branch's own
+ * recent messages, which the prompt asks the model to write in the manner of.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
  * @returns the digest, or why the repository could not be read.
@@ -840,8 +913,11 @@ export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest>
   ])
   if (status.code !== 0) return { ok: false, refusal: refusalOf(status), reason: 'error' }
   const files = parseStatus(status.stdout).files
+  const recentMessages = await readRecentMessages(root, repo.hasHead)
   if (files.length === 0) {
-    return { ok: true, files, stat: '', patch: '', patchTruncated: false, untracked: [] }
+    return {
+      ok: true, files, stat: '', patch: '', patchTruncated: false, untracked: [], recentMessages,
+    }
   }
 
   const stat = await runTrackedDiff(root, repo.hasHead, ['--stat'])
@@ -857,6 +933,7 @@ export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest>
     patch: patch.text,
     patchTruncated: patch.truncated || diff.truncated,
     untracked: await readUntrackedPreviews(root, files),
+    recentMessages,
   }
 }
 

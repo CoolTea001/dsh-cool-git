@@ -10,10 +10,12 @@
  * per request, exactly as the model picker reads it.
  *
  * The material is the repository itself, read once through `readChangeDigest`:
- * the changed paths, the tracked patch with its `--stat`, and the untracked files
- * no patch against HEAD can reach. That is what makes the model's rule 2 check
- * mean anything — `.env` is on the list because it is on disk, and an oversized
- * binary file is visible through the `--stat` line that carries its byte size.
+ * the changed paths, the tracked patch with its `--stat`, the untracked files no
+ * patch against HEAD can reach, and the branch's own recent messages. That is what
+ * makes the model's rule 2 check mean anything — `.env` is on the list because it
+ * is on disk, and an oversized binary file is visible through the `--stat` line
+ * that carries its byte size — and it is also what the message is asked to imitate,
+ * so the style the repository already commits in is evidence rather than a guess.
  *
  * Two things are deliberately not here. This module never stages or commits
  * anything: generating a message is a read, it leaves the index and the history
@@ -28,10 +30,10 @@
  * call is not marked as an agent-loop request: the title generator reads those
  * markers, and a commit message is nobody's session title.
  *
- * The prompt is the project's commit rules, carried by `AGENTS.md` and repeated
- * here as constants: the rules are what the model is asked to follow, so they are
- * the one piece of copy this half owns rather than a sentence the page words in
- * the active locale.
+ * The prompt is two pieces of English copy this half owns rather than sentences
+ * the page words in the active locale: the style the recent messages show, and the
+ * project's commit rules (`AGENTS.md`) as the answer when that style cannot be
+ * read.
  */
 
 import type { ChangedFile, MessagePayload } from '../shared/contract.js'
@@ -39,20 +41,29 @@ import { readChangeDigest, type ChangeDigest, type GitTarget } from './git.js'
 import { coded, type Refusal } from './refusal.js'
 
 /**
- * The project's commit rules, as the model is told them.
+ * The project's commit rules, as the model is told them when no style is clear.
  *
- * Verbatim, and kept that way: these are the rules a contributor reads before
- * committing, so the generator must answer to the same ones rather than to a
- * paraphrase that would drift from them.
+ * These are the fallback rather than the instruction: the repository's own recent
+ * messages are what the model is asked to write in the manner of, and these rules
+ * are what it answers to when that sample says nothing — an unborn branch, a first
+ * commit, a history with no pattern to it. They restate the commit rules of this
+ * project (`AGENTS.md`), which a contributor reads before committing.
  */
 const COMMIT_RULES: readonly string[] = [
-  '1. Commit messages must be in English and kept concise.',
-  '2. Before commit, check for temp files, large files, and sensitive content (keys, tokens, .env).',
-  '3. Commit messages must be prefixed with a tag such as feat | refactor | fix | chore.',
+  '1. Default to English, and keep the message concise.',
+  '2. Check for temp files, large files, and sensitive content (keys, tokens, .env) before committing.',
+  '3. Add a tag such as feat | refactor | fix | chore.',
 ]
 
 /**
  * What the model is told before it is shown the changes.
+ *
+ * The style of the repository's own commits comes first because it is the
+ * stronger signal: a project whose history is Chinese, or untagged, or writes a
+ * body on every change, is a project whose next message should look like that. The
+ * commit rules follow as the answer for when there is nothing to imitate, and
+ * rule 2 stays an instruction in either case — the sensitive-content check is not
+ * a matter of house style.
  *
  * Rule 2 is a pre-commit check rather than a shape for the message, so the model
  * needs somewhere to put what it finds: the answer is split into the message and
@@ -62,11 +73,12 @@ const COMMIT_RULES: readonly string[] = [
  */
 const SYSTEM_PROMPT: string = [
   'You write the Git commit message for a working tree from the changes you are shown.',
-  'The commit rules for this project:',
+  'Write it in the style of this repository\'s recent commits, which are shown to you: match their language, their tag prefix or lack of one, their mood, their capitalization, and whether they carry a body.',
+  'When the recent commits do not establish a style — there are none, too few, or no consistent pattern — follow the project\'s commit rules instead:',
   ...COMMIT_RULES,
-  'Answer with the commit message alone: one subject line in the imperative mood, at most 72 characters, and — only when the change needs one — a blank line followed by a short body.',
-  'Apply rule 2 before you write. When the check finds something the committer must look at first, put one line per finding after the message, each beginning with "WARNING: " and naming the path and what is wrong with it.',
-  'Do not use Markdown, code fences, or quotation marks around the message, and add no commentary of your own.',
+  'Keep the subject line at most 72 characters, and add a body only when the change needs one.',
+  'Apply rule 2 before you write, whatever style you are following. When the check finds something the committer must look at first, put one line per finding after the message, each beginning with "WARNING: " and naming the path and what is wrong with it.',
+  'Answer with the commit message alone: no Markdown, no code fences, no quotation marks around the message, and no commentary of your own.',
 ].join('\n')
 
 /**
@@ -171,11 +183,29 @@ function describeFile(file: ChangedFile): string {
  * notes are the only place a cut is admitted: without them a patch that stops
  * mid-file reads as a file that ends there.
  *
+ * The style sample opens the request rather than closing it, because it is what
+ * the system prompt asks the model to write in the manner of: the messages are
+ * shown whole — subject and body, separated from each other the way the sections
+ * are — so that a body someone always writes is as visible as a tag someone
+ * always uses.
+ *
  * @param digest - the repository read.
  * @returns the user message's text.
  */
 function promptText(digest: Extract<ChangeDigest, { ok: true }>): string {
   const lines: string[] = []
+  lines.push('Recent commit messages on this branch, newest first (git log --pretty=format:%B):')
+  if (digest.recentMessages.length === 0) {
+    lines.push('  (none: this branch has no commit to imitate yet)')
+  } else {
+    for (const sample of digest.recentMessages) {
+      lines.push('---')
+      lines.push(sample.text)
+      if (sample.truncated) lines.push('[the message above was cut at the read limit]')
+    }
+  }
+
+  lines.push('')
   lines.push(`This working tree has ${digest.files.length} changed path(s).`)
   lines.push('')
   lines.push('Changed paths (git status --porcelain, XY then path):')

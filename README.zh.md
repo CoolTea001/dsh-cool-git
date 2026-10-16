@@ -8,7 +8,7 @@
 
 ## 描述
 
-DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支持 commit | pull | push | branch | diff 等基础操作。
+DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支持 commit | pull | push | branch | diff 等基础功能。
 ## 功能介绍
 
 - **工作区绑定：** 查看并管理当前工作区的代码变更
@@ -16,7 +16,7 @@ DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支�
 - **变更同步：** 支持一键 Pull & Push 同步代码变更
 - **Diff 查看：** 支持查看文件变更 Diff
 - **提交历史：** 支持查看提交历史并查看文件变更 Diff
-- **自动生成提交信息：** 使用 DSH 当前默认模型，自动生成提交信息并填入 Commit Message 框中
+- **自动生成提交信息：** 使用 DSH 当前默认模型，自动生成提交信息并填入 Commit Message 框中；
 
 ## 安装教程
 
