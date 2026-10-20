@@ -25,6 +25,11 @@
  * a palette of its own. The diff's own greens and reds are the platform's
  * dedicated diff tokens, which is what makes the diff read the same as the
  * diffs the tool cards already draw.
+ *
+ * One optional collaborator: while `dsh-cool-theme` has a wallpaper mounted it
+ * adds `ct-bg-on` to the document, and section 4 below clears the page's own
+ * canvas tokens so the image shows through this tab as it does through the rest
+ * of the shell.
  */
 
 import { DIFF_MIN, PANE_MIN, SIDE_DEFAULT, SIDE_MAX, SIDE_MIN } from './layout.js'
@@ -626,6 +631,25 @@ const GIT_CSS = [
   // space and every diff of indented code would read as if it were flat.
   '.dsh-cg-text{white-space:pre;padding-right:16px}',
   '.dsh-cg-line[data-kind=meta] .dsh-cg-text{grid-column:1 / -1;padding-left:12px}',
+
+  // 4. Wallpaper.
+  //
+  // `dsh-cool-theme` paints a fixed wallpaper layer behind the shell and marks
+  // the document with `ct-bg-on` for as long as that layer is mounted; without
+  // the theme, or with its wallpaper switched off, the class is absent. The
+  // theme clears the shell's own canvas surfaces by name — the conversation
+  // root, the layout columns, the right sidebar — but a tab that paints its own
+  // surfaces still covers the image with them. This page paints two: `bg-base`
+  // on the page and its Diff pane, and `bg-layer-1` on the sidebar, the file
+  // titles and the commit field. Rebinding those two tokens inside this root is
+  // what lets the image through, and it names nothing about the page's parts.
+  //
+  // Everything raised above that canvas keeps its fill: the hover and selection
+  // washes, the ref chips, the `@@` banner's layer-2 band, and the branch
+  // dialog, which the platform portals outside this root. The scoping is the
+  // whole contract — a profile without the theme never matches the selector, so
+  // the tab draws its own opaque surfaces exactly as it did before.
+  `html.ct-bg-on .${GIT_ROOT_CLASS}{--dsw-alias-bg-base:transparent;--dsw-alias-bg-layer-1:transparent}`,
 ].join('\n')
 
 /**

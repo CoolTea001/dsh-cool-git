@@ -17,6 +17,7 @@ DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支�
 - **Diff 查看：** 支持查看文件变更 Diff
 - **提交历史：** 支持查看提交历史并查看文件变更 Diff
 - **自动生成提交信息：** 使用 DSH 当前默认模型，自动生成提交信息并填入 Commit Message 框中；
+- **背景图片适配：** dsh-cool-theme 开启背景图片时自动透明，背景图可透出整个 Git 面板
 
 ## 安装教程
 
