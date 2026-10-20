@@ -75,6 +75,7 @@ export type FailureCode =
   | 'no-llm'
   | 'no-model'
   | 'model-timeout'
+  | 'model-truncated'
   | 'empty-message'
 
 /**
