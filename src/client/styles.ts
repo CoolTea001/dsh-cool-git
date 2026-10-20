@@ -419,7 +419,14 @@ const GIT_CSS = [
   // place is then reserved by the field's own right padding, so what the two
   // share is the box rather than the line: no character of the message can reach
   // the glyph's column at any width.
-  '.dsh-cg-commit-frame{position:relative;box-sizing:border-box;width:100%;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}',
+  // The frame's fill is the layer *above* the sidebar's own, not the sidebar's:
+  // `bg-layer-1` is the page canvas, and the wallpaper rule below clears it so
+  // the image shows through — a field that borrows that token loses its fill
+  // with the canvas and takes the placeholder's surface with it. One step up is
+  // a fill the wallpaper cannot reach: the same white in light, and a shade
+  // lighter than the sidebar in dark, so the field reads as a control laid over
+  // the image rather than a hole cut in it.
+  '.dsh-cg-commit-frame{position:relative;box-sizing:border-box;width:100%;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2)}',
   '.dsh-cg-commit-frame:focus-within{border-color:var(--dsw-alias-state-business-primary)}',
   '.dsh-cg-commit-frame:has(.dsh-cg-commit-input:disabled){opacity:.6}',
   // The right padding is the glyph's column: its 24px, the 7px it is held off the
@@ -640,15 +647,17 @@ const GIT_CSS = [
   // theme clears the shell's own canvas surfaces by name — the conversation
   // root, the layout columns, the right sidebar — but a tab that paints its own
   // surfaces still covers the image with them. This page paints two: `bg-base`
-  // on the page and its Diff pane, and `bg-layer-1` on the sidebar, the file
-  // titles and the commit field. Rebinding those two tokens inside this root is
-  // what lets the image through, and it names nothing about the page's parts.
+  // on the page and its Diff pane, and `bg-layer-1` on the sidebar and the file
+  // titles. Rebinding those two tokens inside this root is what lets the image
+  // through, and it names nothing about the page's parts.
   //
   // Everything raised above that canvas keeps its fill: the hover and selection
-  // washes, the ref chips, the `@@` banner's layer-2 band, and the branch
-  // dialog, which the platform portals outside this root. The scoping is the
-  // whole contract — a profile without the theme never matches the selector, so
-  // the tab draws its own opaque surfaces exactly as it did before.
+  // washes, the ref chips, the `@@` banner's layer-2 band, the commit field —
+  // which is painted in `bg-layer-2` for exactly this reason (see the commit
+  // form above) — and the branch dialog, which the platform portals outside this
+  // root. The scoping is the whole contract — a profile without the theme never
+  // matches the selector, so the tab draws its own opaque surfaces exactly as it
+  // did before.
   `html.ct-bg-on .${GIT_ROOT_CLASS}{--dsw-alias-bg-base:transparent;--dsw-alias-bg-layer-1:transparent}`,
 ].join('\n')
 
