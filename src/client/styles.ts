@@ -66,7 +66,7 @@ const GIT_CSS = [
   // already a whole page. The floor and the cap restate the drag's bounds, and
   // they are what keeps a width saved in a wide window from squeezing the Diff
   // pane in a narrow one.
-  `.dsh-cg-side{position:relative;flex:none;display:flex;flex-direction:column;width:var(--dsh-cg-side-width,${SIDE_DEFAULT}px);min-width:${SIDE_MIN}px;max-width:min(${SIDE_MAX}px,calc(100% - ${DIFF_MIN}px));min-height:0;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}`,
+  `.dsh-cg-side{position:relative;flex:none;display:flex;flex-direction:column;width:var(--dsh-cg-side-width,${SIDE_DEFAULT}px);min-width:${SIDE_MIN}px;max-width:min(${SIDE_MAX}px,calc(100% - ${DIFF_MIN}px));min-height:0;border-right:.5px solid var(--dsw-alias-border-l3);background:transparent}`,
   // The two panes are shares of the column rather than fixed heights: the split is
   // saved as a share, so a window that grows makes both lists longer instead of
   // leaving one at a height that no longer fits. `flex-basis:0` is what makes the
@@ -76,14 +76,14 @@ const GIT_CSS = [
   `.dsh-cg-pane{display:flex;flex-direction:column;flex:1 1 0;min-height:${PANE_MIN}px}`,
   '.dsh-cg-files{position:relative;flex-grow:var(--dsh-cg-files-grow,1)}',
   '.dsh-cg-history{flex-grow:var(--dsh-cg-history-grow,1)}',
-  '.dsh-cg-pane+.dsh-cg-pane{border-top:1px solid var(--dsw-alias-border-l1)}',
-  // The two boundaries themselves. Each is the 1px line the panes already draw,
-  // with an invisible band around it as the hit target: the handle element is 1px
-  // wide so that it can sit exactly on the border, and its `::after` reaches 4px
-  // either side, because a 1px line is not something a pointer can be asked to
-  // hold. Neither handle takes any layout space — one is positioned on the
-  // sidebar's own edge, the other on the upper pane's bottom edge — so adding them
-  // moves nothing on the page.
+  '.dsh-cg-pane+.dsh-cg-pane{border-top:.5px solid var(--dsw-alias-border-l3)}',
+  // The two boundaries themselves. Each is the hairline the panes already draw
+  // (`.5px`, a seam rather than a rule), with an invisible band around it as the
+  // hit target: the handle element is 1px wide so that it covers that hairline,
+  // and its `::after` reaches 4px either side, because half a pixel is not
+  // something a pointer can be asked to hold. Neither handle takes any layout
+  // space — one is positioned on the sidebar's own edge, the other on the upper
+  // pane's bottom edge — so adding them moves nothing on the page.
   //
   // `::before` is the indicator: the line brightens towards its middle on hover and
   // stays lit for the length of a drag, which is what makes a boundary read as
@@ -93,9 +93,10 @@ const GIT_CSS = [
   '.dsh-cg-resize::before{content:"";position:absolute;opacity:0;transition:opacity .12s ease-out}',
   '.dsh-cg-resize::after{content:"";position:absolute}',
   '.dsh-cg-resize:hover::before,.dsh-cg-resize[data-dragging]::before{opacity:1}',
-  // The sidebar's right edge: the handle sits on the border itself (`right:-1px`
-  // is the padding box plus its 1px border), so the line it lights up is the line
-  // that is already drawn there.
+  // The sidebar's right edge: the handle is laid over the border itself
+  // (`right:-1px` starts its 1px span at the padding box, which is where the
+  // `.5px` border begins), so the line it lights up is the line that is already
+  // drawn there.
   '.dsh-cg-col-resize{top:0;right:-1px;bottom:0;width:1px;cursor:col-resize}',
   '.dsh-cg-col-resize::after{inset:0 -4px}',
   '.dsh-cg-col-resize::before{inset:0;background:linear-gradient(to bottom,transparent,var(--dsw-alias-label-caption) 50%,transparent) center / 1px 100% no-repeat}',
@@ -408,7 +409,7 @@ const GIT_CSS = [
   // sized against, so neither the square nor the button can make the form taller
   // than the field it belongs to. Four of those lines is the 86px past which the
   // field scrolls instead of pushing the Changed files pane down the column.
-  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:.5px solid var(--dsw-alias-border-l3)}',
   // The frame draws the field and holds the Generate glyph, and the two are laid
   // out independently: the field is the frame's only box in flow and spans it
   // whole, and the glyph is positioned against the frame's own corner. That is
@@ -539,7 +540,7 @@ const GIT_CSS = [
 
   // 3. Diff pane.
   '.dsh-cg-main{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0}',
-  '.dsh-cg-main-head{flex:none;display:flex;align-items:center;gap:8px;min-height:30px;padding:4px 8px 4px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base)}',
+  '.dsh-cg-main-head{flex:none;display:flex;align-items:center;gap:8px;min-height:30px;padding:4px 8px 4px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base)}',
   '.dsh-cg-main-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-main-subtitle{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
   '.dsh-cg-stats{flex:none;display:flex;gap:6px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
@@ -571,8 +572,8 @@ const GIT_CSS = [
   // its own rule on the next one's, leaving a single boundary at twice the weight —
   // which is what a list of closed files used to look like, and why the header
   // above the list is the one rule that is not drawn here.
-  '.dsh-cg-file-head:not(:first-child),.dsh-cg-file-body:not(:first-child){border-top:1px solid var(--dsw-alias-border-l1)}',
-  '.dsh-cg-diff>:last-child{border-bottom:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-cg-file-head:not(:first-child),.dsh-cg-file-body:not(:first-child){border-top:.5px solid var(--dsw-alias-border-l3)}',
+  '.dsh-cg-diff>:last-child{border-bottom:.5px solid var(--dsw-alias-border-l3)}',
 
   // The disclosure control: one asset, turned by the stylesheet. The chevron
   // points right when the file is closed and down once it is open, so the state
@@ -647,9 +648,10 @@ const GIT_CSS = [
   // theme clears the shell's own canvas surfaces by name — the conversation
   // root, the layout columns, the right sidebar — but a tab that paints its own
   // surfaces still covers the image with them. This page paints two: `bg-base`
-  // on the page and its Diff pane, and `bg-layer-1` on the sidebar and the file
-  // titles. Rebinding those two tokens inside this root is what lets the image
-  // through, and it names nothing about the page's parts.
+  // on the page and its Diff pane, and `bg-layer-1` on the file titles — the
+  // sidebar itself is transparent and so needs no token. Rebinding those two
+  // tokens inside this root is what lets the image through, and it names nothing
+  // about the page's parts.
   //
   // Everything raised above that canvas keeps its fill: the hover and selection
   // washes, the ref chips, the `@@` banner's layer-2 band, the commit field —
