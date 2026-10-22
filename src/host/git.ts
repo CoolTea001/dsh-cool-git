@@ -191,26 +191,31 @@ function inDir(target: GitTarget, workdir: string): GitTarget {
 /**
  * Quote one value for the shell line the seam runs.
  *
- * The seam executes the command as `bash -c <command>`, so every argument that
- * is not a literal this module wrote must survive as a single word. Wrapping in
- * single quotes does that; the only character that can end such a word is a
- * single quote itself, which is closed, escaped, and reopened.
+ * DSH runs the line with a POSIX shell on macOS and Linux, and with PowerShell
+ * on Windows. Both accept single quotes, but an embedded quote is escaped
+ * differently: POSIX closes the word, escapes the quote and reopens it
+ * (`'\''`), while PowerShell doubles it (`''`).
  *
  * @param value - the raw argument.
  * @returns a single quoted shell word.
  */
 function quote(value: string): string {
+  if (process.platform === 'win32') return `'${value.replace(/'/g, "''")}'`
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /**
  * Build the full command line for one Git invocation.
  *
+ * The program name stays unquoted: PowerShell reads `'git'` as a string
+ * expression rather than a command name, so it refuses the whole line with a
+ * ParserError instead of running Git.
+ *
  * @param args - the subcommand and its arguments, each quoted individually.
  * @returns the command string handed to `shell.resolve`.
  */
 function command(args: readonly string[]): string {
-  return ['git', '--no-pager', '-c', 'core.quotePath=false', ...args].map(quote).join(' ')
+  return ['git', ...['--no-pager', '-c', 'core.quotePath=false', ...args].map(quote)].join(' ')
 }
 
 function messageOf(error: unknown): string {
