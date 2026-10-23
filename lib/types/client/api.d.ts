@@ -5,7 +5,7 @@
  * `{ ok: false }` result the caller reports in the error dialog, so the page has
  * exactly one failure shape to render no matter how the answer went wrong.
  */
-import type { BranchesPayload, CheckoutPayload, CommitAllPayload, CommitPayload, DiffPayload, LogPayload, MergePayload, MessagePayload, StatusPayload, SyncPayload } from '../shared/contract.js';
+import type { BranchesPayload, CheckoutPayload, CommitAllPayload, CommitPayload, DiffPayload, FetchPayload, LogPayload, MergePayload, MessagePayload, StatusPayload, SyncPayload } from '../shared/contract.js';
 /**
  * Ask the Host for the session's repository state and changed paths.
  *
@@ -103,6 +103,19 @@ export declare function checkoutBranch(sessionId: string | undefined, branch: st
  * @returns the merge payload.
  */
 export declare function mergeBranch(sessionId: string | undefined, branch: string): Promise<MergePayload>;
+/**
+ * Ask the Host to refresh every remote-tracking ref.
+ *
+ * Nothing crosses with the request and nothing comes back but the outcome: which
+ * remotes exist is the repository's answer, and what a fetch moves lives inside
+ * `.git`. The page re-reads the repository afterwards, because the two things a
+ * fetch can change on screen — the divergence counts and the remote branch list
+ * — are both read from those refs.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the fetch payload.
+ */
+export declare function fetchRemotes(sessionId: string | undefined): Promise<FetchPayload>;
 /**
  * Ask the Host to fast-forward the current branch from its upstream.
  *

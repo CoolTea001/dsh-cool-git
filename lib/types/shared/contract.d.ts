@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'fetch-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
@@ -180,6 +180,27 @@ export interface MergePayload {
      * the only place a failed one is worded.
      */
     readonly summary?: string;
+}
+/**
+ * `POST /fetch`: the outcome of refreshing every remote-tracking ref.
+ *
+ * The leanest of the payloads, because a fetch asks the least: it moves no
+ * branch, no working tree, and no HEAD, so none of the states that refuse a pull
+ * or a push can refuse it. What is left is a repository, a permission to write
+ * `.git`, and whatever the remote answered.
+ */
+export interface FetchPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    /**
+     * Why the fetch did not happen, when the page can act on it: there is no
+     * repository, the session may not write, or the remote refused the
+     * credentials.
+     */
+    readonly reason?: 'no-repo' | 'error' | 'denied' | 'auth';
 }
 /** `POST /pull` and `POST /push`: the outcome of one hand-off with the remote. */
 export interface SyncPayload {

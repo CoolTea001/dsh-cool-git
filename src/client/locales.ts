@@ -62,6 +62,7 @@ type UiKey =
   /** The heading over each failure the page can report. */
   | 'title.switchBranch'
   | 'title.refresh'
+  | 'title.fetch'
   | 'title.mergeFrom'
   | 'title.pull'
   | 'title.push'
@@ -80,6 +81,8 @@ type UiKey =
   | 'head.more'
   /** The menu's Refresh row, which is the operation the row used to carry alone. */
   | 'head.refresh'
+  /** The menu's Fetch row: the remotes re-read, with nothing chosen. */
+  | 'head.fetch'
   /** The menu's merge row, and the dialog it opens. */
   | 'head.mergeFrom'
   /** The remote control in the history pane's header. */
@@ -201,6 +204,7 @@ export const en = {
 
   'title.switchBranch': 'Could not switch to {branch}',
   'title.refresh': 'Refresh failed',
+  'title.fetch': 'Fetch failed',
   'title.mergeFrom': 'Could not merge {branch} in',
   'title.pull': 'Pull failed',
   'title.push': 'Push failed',
@@ -217,6 +221,7 @@ export const en = {
   'head.detached': 'detached',
   'head.more': 'More',
   'head.refresh': 'Refresh',
+  'head.fetch': 'Fetch',
   'head.mergeFrom': 'Merge from…',
 
   'remote.publish': 'Publish branch',
@@ -318,6 +323,7 @@ export const en = {
   'error.pull-no-upstream': 'Branch {branch} has no upstream, so it cannot be pulled',
   'error.pull-denied': 'The current permission mode does not allow Pull: it needs to write the workspace',
   'error.push-denied': 'The current permission mode does not allow Push: it needs to write the workspace',
+  'error.fetch-denied': 'The current permission mode does not allow Fetch: it needs to write the workspace',
   'error.pull-dirty': 'Uncommitted changes would be overwritten; commit or stash them before pulling',
   'error.push-dirty': 'Uncommitted changes would be overwritten; commit or stash them before pushing',
   'error.auth': 'Remote authentication failed: configure credentials for this repository first (this plugin never prompts for them)',
@@ -376,6 +382,7 @@ export const zh: typeof en = {
 
   'title.switchBranch': '切换到 {branch} 失败',
   'title.refresh': '刷新仓库失败',
+  'title.fetch': '获取远端更新失败',
   'title.mergeFrom': '合并 {branch} 失败',
   'title.pull': '拉取失败',
   'title.push': '推送失败',
@@ -391,10 +398,13 @@ export const zh: typeof en = {
   'head.currentBranch': '当前分支',
   'head.detached': '游离',
   'head.more': '更多',
-  'head.refresh': '刷新',
-  // The merge keeps its English name in both locales: it is what the operation
-  // is called in a Git command, and a translated row would name something the
-  // reader cannot match to `git merge`.
+  // The menu's rows keep their English names in both locales: each one is what
+  // its Git command is called, and a translated row would name something the
+  // reader cannot match to `git fetch` or `git merge`. The control that opens
+  // the menu is not one of them — it is a row of the page's own, so `head.more`
+  // stays translated.
+  'head.refresh': 'Refresh',
+  'head.fetch': 'Fetch',
   'head.mergeFrom': 'Merge from…',
 
   'remote.publish': '发布分支',
@@ -496,6 +506,7 @@ export const zh: typeof en = {
   'error.pull-no-upstream': '分支 {branch} 没有上游分支，无法 Pull',
   'error.pull-denied': '当前权限模式不允许 Pull：该操作需要写入工作区',
   'error.push-denied': '当前权限模式不允许 Push：该操作需要写入工作区',
+  'error.fetch-denied': '当前权限模式不允许 Fetch：该操作需要写入工作区',
   'error.pull-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再 Pull',
   'error.push-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再 Push',
   'error.auth': '远程认证失败：请先在该仓库配置好凭据（本插件不弹出任何凭据输入）',

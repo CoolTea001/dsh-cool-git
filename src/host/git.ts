@@ -12,12 +12,12 @@
  * under a `workspace-write` session — and refuse the very writes the session
  * allows.
  *
- * Reading is the bulk of this module. Five commands change something — the
- * branch switch, the merge, the fast-forward pull, the push, and the commit —
- * and each reports a sandbox refusal as such rather than as a Git error, because
- * under a `read-only` mode that refusal is the whole answer. The commit is the
- * one that writes the index as well as the history, which is why it is a single
- * call rather than a stage the page could leave half-finished.
+ * Reading is the bulk of this module. Six commands change something — the
+ * branch switch, the merge, the fetch, the fast-forward pull, the push, and the
+ * commit — and each reports a sandbox refusal as such rather than as a Git
+ * error, because under a `read-only` mode that refusal is the whole answer. The
+ * commit is the one that writes the index as well as the history, which is why
+ * it is a single call rather than a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -49,6 +49,7 @@ import {
   type CommitSummary,
   type DiffPayload,
   type FailureCode,
+  type FetchPayload,
   type LogPayload,
   type MergePayload,
   type StatusPayload,
@@ -1616,6 +1617,61 @@ async function resolveHandoff(target: GitTarget, action: 'pull' | 'push'): Promi
     }
   }
   return { ok: true, root, branch }
+}
+
+/**
+ * Refresh every remote-tracking ref from its remote.
+ *
+ * This is the one network operation with nothing to decide. It moves no branch,
+ * no HEAD, and no working tree, so it cannot conflict, cannot be blocked by
+ * uncommitted work, and cannot be refused by a detached or unborn HEAD — it is
+ * asked for by a reader who wants the page's idea of the remotes to be current,
+ * and the answer is either "done" or why the network would not answer.
+ *
+ * `--all` rather than a bare `fetch`: with no remote named, Git fetches the
+ * current branch's upstream remote (or `origin`), which would leave every other
+ * remote in the branch list as stale as it was. `--prune` is deliberately *not*
+ * passed: dropping a ref is a deletion the reader did not ask for, and a
+ * repository configured with `fetch.prune` gets it anyway, because this runs
+ * Git's own defaults for everything it does not name.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the outcome, including the reason a fetch was refused.
+ */
+export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+
+  const root = inDir(target, repo.root)
+  const run = await runGit(root, ['fetch', '--all'], [0], GIT_NETWORK_TIMEOUT_MS)
+  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+  if (run.code !== 0) return fetchFailure(run)
+  return { ok: true }
+}
+
+/**
+ * Describe why a fetch was refused.
+ *
+ * Two cases, and the second is the one worth separating: a sandbox that forbids
+ * writing at all, and credentials the remote rejected. The order matters because
+ * a credential helper a confined sandbox kept from starting leaves Git with
+ * nobody to ask, which reads like an auth failure but is the sandbox. Everything
+ * else is Git's own first line — `Could not resolve host` and friends — which is
+ * more specific than anything this half could invent.
+ *
+ * @param run - the failed fetch invocation.
+ * @returns the payload the page renders.
+ */
+function fetchFailure(run: GitRun): FetchPayload {
+  if (run.denied === true) return { ok: false, ...coded('fetch-denied'), reason: 'denied' }
+
+  const text = diagnosticText(run)
+  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) {
+    return { ok: false, ...coded('auth-helper'), reason: 'auth' }
+  }
+  if (AUTH_FAILURE.test(text)) return { ok: false, ...coded('auth'), reason: 'auth' }
+
+  return { ok: false, ...refusalOf(run), reason: 'error' }
 }
 
 /**

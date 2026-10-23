@@ -25,6 +25,7 @@
 
 import {
   commitAll,
+  fetchRemotes,
   mergeBranch,
   pullFromRemote,
   pushToRemote,
@@ -52,6 +53,7 @@ export const ROUTES = {
   branches: '/dsh-cool-git/api/branches',
   checkout: '/dsh-cool-git/api/checkout',
   merge: '/dsh-cool-git/api/merge',
+  fetch: '/dsh-cool-git/api/fetch',
   pull: '/dsh-cool-git/api/pull',
   push: '/dsh-cool-git/api/push',
 } as const
@@ -462,6 +464,14 @@ export function registerRoutes(ctx: any): () => void {
       if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
       return mergeBranch(target, branch)
     })),
+
+    // The fetch is the remote operation with the fewest arguments of all: it
+    // names nothing, because it refreshes every remote the repository has. It is
+    // still a write effect rather than a read one — what it moves lives in
+    // `.git`, and a session that may not write there must be refused here rather
+    // than by Git.
+    route(ROUTES.fetch, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      fetchRemotes(target))),
 
     // The two remote operations name no arguments of their own: which branch,
     // which upstream, and which remote are all read from the repository by the

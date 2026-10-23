@@ -55,6 +55,7 @@ import {
   fetchCommit,
   fetchDiff,
   fetchLog,
+  fetchRemotes,
   fetchStatus,
   generateMessage,
   mergeBranch,
@@ -520,6 +521,8 @@ export function GitView(props: {
   const [log, setLog] = useState<LogPayload | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  /** Whether a fetch of the remote-tracking refs is in flight. */
+  const [fetching, setFetching] = useState(false)
   /** The branch a checkout is in flight for, or null at rest. */
   const [switching, setSwitching] = useState<string | null>(null)
   /** The branch a merge is in flight for, or null at rest. */
@@ -710,6 +713,27 @@ export function GitView(props: {
   }, [refresh])
 
   /**
+   * Refresh every remote-tracking ref, and re-read what they feed.
+   *
+   * The safest operation in the menu and the one with the least to say: a fetch
+   * moves nothing outside `.git`, so the selection stays valid and a success is
+   * reported the way a sync's is — by re-reading, which is where the divergence
+   * counts and the remote branch list come from. A refusal is the error
+   * dialog's, like every other failure.
+   */
+  const handleFetch = useCallback((): void => {
+    setFetching(true)
+    void fetchRemotes(sessionId).then(result => {
+      setFetching(false)
+      if (result?.ok !== true) {
+        reportError({ title: t('title.fetch'), lines: [reasonOf(t, result, 'title.fetch')] })
+        return
+      }
+      handleSynced()
+    })
+  }, [sessionId, handleSynced, reportError, t])
+
+  /**
    * Check out the branch the dialog confirmed.
    *
    * A refusal is the error dialog's, like every other failure.
@@ -898,11 +922,11 @@ export function GitView(props: {
   // branch pill and the More menu in the toolbar, the remote control in the
   // history pane's header, and the commit in the changed-path pane's. Stating it
   // once here is what keeps a second click from queueing a second checkout, a
-  // second merge, a second round trip, or a second commit behind the first.
-  // Generation is not one of these: it writes nothing, so it is the form's own
-  // state rather than the page's, and a slow model call must not lock the branch
-  // pill or More.
-  const busy = switching !== null || merging !== null || syncing !== null || committing
+  // second merge, a second round trip, a second commit, or a second fetch behind
+  // the first. Generation is not one of these: it writes nothing, so it is the
+  // form's own state rather than the page's, and a slow model call must not lock
+  // the branch pill or More.
+  const busy = switching !== null || merging !== null || syncing !== null || committing || fetching
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
@@ -973,10 +997,12 @@ export function GitView(props: {
           status={status}
           sessionId={sessionId}
           refreshing={refreshing}
+          fetching={fetching}
           switching={switching}
           merging={merging !== null}
           busy={busy}
           onRefresh={() => void refresh()}
+          onFetch={handleFetch}
           onCheckout={handleCheckout}
           onMerge={handleMerge}
           onError={reportError}
@@ -1122,17 +1148,23 @@ function ErrorDialog(props: {
  *
  * More is one control rather than a button per operation because the row has to
  * fit the sidebar's own floor: Refresh used to be the row's single icon, and the
- * merge would have been one more. A menu states them by name instead — a dropdown
- * can be as wide as its words, and a 22px square cannot.
+ * fetch and the merge would have been two more. A menu states them by name
+ * instead — a dropdown can be as wide as its words, and a 22px square cannot.
+ *
+ * The menu is read top to bottom as one sentence about the repository: the two
+ * rows that only re-read it (Refresh, Fetch) above the rule, and the two that
+ * change it below. Fetch sits with Refresh rather than with the remote round trip
+ * because that is what it is — a read of the remotes, whose whole effect is that
+ * the numbers beside Sync and the remote branches in the picker become true.
  *
  * The branch switch and the merge are both stated as decisions rather than
  * accidents: the dialog lists what Git reported and applies nothing until the
  * choice is confirmed with a button of its own, and this row closes it before
  * handing the branch to the page. Which decision it is comes from the menu row
- * that opened it — Refresh runs at once because it has nothing to choose, while
- * a merge names another branch and gets a dialog of its own. The operations
- * themselves are the page's (`GitView`), which owns every operation in flight and
- * disables the rest of the page's controls while one runs.
+ * that opened it — Refresh and Fetch run at once because they have nothing to
+ * choose, while a merge names another branch and gets a dialog of its own. The
+ * operations themselves are the page's (`GitView`), which owns every operation in
+ * flight and disables the rest of the page's controls while one runs.
  *
  * The dialog is the platform's own Modal, which owns the parts that are easy to
  * get wrong — the body portal, the mask, the focus walk, Escape, and returning
@@ -1149,10 +1181,12 @@ function ErrorDialog(props: {
  * @param props.status - the current status answer, for the branch already on.
  * @param props.sessionId - the session whose repository is being switched.
  * @param props.refreshing - a re-read of the repository is in flight.
+ * @param props.fetching - a fetch of the remote-tracking refs is in flight.
  * @param props.switching - the branch a checkout is in flight for, if any.
  * @param props.merging - whether a merge is in flight.
  * @param props.busy - whether any repository operation is in flight.
  * @param props.onRefresh - called to re-read the repository state and history.
+ * @param props.onFetch - called to refresh the remote-tracking refs.
  * @param props.onCheckout - called with the branch the dialog confirmed.
  * @param props.onMerge - called with the branch the dialog confirmed.
  * @param props.onError - called with the failure to state in the error dialog.
@@ -1163,17 +1197,19 @@ function SideHead(props: {
   readonly status: StatusPayload | null
   readonly sessionId: string | undefined
   readonly refreshing: boolean
+  readonly fetching: boolean
   readonly switching: string | null
   readonly merging: boolean
   readonly busy: boolean
   readonly onRefresh: () => void
+  readonly onFetch: () => void
   readonly onCheckout: (branch: string) => void
   readonly onMerge: (branch: string) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const {
-    t, status, sessionId, refreshing, switching, merging, busy,
-    onRefresh, onCheckout, onMerge, onError,
+    t, status, sessionId, refreshing, fetching, switching, merging, busy,
+    onRefresh, onFetch, onCheckout, onMerge, onError,
   } = props
   /** Whether the More menu is showing. */
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1217,16 +1253,19 @@ function SideHead(props: {
   const runMenuRow = useCallback((id: string): void => {
     setMenuOpen(false)
     if (id === 'refresh') onRefresh()
+    else if (id === 'fetch') onFetch()
     else if (id === 'merge-from') setPick('merge-from')
-  }, [onRefresh])
+  }, [onRefresh, onFetch])
 
-  // The rows, in the order a reader meets them: the one operation that runs at
-  // once, then the one that needs a branch to be chosen first. The rule between
-  // them is the menu's own way of saying which is which. No row carries a glyph:
-  // the words are the whole of what each row does, and icons in a 144px card
-  // would only take width from them.
+  // The rows, in the order a reader meets them: the two that only re-read the
+  // repository and then run at once, then the one that changes it and needs a
+  // branch to be chosen first. The rule between them is the menu's own way of
+  // saying which is which. No row carries a glyph: the words are the whole of
+  // what each row does, and icons in a 144px card would only take width from
+  // them.
   const menuItems = [
     { id: 'refresh', label: t('head.refresh') },
+    { id: 'fetch', label: t('head.fetch') },
     { type: 'separator' as const, id: 'merge' },
     { id: 'merge-from', label: t('head.mergeFrom') },
   ]
@@ -1318,13 +1357,16 @@ function SideHead(props: {
                   aria-label={t('head.more')}
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
-                  // Both waits that belong to this control: the re-read it starts
-                  // itself, and the merge a row behind it started.
-                  data-busy={refreshing || merging}
+                  // Every wait a row behind this control can start: the re-read
+                  // and the fetch that belong to the menu itself, and the merge
+                  // that is the page's own state. The spinner turns for all
+                  // three, so a click that has begun always has somewhere to
+                  // show for it.
+                  data-busy={refreshing || fetching || merging}
                   disabled={refreshing || busy}
                   onClick={() => setMenuOpen(value => !value)}
                 >
-                  {refreshing || merging ? SPINNER_ICON : <IconMore />}
+                  {refreshing || fetching || merging ? SPINNER_ICON : <IconMore />}
                 </button>
               </span>
             </Tooltip>

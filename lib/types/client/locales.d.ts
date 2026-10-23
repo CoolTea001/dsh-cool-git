@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.message'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.message'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -47,6 +47,8 @@ type UiKey =
  | 'head.more'
 /** The menu's Refresh row, which is the operation the row used to carry alone. */
  | 'head.refresh'
+/** The menu's Fetch row: the remotes re-read, with nothing chosen. */
+ | 'head.fetch'
 /** The menu's merge row, and the dialog it opens. */
  | 'head.mergeFrom'
 /** The remote control in the history pane's header. */
@@ -113,6 +115,7 @@ export declare const en: {
     'fallback.message': string;
     'title.switchBranch': string;
     'title.refresh': string;
+    'title.fetch': string;
     'title.mergeFrom': string;
     'title.pull': string;
     'title.push': string;
@@ -127,6 +130,7 @@ export declare const en: {
     'head.detached': string;
     'head.more': string;
     'head.refresh': string;
+    'head.fetch': string;
     'head.mergeFrom': string;
     'remote.publish': string;
     'remote.sync': string;
@@ -213,6 +217,7 @@ export declare const en: {
     'error.pull-no-upstream': string;
     'error.pull-denied': string;
     'error.push-denied': string;
+    'error.fetch-denied': string;
     'error.pull-dirty': string;
     'error.push-dirty': string;
     'error.auth': string;

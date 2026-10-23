@@ -12,12 +12,12 @@
  * under a `workspace-write` session — and refuse the very writes the session
  * allows.
  *
- * Reading is the bulk of this module. Five commands change something — the
- * branch switch, the merge, the fast-forward pull, the push, and the commit —
- * and each reports a sandbox refusal as such rather than as a Git error, because
- * under a `read-only` mode that refusal is the whole answer. The commit is the
- * one that writes the index as well as the history, which is why it is a single
- * call rather than a stage the page could leave half-finished.
+ * Reading is the bulk of this module. Six commands change something — the
+ * branch switch, the merge, the fetch, the fast-forward pull, the push, and the
+ * commit — and each reports a sandbox refusal as such rather than as a Git
+ * error, because under a `read-only` mode that refusal is the whole answer. The
+ * commit is the one that writes the index as well as the history, which is why
+ * it is a single call rather than a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -35,7 +35,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type FetchPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
@@ -250,6 +250,26 @@ export declare function switchBranch(target: GitTarget, name: string): Promise<C
  * @returns the outcome, including the reason a merge was refused.
  */
 export declare function mergeBranch(target: GitTarget, name: string): Promise<MergePayload>;
+/**
+ * Refresh every remote-tracking ref from its remote.
+ *
+ * This is the one network operation with nothing to decide. It moves no branch,
+ * no HEAD, and no working tree, so it cannot conflict, cannot be blocked by
+ * uncommitted work, and cannot be refused by a detached or unborn HEAD — it is
+ * asked for by a reader who wants the page's idea of the remotes to be current,
+ * and the answer is either "done" or why the network would not answer.
+ *
+ * `--all` rather than a bare `fetch`: with no remote named, Git fetches the
+ * current branch's upstream remote (or `origin`), which would leave every other
+ * remote in the branch list as stale as it was. `--prune` is deliberately *not*
+ * passed: dropping a ref is a deletion the reader did not ask for, and a
+ * repository configured with `fetch.prune` gets it anyway, because this runs
+ * Git's own defaults for everything it does not name.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the outcome, including the reason a fetch was refused.
+ */
+export declare function fetchRemotes(target: GitTarget): Promise<FetchPayload>;
 /**
  * Pull the current branch from its upstream.
  *

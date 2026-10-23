@@ -12,6 +12,7 @@ import type {
   CommitAllPayload,
   CommitPayload,
   DiffPayload,
+  FetchPayload,
   LogPayload,
   MergePayload,
   MessagePayload,
@@ -181,6 +182,22 @@ export function mergeBranch(
   branch: string,
 ): Promise<MergePayload> {
   return postJson('/merge', { sessionId, branch })
+}
+
+/**
+ * Ask the Host to refresh every remote-tracking ref.
+ *
+ * Nothing crosses with the request and nothing comes back but the outcome: which
+ * remotes exist is the repository's answer, and what a fetch moves lives inside
+ * `.git`. The page re-reads the repository afterwards, because the two things a
+ * fetch can change on screen — the divergence counts and the remote branch list
+ * — are both read from those refs.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the fetch payload.
+ */
+export function fetchRemotes(sessionId: string | undefined): Promise<FetchPayload> {
+  return postJson('/fetch', { sessionId })
 }
 
 /**

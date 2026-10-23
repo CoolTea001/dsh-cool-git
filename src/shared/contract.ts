@@ -67,6 +67,7 @@ export type FailureCode =
   | 'pull-no-upstream'
   | 'pull-denied'
   | 'push-denied'
+  | 'fetch-denied'
   | 'pull-dirty'
   | 'push-dirty'
   | 'auth'
@@ -262,6 +263,28 @@ export interface MergePayload {
    * the only place a failed one is worded.
    */
   readonly summary?: string
+}
+
+/**
+ * `POST /fetch`: the outcome of refreshing every remote-tracking ref.
+ *
+ * The leanest of the payloads, because a fetch asks the least: it moves no
+ * branch, no working tree, and no HEAD, so none of the states that refuse a pull
+ * or a push can refuse it. What is left is a repository, a permission to write
+ * `.git`, and whatever the remote answered.
+ */
+export interface FetchPayload {
+  readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+  readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
+  /**
+   * Why the fetch did not happen, when the page can act on it: there is no
+   * repository, the session may not write, or the remote refused the
+   * credentials.
+   */
+  readonly reason?: 'no-repo' | 'error' | 'denied' | 'auth'
 }
 
 /** `POST /pull` and `POST /push`: the outcome of one hand-off with the remote. */
