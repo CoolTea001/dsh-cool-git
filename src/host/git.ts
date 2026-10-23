@@ -36,6 +36,9 @@
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
 
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
 import {
   classifyChange,
   type BranchesPayload,
@@ -85,6 +88,14 @@ const NOT_A_REPO = /not a git repository/i
  */
 const GIT_NETWORK_TIMEOUT_MS = 180_000
 
+/**
+ * Wall-clock bound for one credential helper's answer.
+ *
+ * A helper that reads a store answers at once; the bound is here so a helper
+ * that decides to wait for an interactive sign-in cannot hold the page.
+ */
+const CREDENTIAL_TIMEOUT_MS = 30_000
+
 /** Largest patch the Host collects; beyond this the answer is flagged truncated. */
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024
 
@@ -104,6 +115,29 @@ const MAX_BRANCHES = 200
  * has one sentence per action for it, so the three spellings are one pattern.
  */
 const DIRTY_WORKTREE = /local changes|would be overwritten|commit your changes or stash/i
+
+/**
+ * What Git prints when it has no author or committer identity to record.
+ *
+ * Modern Git refuses to guess one from the account and host name, so every
+ * commit fails until `user.name` and `user.email` are configured. The first
+ * line alone says only "Author identity unknown", which is why the page words
+ * this state itself instead of passing that sentence through.
+ */
+const MISSING_IDENTITY =
+  /Author identity unknown|Committer identity unknown|Please tell me who you are|unable to auto-detect email address/i
+
+/**
+ * What Git prints when the credential helper itself could not start.
+ *
+ * Git for Windows runs every credential helper through its bundled MSYS `sh`,
+ * and a confined sandbox can deny that runtime the pipe it creates at startup —
+ * the helper then never reads the saved credential, and Git falls back to a
+ * terminal prompt this plugin has disabled. That is a different failure from a
+ * remote that rejected a credential, and the page words it differently.
+ */
+const CREDENTIAL_HELPER_UNAVAILABLE =
+  /couldn't create signal pipe|failed to execute prompt script|unable to start the credential helper/i
 
 /**
  * What Git prints when the remote refused the credentials this machine holds.
@@ -257,6 +291,21 @@ function quote(value: string, flavor: ShellFlavor): string {
 }
 
 /**
+ * Build one shell line from literal words, quoted for the parser that reads it.
+ *
+ * @param words - the executable and its arguments, unquoted.
+ * @param flavor - the parser that will read the line.
+ * @returns the command string handed to `shell.resolve`.
+ */
+function shellCommand(words: readonly string[], flavor: ShellFlavor): string {
+  const quoted = words.map((word) => quote(word, flavor))
+  // PowerShell reads a quoted word in command position as a string expression,
+  // and only the call operator runs it as a command; POSIX already runs a
+  // quoted first word (and `&` there would background it instead).
+  return flavor === 'powershell' ? `& ${quoted.join(' ')}` : quoted.join(' ')
+}
+
+/**
  * Build the full command line for one Git invocation.
  *
  * @param args - the subcommand and its arguments, each quoted individually.
@@ -264,49 +313,46 @@ function quote(value: string, flavor: ShellFlavor): string {
  * @returns the command string handed to `shell.resolve`.
  */
 function command(args: readonly string[], flavor: ShellFlavor): string {
-  const words = ['git', '--no-pager', '-c', 'core.quotePath=false', ...args].map(
-    (word) => quote(word, flavor),
-  )
-  // PowerShell reads a quoted word in command position as a string expression,
-  // and only the call operator runs it as a command; POSIX already runs a
-  // quoted first word (and `&` there would background it instead).
-  return flavor === 'powershell' ? `& ${words.join(' ')}` : words.join(' ')
+  return shellCommand(['git', '--no-pager', '-c', 'core.quotePath=false', ...args], flavor)
 }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** How one shell invocation is bounded and fed, beyond its command line. */
+interface InvocationOptions {
+  readonly timeoutMs?: number
+  readonly stdin?: string
+  /** Extra environment on top of the Git defaults. */
+  readonly env?: Readonly<Record<string, string>>
+}
+
 /**
- * Run one Git command and collect its result.
+ * Run one command line through the shell seam and collect its result.
  *
  * @param target - the shell seam, the directory, and the file policy to run under.
- * @param args - subcommand and arguments, before quoting.
- * @param acceptCodes - exit codes that are a normal answer rather than a failure.
- * @param timeoutMs - wall-clock bound; the network commands raise it.
- * @param stdin - text handed to the command on its standard input, for the one
- *   argument that is free text rather than a name.
+ * @param line - the full shell line, already quoted.
+ * @param options - the bound, standard input, and environment for it.
  * @returns the invocation's outcome; never rejects.
  */
-async function runGit(
+async function invoke(
   target: GitTarget,
-  args: readonly string[],
-  acceptCodes: readonly number[] = [0],
-  timeoutMs: number = GIT_TIMEOUT_MS,
-  stdin?: string,
+  line: string,
+  options: InvocationOptions = {},
 ): Promise<GitRun> {
   const { shell, sandboxPolicy } = target
   const request = {
-    command: command(args, shellFlavor(shell)),
+    command: line,
     workdir: target.workdir,
-    timeoutMs,
+    timeoutMs: options.timeoutMs ?? GIT_TIMEOUT_MS,
     onExpiry: 'kill' as const,
     stdoutMaxBytes: MAX_STDOUT_BYTES,
-    env: { ...GIT_ENV },
+    env: { ...GIT_ENV, ...options.env },
     // Carried only when there is one: an unconfined executor takes no policy,
     // and the seam stays free to apply its own fallback then.
     ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
-    ...(stdin === undefined ? {} : { stdin }),
+    ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
   }
 
   // resolve → execute → result is the seam's three-step protocol, and a throw at
@@ -327,6 +373,29 @@ async function runGit(
   } catch (error) {
     return failureRun(messageOf(error))
   }
+}
+
+/**
+ * Run one Git command and collect its result.
+ *
+ * @param target - the shell seam, the directory, and the file policy to run under.
+ * @param args - subcommand and arguments, before quoting.
+ * @param acceptCodes - exit codes that are a normal answer rather than a failure.
+ * @param timeoutMs - wall-clock bound; the network commands raise it.
+ * @param stdin - text handed to the command on its standard input, for the one
+ *   argument that is free text rather than a name.
+ * @param env - extra environment on top of the Git defaults.
+ * @returns the invocation's outcome; never rejects.
+ */
+async function runGit(
+  target: GitTarget,
+  args: readonly string[],
+  acceptCodes: readonly number[] = [0],
+  timeoutMs: number = GIT_TIMEOUT_MS,
+  stdin?: string,
+  env?: Readonly<Record<string, string>>,
+): Promise<GitRun> {
+  return invoke(target, command(args, shellFlavor(target.shell)), { timeoutMs, stdin, env })
 }
 
 /** An outcome that never reached Git, so the caller reports it as infrastructure. */
@@ -1405,13 +1474,18 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
     handoff.root, ['pull', '--ff-only'], [0], GIT_NETWORK_TIMEOUT_MS,
   )
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'pull' }
-  if (run.code !== 0) return syncFailure(run, 'pull')
+  if (run.code !== 0) {
+    const failure = syncFailure(run, 'pull')
+    if (failure.failure?.code === 'auth-helper') {
+      const retried = await retryWithStoredCredential(
+        handoff.root, ['pull', '--ff-only'], 'pull', handoff.branch, upstream,
+      )
+      if (retried !== undefined) return retried
+    }
+    return failure
+  }
 
-  const output = `${run.stdout}\n${run.stderr}`
-  const summary = /Already up[ -]to[ -]date/i.test(output)
-    ? `Already up to date with ${upstream}`
-    : `Pulled from ${upstream}`
-  return { ok: true, action: 'pull', summary }
+  return syncSuccess(run, 'pull', upstream)
 }
 
 /**
@@ -1433,6 +1507,7 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
   const { root, branch } = handoff
   let ref = await upstreamOf(root)
   let args: readonly string[] = ['push']
+  let remoteName: string | undefined
   if (ref === undefined) {
     const remotes = await remotesOf(root)
     const remote = remotes[0]
@@ -1447,27 +1522,34 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
         action: 'push',
       }
     }
+    remoteName = remote
     ref = `${remote}/${branch}`
     args = ['push', '--set-upstream', remote, branch]
   }
 
   const run = await runGit(root, args, [0], GIT_NETWORK_TIMEOUT_MS)
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'push' }
-  if (run.code !== 0) return syncFailure(run, 'push')
+  if (run.code !== 0) {
+    const failure = syncFailure(run, 'push')
+    if (failure.failure?.code === 'auth-helper') {
+      const retried = await retryWithStoredCredential(
+        root, args, 'push', branch, ref, remoteName,
+      )
+      if (retried !== undefined) return retried
+    }
+    return failure
+  }
 
-  const output = `${run.stdout}\n${run.stderr}`
-  const summary = /Everything up[ -]to[ -]date/i.test(output)
-    ? `Everything up to date with ${ref}`
-    : `Pushed to ${ref}`
-  return { ok: true, action: 'push', summary }
+  return syncSuccess(run, 'push', ref)
 }
 
 /**
  * Describe why a pull or a push was refused.
  *
- * The four cases worth separating are the ones the user can act on: a sandbox
- * that forbids writing at all, a divergent history, a dirty working tree, and
- * credentials the remote rejected. Everything else is Git's own first line,
+ * The five cases worth separating are the ones the user can act on: a sandbox
+ * that forbids writing at all, a divergent history, a dirty working tree,
+ * credentials the remote rejected, and a credential helper that a confined
+ * sandbox kept from starting at all. Everything else is Git's own first line,
  * which is more specific than anything this half could invent.
  *
  * @param run - the failed invocation.
@@ -1481,6 +1563,12 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
 
   // Git's own words, for every case below.
   const text = diagnosticText(run)
+
+  // Before the auth case: a helper that never started leaves Git with nobody to
+  // ask for a credential, which reads like an auth failure but is the sandbox.
+  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) {
+    return { ok: false, ...coded('auth-helper'), reason: 'auth', action }
+  }
 
   if (AUTH_FAILURE.test(text)) {
     return { ok: false, ...coded('auth'), reason: 'auth', action }
@@ -1501,6 +1589,262 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
   }
 
   return { ok: false, ...refusalOf(run), reason: 'error', action }
+}
+
+/** One configured credential helper, invoked without Git's shell bridge. */
+interface CredentialHelper {
+  /** The helper executable, as a path the OS can start directly. */
+  readonly executable: string
+  /** Arguments configured beside it. */
+  readonly args: readonly string[]
+}
+
+/** One credential a helper handed back. */
+interface StoredCredential {
+  readonly username: string
+  readonly password: string
+}
+
+/**
+ * Split one `credential.helper` value into an executable and its arguments.
+ *
+ * Git starts a helper through the shell, which is exactly what a confined
+ * Windows sandbox can deny. This reader starts the executable directly, so a
+ * value that needs the shell — a `!` snippet, a variable, a glob, redirection —
+ * is not one it can honor and is skipped.
+ *
+ * @param value - one configured helper value.
+ * @returns the executable and arguments, or undefined when it needs a shell.
+ */
+function helperInvocation(value: string): { executable: string; args: string[] } | undefined {
+  const trimmed = value.trim()
+  if (trimmed === '' || trimmed.startsWith('!')) return undefined
+  if (/['"`$~%;&|<>()]/.test(trimmed)) return undefined
+  const [executable, ...args] = trimmed.split(/\s+/)
+  if (executable === undefined || executable === '') return undefined
+  return { executable, args }
+}
+
+/**
+ * Where a bare helper name's executable lives.
+ *
+ * Git looks for `git-credential-<name>` on its exec path, and the Windows
+ * helpers (Git Credential Manager among them) also sit in the directory beside
+ * it; a PATH entry is the last resort, for an install that put it there.
+ *
+ * @param executable - the configured value's first word.
+ * @param execPath - `git --exec-path`, when the repository answered it.
+ * @returns the existing executable path, or undefined.
+ */
+function helperExecutable(executable: string, execPath: string | undefined): string | undefined {
+  const absolute = /^(?:[A-Za-z]:[\\/]|[\\/])/.test(executable)
+  if (absolute) return existsSync(executable) ? executable : undefined
+
+  const name = `git-credential-${executable}`
+  const fileNames = process.platform === 'win32' ? [`${name}.exe`, name] : [name]
+  const directories: string[] = []
+  if (execPath !== undefined && execPath !== '') {
+    directories.push(execPath, join(execPath, '..', '..', 'bin'))
+  }
+  directories.push(...(process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':'))
+  for (const directory of directories) {
+    if (directory === '') continue
+    for (const fileName of fileNames) {
+      const candidate = join(directory, fileName)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return undefined
+}
+
+/**
+ * The credential helpers this repository's configuration names, in order.
+ *
+ * `git config --get-all` reads every level (system, global, local), which is the
+ * same order Git would ask them in; helpers that need a shell are dropped
+ * because the point of reading them here is to avoid one.
+ *
+ * @param target - the shell seam and the directory to ask.
+ * @returns the helpers that can be started directly.
+ */
+async function credentialHelpers(target: GitTarget): Promise<readonly CredentialHelper[]> {
+  const configured = await runGit(target, ['config', '--get-all', 'credential.helper'])
+  if (configured.code !== 0) return []
+
+  const execPathRun = await runGit(target, ['--exec-path'])
+  const execPath = execPathRun.code === 0 ? execPathRun.stdout.trim() : undefined
+
+  const helpers: CredentialHelper[] = []
+  const seen = new Set<string>()
+  for (const line of configured.stdout.split('\n')) {
+    const invocation = helperInvocation(line)
+    if (invocation === undefined) continue
+    const executable = helperExecutable(invocation.executable, execPath)
+    if (executable === undefined || seen.has(executable)) continue
+    seen.add(executable)
+    helpers.push({ executable, args: invocation.args })
+  }
+  return helpers
+}
+
+/**
+ * Read the username and password out of one helper's answer.
+ *
+ * @param text - the helper's standard output.
+ * @returns the pair, or undefined when the helper supplied no credential.
+ */
+function parseCredential(text: string): StoredCredential | undefined {
+  let username = ''
+  let password = ''
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line.startsWith('username=')) username = line.slice('username='.length)
+    else if (line.startsWith('password=')) password = line.slice('password='.length)
+  }
+  return username === '' || password === '' ? undefined : { username, password }
+}
+
+/**
+ * Ask this machine's credential helpers for one host's stored credential.
+ *
+ * The helpers are started directly, so this works where Git's own helper
+ * invocation cannot: Git for Windows starts every helper through its bundled
+ * MSYS shell, and a sandbox that denies that shell its pipe leaves the helper
+ * unreachable even though the credential is on the machine.
+ *
+ * @param target - the shell seam and the directory to run in.
+ * @param host - the HTTPS host the credential belongs to.
+ * @returns the credential, or undefined when no helper holds one.
+ */
+async function storedCredential(
+  target: GitTarget,
+  host: string,
+): Promise<StoredCredential | undefined> {
+  const flavor = shellFlavor(target.shell)
+  for (const helper of await credentialHelpers(target)) {
+    const line = shellCommand([helper.executable, ...helper.args, 'get'], flavor)
+    const run = await invoke(target, line, {
+      timeoutMs: CREDENTIAL_TIMEOUT_MS,
+      stdin: `protocol=https\nhost=${host}\n\n`,
+      env: { GCM_INTERACTIVE: 'never' },
+    })
+    if (run.code !== 0) continue
+    const credential = parseCredential(run.stdout)
+    if (credential !== undefined) return credential
+  }
+  return undefined
+}
+
+/**
+ * The remote a branch hands off to, as its configuration names it.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param branch - the branch being handed off.
+ * @returns the remote name, or undefined when the branch tracks the local tree.
+ */
+async function remoteOfBranch(root: GitTarget, branch: string): Promise<string | undefined> {
+  const run = await runGit(root, ['config', '--get', `branch.${branch}.remote`])
+  if (run.code !== 0) return undefined
+  const name = run.stdout.trim()
+  return name === '' || name === '.' ? undefined : name
+}
+
+/**
+ * The URL one configured remote hands off to.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param remote - the remote's name.
+ * @returns the URL, or undefined when it cannot be read.
+ */
+async function remoteUrlOf(root: GitTarget, remote: string): Promise<string | undefined> {
+  const run = await runGit(root, ['remote', 'get-url', remote])
+  if (run.code !== 0) return undefined
+  const url = run.stdout.trim()
+  return url === '' ? undefined : url
+}
+
+/**
+ * The host of an HTTPS remote URL.
+ *
+ * @param url - the remote's configured URL.
+ * @returns the host, or undefined for any transport a header cannot answer.
+ */
+function httpsHost(url: string): string | undefined {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' ? parsed.host : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The payload for a hand-off that completed.
+ *
+ * @param run - the successful invocation.
+ * @param action - which operation completed.
+ * @param label - what the summary calls the other side.
+ * @returns the payload the page renders.
+ */
+function syncSuccess(run: GitRun, action: 'pull' | 'push', label: string): SyncPayload {
+  const output = `${run.stdout}\n${run.stderr}`
+  if (action === 'pull') {
+    const upToDate = /Already up[ -]to[ -]date/i.test(output)
+    return { ok: true, action, summary: upToDate ? `Already up to date with ${label}` : `Pulled from ${label}` }
+  }
+  const upToDate = /Everything up[ -]to[ -]date/i.test(output)
+  return { ok: true, action, summary: upToDate ? `Everything up to date with ${label}` : `Pushed to ${label}` }
+}
+
+/**
+ * Retry one network hand-off with the credential the machine already holds.
+ *
+ * Git for Windows starts every credential helper through its bundled MSYS
+ * shell, and the Windows sandbox can deny that shell the pipe it creates at
+ * startup — the helper then never runs even though a credential is stored. The
+ * helper executable can be asked directly, and its answer can travel to Git as
+ * an HTTP header: `http.extraHeader` needs no helper and no shell, and the
+ * transport process itself is a plain Windows executable.
+ *
+ * Only the `auth-helper` refusal reaches this path, and only an HTTPS remote
+ * can be answered this way; the credential itself is never persisted, never
+ * printed, and travels only in the child's environment.
+ *
+ * @param target - the repository root, with the session's file policy.
+ * @param args - the network command to repeat.
+ * @param action - which operation is retried, for the payload.
+ * @param branch - the branch being handed off.
+ * @param label - what the summary calls the other side.
+ * @param knownRemote - the remote an upstream-less branch would push to.
+ * @returns the retried outcome, or undefined when no credential could be read.
+ */
+async function retryWithStoredCredential(
+  target: GitTarget,
+  args: readonly string[],
+  action: 'pull' | 'push',
+  branch: string,
+  label: string,
+  knownRemote?: string,
+): Promise<SyncPayload | undefined> {
+  const remote = knownRemote ?? (await remoteOfBranch(target, branch))
+  if (remote === undefined) return undefined
+  const url = await remoteUrlOf(target, remote)
+  if (url === undefined) return undefined
+  const host = httpsHost(url)
+  if (host === undefined) return undefined
+
+  const credential = await storedCredential(target, host)
+  if (credential === undefined) return undefined
+  const pair = `${credential.username}:${credential.password}`
+  const header = `Authorization: Basic ${Buffer.from(pair).toString('base64')}`
+  const run = await runGit(target, args, [0], GIT_NETWORK_TIMEOUT_MS, undefined, {
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: `http.https://${host}/.extraHeader`,
+    GIT_CONFIG_VALUE_0: header,
+  })
+  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action }
+  if (run.code !== 0) return syncFailure(run, action)
+  return syncSuccess(run, action, label)
 }
 
 /**
@@ -1576,11 +1920,12 @@ function conflictedCommit(): CommitAllPayload {
  * Describe why staging or the commit itself was refused.
  *
  * The sandbox is the refusal the user can act on: under a `read-only` mode Git
- * never ran at all, and the seam is what says so. The other two cases worth
+ * never ran at all, and the seam is what says so. The other three cases worth
  * separating are races against the read above — a merge that was aborted after
- * it, and a tree another process emptied — which that reading already knows how
- * to name. Everything else, a refusing hook and a signing failure among them, is
- * Git's own first line, which is more specific than anything this half could
+ * it, and a tree another process emptied — and a missing author identity, which
+ * Git reports as a state the user can fix rather than as a fault of this
+ * repository. Everything else, a refusing hook and a signing failure among them,
+ * is Git's own first line, which is more specific than anything this half could
  * invent.
  *
  * @param run - the failed invocation.
@@ -1594,6 +1939,9 @@ function commitFailure(run: GitRun): CommitAllPayload {
   const text = diagnosticText(run)
   if (/unmerged|merging is not possible|you have unmerged files/i.test(text)) return conflictedCommit()
   if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(text)) return emptyCommit()
+  if (MISSING_IDENTITY.test(text)) {
+    return { ok: false, ...coded('commit-identity'), reason: 'error' }
+  }
 
   return { ok: false, ...refusalOf(run), reason: 'error' }
 }

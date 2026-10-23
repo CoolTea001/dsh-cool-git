@@ -105,6 +105,8 @@ type UiKey =
   | 'commit.generate'
   | 'commit.generating'
   | 'commit.warning'
+  /** The one-line fix stated under a refusal the user can undo by configuring Git. */
+  | 'hint.commit-identity'
   /** The changed-path pane's empty and loading states. */
   | 'list.notRepo'
   | 'list.statusFailed'
@@ -230,6 +232,7 @@ export const en = {
   'commit.generate': 'Generate a commit message',
   'commit.generating': 'Generating…',
   'commit.warning': 'Before you commit: {text}',
+  'hint.commit-identity': 'Set it once with git config --global user.name "Your Name" and git config --global user.email "you@example.com"; drop --global to set it for this repository only',
 
   'list.notRepo': 'This session\'s directory is not a Git repository',
   'list.statusFailed': 'Could not read the repository status',
@@ -292,6 +295,7 @@ export const en = {
   'error.pull-dirty': 'Uncommitted changes would be overwritten; commit or stash them before pulling',
   'error.push-dirty': 'Uncommitted changes would be overwritten; commit or stash them before pushing',
   'error.auth': 'Remote authentication failed: configure credentials for this repository first (this plugin never prompts for them)',
+  'error.auth-helper': 'Remote authentication failed: Git could not start its credential helper inside the current permission sandbox, and no saved credential could be read (this plugin never prompts for one). Sign in once with Git Credential Manager, or use full-access mode / run Pull/Push outside this session',
   'error.pull-diverged': 'The local and remote histories have diverged, and this plugin only fast-forwards: merge or rebase first',
   'error.push-behind': 'The remote gained new commits during the sync; sync once more',
   'error.push-no-remote': 'This repository has no remote configured, so it cannot be pushed',
@@ -299,6 +303,7 @@ export const en = {
 
   'error.commit-clean': 'There is nothing to commit',
   'error.commit-conflict': 'Unresolved conflicts remain; resolve them before committing',
+  'error.commit-identity': 'Git has no author identity configured, so it refused the commit',
   'error.commit-denied': 'The current permission mode does not allow committing: it needs to write the workspace',
 
   'error.no-llm': 'The model service is unavailable, so no commit message can be written',
@@ -387,6 +392,7 @@ export const zh: typeof en = {
   'commit.generate': '自动生成提交信息',
   'commit.generating': '正在生成…',
   'commit.warning': '提交前请检查：{text}',
+  'hint.commit-identity': '请先配置一次：git config --global user.name "你的名字"、git config --global user.email "你的邮箱"；去掉 --global 则只对当前仓库生效',
 
   'list.notRepo': '当前会话目录不是 Git 仓库',
   'list.statusFailed': '读取仓库状态失败',
@@ -449,6 +455,7 @@ export const zh: typeof en = {
   'error.pull-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再 Pull',
   'error.push-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再 Push',
   'error.auth': '远程认证失败：请先在该仓库配置好凭据（本插件不弹出任何凭据输入）',
+  'error.auth-helper': '远程认证失败：Git 的凭据助手没能在当前权限沙箱内启动，也没有读到可用的已保存凭据（本插件不弹出凭据输入）。请先用 Git 凭据管理器登录一次，或改用完全访问模式、在该会话之外执行 Pull/Push',
   'error.pull-diverged': '本地与远程已经分叉，本插件只做快进式拉取：请先合并或变基',
   'error.push-behind': '远程在同步过程中又有了新提交，请再同步一次',
   'error.push-no-remote': '该仓库没有配置远程仓库，无法 Push',
@@ -456,6 +463,7 @@ export const zh: typeof en = {
 
   'error.commit-clean': '工作区没有需要提交的改动',
   'error.commit-conflict': '存在未解决的冲突文件，请先解决冲突再提交',
+  'error.commit-identity': 'Git 还没有配置提交身份，无法提交',
   'error.commit-denied': '当前权限模式不允许提交：该操作需要写入工作区',
 
   'error.no-llm': '模型服务不可用，无法生成提交信息',

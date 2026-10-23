@@ -814,7 +814,12 @@ export function GitView(props: {
     return commitAll(sessionId, message).then(result => {
       setCommitting(false)
       if (result?.ok !== true) {
-        reportError({ title: t('title.commit'), lines: [reasonOf(t, result, 'title.commit')] })
+        const lines = [reasonOf(t, result, 'title.commit')]
+        // This refusal is the machine's setup rather than the repository's
+        // state, and the fix is a command the page will not run for the user:
+        // state it under the refusal as a line of its own.
+        if (result?.failure?.code === 'commit-identity') lines.push(t('hint.commit-identity'))
+        reportError({ title: t('title.commit'), lines })
         handleSynced()
         return false
       }

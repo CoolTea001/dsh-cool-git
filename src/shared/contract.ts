@@ -63,6 +63,7 @@ export type FailureCode =
   | 'pull-dirty'
   | 'push-dirty'
   | 'auth'
+  | 'auth-helper'
   | 'pull-diverged'
   | 'push-behind'
   | 'push-no-remote'
@@ -70,6 +71,7 @@ export type FailureCode =
   // Committing.
   | 'commit-clean'
   | 'commit-conflict'
+  | 'commit-identity'
   | 'commit-denied'
   // Writing a commit message with the default model.
   | 'no-llm'

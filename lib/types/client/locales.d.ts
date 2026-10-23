@@ -53,6 +53,8 @@ type UiKey =
  | 'commit.placeholder' | 'commit.button' | 'commit.busy'
 /** The commit form's Generate control, and what the model asked be read first. */
  | 'commit.generate' | 'commit.generating' | 'commit.warning'
+/** The one-line fix stated under a refusal the user can undo by configuring Git. */
+ | 'hint.commit-identity'
 /** The changed-path pane's empty and loading states. */
  | 'list.notRepo' | 'list.statusFailed' | 'list.loading'
 /** Whether a row's change is in the index. */
@@ -139,6 +141,7 @@ export declare const en: {
     'commit.generate': string;
     'commit.generating': string;
     'commit.warning': string;
+    'hint.commit-identity': string;
     'list.notRepo': string;
     'list.statusFailed': string;
     'list.loading': string;
@@ -192,12 +195,14 @@ export declare const en: {
     'error.pull-dirty': string;
     'error.push-dirty': string;
     'error.auth': string;
+    'error.auth-helper': string;
     'error.pull-diverged': string;
     'error.push-behind': string;
     'error.push-no-remote': string;
     'error.push-ambiguous-remote': string;
     'error.commit-clean': string;
     'error.commit-conflict': string;
+    'error.commit-identity': string;
     'error.commit-denied': string;
     'error.no-llm': string;
     'error.no-model': string;

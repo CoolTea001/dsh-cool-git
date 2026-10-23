@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
