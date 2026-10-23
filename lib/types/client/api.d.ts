@@ -5,7 +5,7 @@
  * `{ ok: false }` result the caller reports in the error dialog, so the page has
  * exactly one failure shape to render no matter how the answer went wrong.
  */
-import type { BranchesPayload, CheckoutPayload, CommitAllPayload, CommitPayload, DiffPayload, FetchPayload, LogPayload, MergePayload, MessagePayload, StatusPayload, SyncPayload } from '../shared/contract.js';
+import type { BranchDeleteTarget, BranchReportPayload, BranchesPayload, CheckoutPayload, CommitAllPayload, CommitPayload, CreateBranchPayload, DeleteBranchesPayload, DiffPayload, FetchPayload, LogPayload, MergePayload, MessagePayload, StatusPayload, SyncPayload } from '../shared/contract.js';
 /**
  * Ask the Host for the session's repository state and changed paths.
  *
@@ -89,6 +89,47 @@ export declare function fetchBranches(sessionId: string | undefined): Promise<Br
  * @returns the checkout payload.
  */
 export declare function checkoutBranch(sessionId: string | undefined, branch: string): Promise<CheckoutPayload>;
+/**
+ * Ask the Host for the branches the delete dialog may offer.
+ *
+ * A read of its own rather than the switch list, because these rows carry facts
+ * the switch never needs: which upstream each branch tracks, how far ahead or
+ * behind it is, and whether HEAD already reaches it. Those are what the row's
+ * safety mark is drawn from, and they are read when the dialog opens.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the branch report payload.
+ */
+export declare function fetchBranchReport(sessionId: string | undefined): Promise<BranchReportPayload>;
+/**
+ * Ask the Host to start a branch at one point and switch to it.
+ *
+ * The start point is a branch rather than a commit: the dialog offers the same
+ * list a switch does, so the choice is between branches and the new one lands on
+ * the point that was named. Branching off a remote-tracking ref is what sets the
+ * new branch's upstream, which is Git's own answer to starting from `origin/main`.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param name - the local branch to create.
+ * @param start - the local or remote-tracking branch it starts at.
+ * @returns the create payload.
+ */
+export declare function createBranch(sessionId: string | undefined, name: string, start: string): Promise<CreateBranchPayload>;
+/**
+ * Ask the Host to delete the branches the dialog selected.
+ *
+ * One request for the whole selection, because the choice was made once: the
+ * Host deletes each branch on its own and answers with one result per branch, so
+ * the page reports the refusals and keeps them next to the names they were about.
+ * Each target is echoed back in the shape the report gave it — a local branch, or
+ * a remote-tracking row with its remote and branch — rather than a name the Host
+ * would have to split again.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param targets - the branches to delete, in the order the dialog listed them.
+ * @returns the delete payload.
+ */
+export declare function deleteBranches(sessionId: string | undefined, targets: readonly BranchDeleteTarget[]): Promise<DeleteBranchesPayload>;
 /**
  * Ask the Host to merge one branch into the one HEAD is on.
  *

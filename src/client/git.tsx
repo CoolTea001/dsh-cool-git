@@ -46,12 +46,16 @@ import {
   type CSSProperties,
   type ReactElement,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { Button, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   checkoutBranch,
   commitAll,
+  createBranch,
+  deleteBranches,
   fetchBranches,
+  fetchBranchReport,
   fetchCommit,
   fetchDiff,
   fetchLog,
@@ -89,9 +93,14 @@ import {
 import type { MessageKey, Translate } from './locales.js'
 import { GIT_ROOT_CLASS } from './styles.js'
 import type {
+  BranchDeleteTarget,
+  BranchEntry,
+  BranchReportPayload,
+  BranchSafety,
   ChangedFile,
   ChangeKind,
   CommitSummary,
+  DeleteBranchesPayload,
   Failure,
   LogPayload,
   StatusPayload,
@@ -356,6 +365,34 @@ function failureLine(
 }
 
 /**
+ * The lines one branch-delete answer amounts to.
+ *
+ * A delete is the one request whose answer is a list, so it is the one failure
+ * the page states per subject rather than per request: each branch Git refused
+ * gets a line that names it and says why, because a selection is deleted one
+ * branch at a time and "could not delete" over five of them would not say which
+ * four went through. A branch that was deleted contributes nothing — the re-read
+ * branch list is where that is visible.
+ *
+ * An answer with no list at all is the request itself failing, which has one
+ * reason rather than several and is stated the way every other refusal is.
+ *
+ * @param t - the page's translate seat.
+ * @param payload - the route's answer.
+ * @returns one line per branch that was refused; empty when all of them went.
+ */
+function deletionLines(t: Translate, payload: DeleteBranchesPayload | undefined): string[] {
+  const results = payload?.results
+  if (payload?.ok === true) return []
+  if (!Array.isArray(results) || results.length === 0) {
+    return [reasonOf(t, payload ?? {}, 'title.branchDelete')]
+  }
+  return results
+    .filter(item => item.ok !== true)
+    .map(item => t('error.line', { label: item.name, reason: reasonOf(t, item, 'title.branchDelete') }))
+}
+
+/**
  * Flatten a parsed patch into the rows the pane draws.
  *
  * A file header is emitted only for a patch that touches more than one file:
@@ -527,6 +564,10 @@ export function GitView(props: {
   const [switching, setSwitching] = useState<string | null>(null)
   /** The branch a merge is in flight for, or null at rest. */
   const [merging, setMerging] = useState<string | null>(null)
+  /** Whether a branch create is in flight. */
+  const [creating, setCreating] = useState(false)
+  /** Whether a branch delete is in flight, which may be several pushes. */
+  const [deleting, setDeleting] = useState(false)
   /** The half of the remote round trip in flight, or null at rest. */
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   /** Whether the changed-path pane's commit is in flight. */
@@ -780,6 +821,59 @@ export function GitView(props: {
   }, [sessionId, handleSwitched, reportError, t])
 
   /**
+   * Start the branch the dialog confirmed, and switch to it.
+   *
+   * The same shape as a checkout on this side and the same shape on the other:
+   * the Host creates the ref and checks it out in one call, so the page's whole
+   * part is the two names the dialog collected. It takes the checkout's path
+   * afterwards for the checkout's reason — HEAD moved, so every answer on screen
+   * is stale. A refusal is the error dialog's.
+   *
+   * @param name - the branch to create.
+   * @param start - the branch it starts at.
+   */
+  const handleCreate = useCallback((name: string, start: string): void => {
+    setCreating(true)
+    void createBranch(sessionId, name, start).then(result => {
+      setCreating(false)
+      if (result?.ok !== true) {
+        reportError({
+          title: t('title.branchCreate'),
+          lines: [reasonOf(t, result, 'title.branchCreate')],
+        })
+        return
+      }
+      handleSwitched()
+    })
+  }, [sessionId, handleSwitched, reportError, t])
+
+  /**
+   * Delete the branches the dialog confirmed, and report what became of each.
+   *
+   * One request for the whole selection, so the page's part is one call whatever
+   * was ticked. The answer is a list rather than a verdict, and that is what this
+   * reports: every branch that was refused gets its own line, named, because
+   * "could not delete" over a selection of five says nothing about which four
+   * went. A run where everything was deleted says nothing at all — the re-read
+   * state is the report, as it is for every other success on this page.
+   *
+   * The re-read happens either way: a refusal can still have deleted the others,
+   * so the branch list on screen is stale after one just as it is after a clean
+   * run.
+   *
+   * @param targets - the branches the dialog selected.
+   */
+  const handleDelete = useCallback((targets: readonly BranchDeleteTarget[]): void => {
+    setDeleting(true)
+    void deleteBranches(sessionId, targets).then(result => {
+      setDeleting(false)
+      const lines = deletionLines(t, result)
+      if (lines.length > 0) reportError({ title: t('title.branchDelete'), lines })
+      handleSynced()
+    })
+  }, [sessionId, handleSynced, reportError, t])
+
+  /**
    * Send this branch to its upstream, and report the answer.
    *
    * Publish and the second half of Sync run this one call, because the Host
@@ -922,11 +1016,12 @@ export function GitView(props: {
   // branch pill and the More menu in the toolbar, the remote control in the
   // history pane's header, and the commit in the changed-path pane's. Stating it
   // once here is what keeps a second click from queueing a second checkout, a
-  // second merge, a second round trip, a second commit, or a second fetch behind
-  // the first. Generation is not one of these: it writes nothing, so it is the
-  // form's own state rather than the page's, and a slow model call must not lock
-  // the branch pill or More.
-  const busy = switching !== null || merging !== null || syncing !== null || committing || fetching
+  // second merge, a second create or delete, a second round trip, a second
+  // commit, or a second fetch behind the first. Generation is not one of these:
+  // it writes nothing, so it is the form's own state rather than the page's, and
+  // a slow model call must not lock the branch pill or More.
+  const busy = switching !== null || merging !== null || syncing !== null || committing
+    || fetching || creating || deleting
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
@@ -1000,11 +1095,15 @@ export function GitView(props: {
           fetching={fetching}
           switching={switching}
           merging={merging !== null}
+          creating={creating}
+          deleting={deleting}
           busy={busy}
           onRefresh={() => void refresh()}
           onFetch={handleFetch}
           onCheckout={handleCheckout}
           onMerge={handleMerge}
+          onCreate={handleCreate}
+          onDelete={handleDelete}
           onError={reportError}
         />
         {/* The commit form is the sidebar's own third row, under the toolbar and
@@ -1189,6 +1288,8 @@ function ErrorDialog(props: {
  * @param props.onFetch - called to refresh the remote-tracking refs.
  * @param props.onCheckout - called with the branch the dialog confirmed.
  * @param props.onMerge - called with the branch the dialog confirmed.
+ * @param props.onCreate - called with the name and starting point the dialog confirmed.
+ * @param props.onDelete - called with the branches the delete dialog confirmed.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the header row.
  */
@@ -1200,24 +1301,38 @@ function SideHead(props: {
   readonly fetching: boolean
   readonly switching: string | null
   readonly merging: boolean
+  readonly creating: boolean
+  readonly deleting: boolean
   readonly busy: boolean
   readonly onRefresh: () => void
   readonly onFetch: () => void
   readonly onCheckout: (branch: string) => void
   readonly onMerge: (branch: string) => void
+  readonly onCreate: (name: string, start: string) => void
+  readonly onDelete: (targets: readonly BranchDeleteTarget[]) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const {
-    t, status, sessionId, refreshing, fetching, switching, merging, busy,
-    onRefresh, onFetch, onCheckout, onMerge, onError,
+    t, status, sessionId, refreshing, fetching, switching, merging, creating, deleting, busy,
+    onRefresh, onFetch, onCheckout, onMerge, onCreate, onDelete, onError,
   } = props
   /** Whether the More menu is showing. */
   const [menuOpen, setMenuOpen] = useState(false)
   /** Which decision the branch list is open for, or null while it is closed. */
   const [pick, setPick] = useState<BranchPick | null>(null)
+  /** Whether the delete dialog is showing. */
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const onBranch = status?.ok === true
   const detached = status?.detached === true
+  /**
+   * Whether a row behind the More control is running right now.
+   *
+   * Every operation the menu itself can start, and none of the ones it cannot: a
+   * commit or a sync belongs to another control, and a spinner on this one would
+   * be claiming a wait that is not its own.
+   */
+  const menuBusy = refreshing || fetching || merging || creating || deleting
 
   /** Close the branch list without applying anything. */
   const closeDialog = useCallback((): void => {
@@ -1232,14 +1347,17 @@ function SideHead(props: {
    * tree, and a picker left on screen while one runs would be offering a list
    * that is already stale.
    *
-   * @param branch - the branch the user picked and confirmed.
+   * @param value - the branch the user picked, or the name a create is for.
+   * @param start - the point a create starts at; absent for the other two.
    */
-  const choose = useCallback((branch: string): void => {
+  const choose = useCallback((value: string, start?: string): void => {
     const mode = pick
     setPick(null)
-    if (mode === 'merge-from') onMerge(branch)
-    else onCheckout(branch)
-  }, [pick, onCheckout, onMerge])
+    if (mode === 'create') {
+      if (start !== undefined) onCreate(value, start)
+    } else if (mode === 'merge-from') onMerge(value)
+    else onCheckout(value)
+  }, [pick, onCheckout, onMerge, onCreate])
 
   /**
    * Run one row of the More menu.
@@ -1254,18 +1372,24 @@ function SideHead(props: {
     setMenuOpen(false)
     if (id === 'refresh') onRefresh()
     else if (id === 'fetch') onFetch()
+    else if (id === 'branch-create') setPick('create')
+    else if (id === 'branch-delete') setDeleteOpen(true)
     else if (id === 'merge-from') setPick('merge-from')
   }, [onRefresh, onFetch])
 
   // The rows, in the order a reader meets them: the two that only re-read the
-  // repository and then run at once, then the one that changes it and needs a
-  // branch to be chosen first. The rule between them is the menu's own way of
-  // saying which is which. No row carries a glyph: the words are the whole of
-  // what each row does, and icons in a 144px card would only take width from
-  // them.
+  // repository and then run at once, the two that move branches, then the one
+  // that merges them. The rules between them are the menu's own way of saying
+  // which is which — how many of the three groups a row belongs to is the whole
+  // of what a rule separates, so the grouping is argued in the order alone. No
+  // row carries a glyph: the words are the whole of what each row does, and
+  // icons in a 144px card would only take width from them.
   const menuItems = [
     { id: 'refresh', label: t('head.refresh') },
     { id: 'fetch', label: t('head.fetch') },
+    { type: 'separator' as const, id: 'branches' },
+    { id: 'branch-create', label: t('head.branchCreate') },
+    { id: 'branch-delete', label: t('head.branchDelete') },
     { type: 'separator' as const, id: 'merge' },
     { id: 'merge-from', label: t('head.mergeFrom') },
   ]
@@ -1339,6 +1463,17 @@ function SideHead(props: {
         onConfirm={choose}
         onError={onError}
       />
+      <BranchDeleteDialog
+        t={t}
+        open={deleteOpen}
+        sessionId={sessionId}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={targets => {
+          setDeleteOpen(false)
+          onDelete(targets)
+        }}
+        onError={onError}
+      />
       <div className="dsh-cg-tools">
         {/* The menu's anchor is the tooltip's span rather than the button: the
             platform's Menu renders whatever it is handed inside a wrapper of its
@@ -1358,15 +1493,16 @@ function SideHead(props: {
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
                   // Every wait a row behind this control can start: the re-read
-                  // and the fetch that belong to the menu itself, and the merge
-                  // that is the page's own state. The spinner turns for all
-                  // three, so a click that has begun always has somewhere to
-                  // show for it.
-                  data-busy={refreshing || fetching || merging}
+                  // and the fetch that belong to the menu itself, the merge, the
+                  // create and the delete that are the page's own state. The
+                  // spinner turns for all of them, so a click that has begun
+                  // always has somewhere to show for it — and a delete, which
+                  // can be several pushes, is the one that most needs to.
+                  data-busy={menuBusy}
                   disabled={refreshing || busy}
                   onClick={() => setMenuOpen(value => !value)}
                 >
-                  {refreshing || fetching || merging ? SPINNER_ICON : <IconMore />}
+                  {menuBusy ? SPINNER_ICON : <IconMore />}
                 </button>
               </span>
             </Tooltip>
@@ -1604,6 +1740,19 @@ interface BranchRow {
   readonly group: BranchGroup
 }
 
+/**
+ * One row of the delete dialog's list.
+ *
+ * The entry rather than its name, because this list's rows carry facts the other
+ * list has no use for — a safety mark, an upstream, two counts — and because the
+ * two lists can hold the same name: a local branch may be called `origin/main`,
+ * and what is ticked is one row or the other rather than the string they share.
+ */
+interface DeleteRow {
+  readonly entry: BranchEntry
+  readonly group: BranchGroup
+}
+
 /** The dictionary entry naming each run of rows. */
 const BRANCH_GROUP_KEY: Readonly<Record<BranchGroup, MessageKey>> = {
   current: 'branch.current',
@@ -1614,12 +1763,64 @@ const BRANCH_GROUP_KEY: Readonly<Record<BranchGroup, MessageKey>> = {
 /**
  * What the branch list was opened for.
  *
- * One dialog for the two decisions because the decision and the list are the same
- * shape: which branch. Only the words change, and which branches may be picked —
- * a switch may land on any branch, and a merge may name another one, local or
- * remote-tracking, but never the branch HEAD is already on.
+ * One dialog for the three decisions because the decision and the list are the
+ * same shape: which branch. Only the words change, which branches may be picked,
+ * and — for a create — what the list is a list *of*. A switch may land on any
+ * branch, a merge may name another one, local or remote-tracking, but never the
+ * branch HEAD is already on, and a create stands at any of them, the one HEAD is
+ * on included, because branching off where you are is the ordinary case.
  */
-type BranchPick = 'switch' | 'merge-from'
+type BranchPick = 'switch' | 'merge-from' | 'create'
+
+/**
+ * Drive one scrolling dialog list's two edge fades.
+ *
+ * A branch list can be two hundred rows long and the card cuts it at a fixed
+ * height, so the two ends are where a dialog has to admit there is more: an edge
+ * fades its rows into the card's own surface only while that edge really hides
+ * some. The attributes are written straight to the wrapper (no re-render), a
+ * scroll listener follows the offset, a ResizeObserver follows the box, and the
+ * scrollbar gutter is recorded so the fade covers the content column and leaves
+ * the bar alone. No dependency list: a filter keystroke and a fresh list both
+ * land as commits, and re-running is what re-reads the new heights.
+ *
+ * A hook rather than an effect copied into each dialog, because both of them cut
+ * a list at the same height for the same reason and a second copy would be a
+ * second place for the two to drift.
+ *
+ * @param scroll - the scrolling element, or a ref that is not attached yet.
+ * @param wrap - the wrapper the fades are pinned to.
+ */
+function useListFades(
+  scroll: RefObject<HTMLDivElement | null>,
+  wrap: RefObject<HTMLDivElement | null>,
+): void {
+  useEffect(() => {
+    const box = scroll.current
+    const outer = wrap.current
+    if (box === null || outer === null) return
+    const update = (): void => {
+      const overflow = box.scrollHeight - box.clientHeight > 1
+      outer.toggleAttribute('data-fade-top', overflow && box.scrollTop > 1)
+      outer.toggleAttribute(
+        'data-fade-bottom',
+        overflow && box.scrollTop + box.clientHeight < box.scrollHeight - 1,
+      )
+      const gutter = `${box.offsetWidth - box.clientWidth}px`
+      if (outer.style.getPropertyValue('--dsh-cg-fade-right') !== gutter) {
+        outer.style.setProperty('--dsh-cg-fade-right', gutter)
+      }
+    }
+    update()
+    box.addEventListener('scroll', update, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
+    observer?.observe(box)
+    return () => {
+      box.removeEventListener('scroll', update)
+      observer?.disconnect()
+    }
+  })
+}
 
 /**
  * The branches Git reports, as a dialog the choice is confirmed in.
@@ -1663,7 +1864,9 @@ type BranchPick = 'switch' | 'merge-from'
  * @param props.mode - the decision the list is open for, or null while it is closed.
  * @param props.sessionId - the session whose repository is being read.
  * @param props.onClose - called by Cancel, the close button, Escape, or the mask.
- * @param props.onConfirm - called with the picked branch when the footer is pressed.
+ * @param props.onConfirm - called when the footer is pressed: with the picked
+ * branch for a switch or a merge, and with the typed name and the picked starting
+ * point for a create.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the dialog element.
  */
@@ -1672,7 +1875,7 @@ function BranchDialog(props: {
   readonly mode: BranchPick | null
   readonly sessionId: string | undefined
   readonly onClose: () => void
-  readonly onConfirm: (branch: string) => void
+  readonly onConfirm: (value: string, start?: string) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const { t, mode, sessionId, onClose, onConfirm, onError } = props
@@ -1682,6 +1885,16 @@ function BranchDialog(props: {
   const [branches, setBranches] = useState<readonly string[] | null>(null)
   /** The remote-tracking branches Git reported. */
   const [remoteBranches, setRemoteBranches] = useState<readonly string[]>([])
+  /**
+   * The name a create is being asked for.
+   *
+   * The only state here that is not a branch the Host reported: a create is the
+   * one decision whose answer is not already on the list, so it is the one the
+   * reader has to write. It is kept across the read for the reason the filter is
+   * — the field is mounted before the branches arrive, and a keystroke typed
+   * while it loads is not one to throw away.
+   */
+  const [name, setName] = useState('')
   const [current, setCurrent] = useState<string | null>(null)
   const [truncated, setTruncated] = useState(false)
   /** A directory that is not a repository: the dialog's own empty state. */
@@ -1721,10 +1934,12 @@ function BranchDialog(props: {
       setTruncated(result.truncated === true)
       // A switch opens on the branch it is already showing: the row is active
       // before the keyboard touches it, so an arrow moves off it rather than
-      // onto it, and Enter confirms what the dialog says is current. A merge
+      // onto it, and Enter confirms what the dialog says is current. A create
+      // opens on it too, because branching off where you are is the ordinary
+      // case and the field, not the list, is where the answer is typed. A merge
       // opens on nothing, because the branch HEAD is on is the one row it does
       // not offer and there is no other branch it could sensibly default to.
-      setPicked(mode === 'switch' ? on : null)
+      setPicked(mode === 'merge-from' ? null : on)
     })
     return () => {
       cancelled = true
@@ -1735,55 +1950,27 @@ function BranchDialog(props: {
       setNoRepo(false)
       setPicked(null)
       setFilter('')
+      setName('')
     }
   }, [open, mode, sessionId, onClose, onError, t])
 
-  /**
-   * The list's edge fades, driven the way the terminal tab's lists drive theirs.
-   *
-   * A branch list can be two hundred rows long and the card cuts it at a fixed
-   * height, so the two ends are where the dialog has to admit there is more: an
-   * edge fades its rows into the card's own surface only while that edge really
-   * hides some. The attributes are written straight to the wrapper (no
-   * re-render), a scroll listener follows the offset, a ResizeObserver follows
-   * the box, and the scrollbar gutter is recorded so the fade covers the
-   * content column and leaves the bar alone. No dependency list: a filter
-   * keystroke and a fresh branch list both land as commits, and re-running is
-   * what re-reads the new heights.
-   */
-  useEffect(() => {
-    const scroll = listScroll.current
-    const wrap = listWrap.current
-    if (scroll === null || wrap === null) return
-    const update = (): void => {
-      const overflow = scroll.scrollHeight - scroll.clientHeight > 1
-      wrap.toggleAttribute('data-fade-top', overflow && scroll.scrollTop > 1)
-      wrap.toggleAttribute(
-        'data-fade-bottom',
-        overflow && scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 1,
-      )
-      const gutter = `${scroll.offsetWidth - scroll.clientWidth}px`
-      if (wrap.style.getPropertyValue('--dsh-cg-fade-right') !== gutter) {
-        wrap.style.setProperty('--dsh-cg-fade-right', gutter)
-      }
-    }
-    update()
-    scroll.addEventListener('scroll', update, { passive: true })
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
-    observer?.observe(scroll)
-    return () => {
-      scroll.removeEventListener('scroll', update)
-      observer?.disconnect()
-    }
-  })
+  useListFades(listScroll, listWrap)
 
-  // The two decisions differ only in their words, and in which rows they may
+  // The three decisions differ only in their words, and in which rows they may
   // offer. A switch is the dialog's original reading: every group, with the branch
   // HEAD is on among them. A merge may not name that branch — Git refuses to merge
-  // a branch into itself — so its row goes.
-  const title = mode === 'merge-from' ? t('merge.titleFrom') : t('branch.title')
-  const description = mode === 'merge-from' ? t('merge.descriptionFrom') : t('branch.description')
-  const emptyText = mode === 'merge-from' ? t('merge.noneFrom') : t('branch.none')
+  // a branch into itself — so its row goes. A create keeps it, the one time that
+  // branch is a valid answer, because the list there is the point the new branch
+  // starts at rather than the branch to act on.
+  const title = mode === 'merge-from'
+    ? t('merge.titleFrom')
+    : mode === 'create' ? t('create.title') : t('branch.title')
+  const description = mode === 'merge-from'
+    ? t('merge.descriptionFrom')
+    : mode === 'create' ? t('create.description') : t('branch.description')
+  const emptyText = mode === 'merge-from'
+    ? t('merge.noneFrom')
+    : mode === 'create' ? t('create.none') : t('branch.none')
 
   // `null` is the one state that means "no answer yet": an answer that named no
   // branch is an empty list, which is a fact this dialog states rather than a
@@ -1793,7 +1980,7 @@ function BranchDialog(props: {
   // has — and the group is carried on the row so a filtered list can still label
   // what each run of rows belongs to.
   const rows: readonly BranchRow[] = [
-    ...(mode === 'switch' && current !== null
+    ...(mode !== 'merge-from' && current !== null
       ? [{ name: current, group: 'current' as const }]
       : []),
     ...(branches ?? [])
@@ -1820,20 +2007,35 @@ function BranchDialog(props: {
   const shown = shownFor(filter)
 
   /**
+   * The name a create would be asked for, as the field holds it.
+   *
+   * Trimmed here rather than at the request, because the footer's gate is what
+   * reads it and a field holding only spaces is an empty field: a name of spaces
+   * is one Git refuses, and the button must be dark before that refusal rather
+   * than after it. The name Git itself gets is this same string.
+   */
+  const nameInput = name.trim()
+
+  /**
    * Whether the footer's button may apply this branch.
    *
    * The one gate, consulted by the footer: that button is what asks for the
-   * switch or the merge, so a row the working tree is already on is not a choice
-   * it may offer — Git would refuse to merge a branch into itself, and a switch
-   * to where you already are is no switch. Two refusals only — nothing selected,
-   * and the branch already checked out — because whether the operation would be
-   * accepted is Git's answer, given when it is asked for and stated by the error
-   * dialog if it is a refusal.
+   * switch, the merge or the create, so a row the working tree is already on is
+   * not a choice a switch or a merge may offer — Git would refuse to merge a
+   * branch into itself, and a switch to where you already are is no switch. A
+   * create is the exception in both halves: standing on the branch you are
+   * branching from is the ordinary case, and the list is not the answer at all —
+   * it is the point to start at — so that button waits on the typed name instead.
+   * Two refusals only — nothing selected, and the branch already checked out —
+   * because whether the operation would be accepted is Git's answer, given when
+   * it is asked for and stated by the error dialog if it is a refusal.
    *
    * @param name - the branch to judge, or null when no row is selected.
    * @returns true when the footer may apply that branch.
    */
-  const applicable = (name: string | null): boolean => name !== null && name !== current
+  const applicable = (name: string | null): boolean => (mode === 'create'
+    ? name !== null && nameInput !== ''
+    : name !== null && name !== current)
 
   // The dialog's states, with the filter first in the tree that carries one. That
   // order is not cosmetic: the Modal looks for `data-modal-autofocus` in the frame
@@ -1850,6 +2052,26 @@ function BranchDialog(props: {
   } else {
     content = (
       <>
+        {/* The create's own field, above the filter because it is the question
+            the dialog is actually asking: the list below is where the new branch
+            starts, and that is the answer nobody has to type. It takes the
+            initial focus in this mode for the same reason the filter takes it in
+            the others — the reader has something to write — and the filter keeps
+            its marker in the other two modes. Only one of the two can carry it,
+            so which one does is the mode's answer. */}
+        {mode === 'create'
+          ? (
+            <Input
+              className="dsh-cg-branch-name"
+              type="text"
+              value={name}
+              placeholder={t('create.name')}
+              aria-label={t('create.name')}
+              data-modal-autofocus
+              onChange={event => setName(event.target.value)}
+            />
+          )
+          : null}
         <Input
           className="dsh-cg-branch-filter"
           type="text"
@@ -1859,8 +2081,10 @@ function BranchDialog(props: {
           // The Modal's own way of choosing the initial focus: React's
           // `autoFocus` runs before the layer can note the control to return to.
           // The primitive passes the marker through to the native field, which is
-          // the element the layer actually focuses.
-          data-modal-autofocus
+          // the element the layer actually focuses. A create hands the marker to
+          // its own field instead, so the attribute is dropped here in that mode
+          // rather than two controls claiming the same focus.
+          data-modal-autofocus={mode === 'create' ? undefined : true}
           // A selection the filter has just hidden is dropped with it: the footer's
           // button applies the row it can name, and a row the list no longer shows
           // is not one. A selection that survived the narrowing is kept, so a stray
@@ -1938,6 +2162,17 @@ function BranchDialog(props: {
 
   const canConfirm = applicable(picked)
 
+  /**
+   * What the footer's button says, which is the operation and nothing else.
+   *
+   * The button carries the same word as the menu row that opened the dialog, so
+   * the click that started this and the click that finishes it name the same
+   * thing.
+   */
+  const confirmLabel = mode === 'create'
+    ? t('create.confirm')
+    : mode === 'merge-from' ? t('merge.confirm') : t('branch.confirm')
+
   return (
     <Modal
       open={open}
@@ -1956,9 +2191,313 @@ function BranchDialog(props: {
           <Button
             variant="primary"
             disabled={!canConfirm}
-            onClick={() => { if (picked !== null) onConfirm(picked) }}
+            // A create answers with two values — the name the reader typed and
+            // the point the list is on — while the other two answer with the one
+            // row that was picked. The second argument is what tells them apart.
+            onClick={() => { if (picked !== null) onConfirm(mode === 'create' ? nameInput : picked, picked) }}
           >
-            {mode === 'switch' ? t('branch.confirm') : t('merge.confirm')}
+            {confirmLabel}
+          </Button>
+        </>
+      )}
+    >
+      <div className="dsh-cg-branch-body">{content}</div>
+    </Modal>
+  )
+}
+
+/** The badge each safety mark is drawn from. */
+const SAFETY_KEY: Readonly<Record<BranchSafety, MessageKey>> = {
+  safe: 'safety.safe',
+  unmerged: 'safety.unmerged',
+  unpushed: 'safety.unpushed',
+  gone: 'safety.gone',
+}
+
+/**
+ * The line under a branch's name, which is what its badge is not.
+ *
+ * The upstream and the two counts are the facts behind the mark rather than the
+ * mark itself: `unpushed` says a branch has commits nothing else has, and `↑2`
+ * says how many. They are read as-is — a ref name is a path, and a count is a
+ * number — so nothing here is translated. The badge carries the words.
+ *
+ * @param entry - the branch the row is drawn from.
+ * @returns the meta line, or an empty string when there is nothing to say.
+ */
+function entryMeta(entry: BranchEntry): string {
+  const parts: string[] = []
+  if (entry.upstream !== undefined && entry.upstream !== '') parts.push(entry.upstream)
+  if (entry.ahead !== undefined && entry.ahead > 0) parts.push(`↑${entry.ahead}`)
+  if (entry.behind !== undefined && entry.behind > 0) parts.push(`↓${entry.behind}`)
+  return parts.join(' ')
+}
+
+/**
+ * The branches Git reports, as a dialog they are picked out of for deletion.
+ *
+ * A dialog of its own rather than a fourth mode on the branch list, because the
+ * decision is a different shape: that list answers with one branch and this one
+ * with as many as are ticked, its rows carry facts — a merge state, an upstream,
+ * two counts — that a switch has no use for, and one of its rows is disabled
+ * rather than merely unhelpful. What the two do share is the scroll box, the
+ * filter and the edge fades, which are read from the same refs by the same hook.
+ *
+ * Every row carries a safety mark and every row is still selectable, the current
+ * branch aside: the mark is what the page knows, and whether a branch may be
+ * deleted is Git's answer, given when the delete is asked for. A branch whose
+ * commits are nowhere else is refused by Git's own `-d`, and the page's job is to
+ * have said so on the row rather than to have hidden the row. The one exception
+ * is the branch HEAD is on, which Git will refuse in every case and which is
+ * therefore the one row the dialog does not offer at all.
+ *
+ * The selection is held as the rows' own keys rather than as names, because the
+ * two lists can hold the same name: a local branch may be called `origin/main`,
+ * and a tick on one of them is not a tick on the other.
+ *
+ * The list is read when the dialog opens, never cached, for the branch list's
+ * reason: branches appear and disappear as the agent works. A read that fails
+ * closes the dialog and is stated by the page's one error dialog, except for a
+ * directory that is not a repository, which is the dialog's own empty state.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.open - whether the dialog is showing.
+ * @param props.sessionId - the session whose repository is being read.
+ * @param props.onClose - called by Cancel, the close button, Escape, or the mask.
+ * @param props.onConfirm - called with the branches to delete when the footer is pressed.
+ * @param props.onError - called with the failure to state in the error dialog.
+ * @returns the dialog element.
+ */
+function BranchDeleteDialog(props: {
+  readonly t: Translate
+  readonly open: boolean
+  readonly sessionId: string | undefined
+  readonly onClose: () => void
+  readonly onConfirm: (targets: readonly BranchDeleteTarget[]) => void
+  readonly onError: (error: GitError) => void
+}): ReactElement {
+  const { t, open, sessionId, onClose, onConfirm, onError } = props
+  /** The branches Git reported, or null while it has not answered yet. */
+  const [report, setReport] = useState<BranchReportPayload | null>(null)
+  /** A directory that is not a repository: the dialog's own empty state. */
+  const [noRepo, setNoRepo] = useState(false)
+  /** The keys of the rows that are ticked, in the order they were ticked. */
+  const [selection, setSelection] = useState<readonly string[]>([])
+  const [filter, setFilter] = useState('')
+  const listScroll = useRef<HTMLDivElement | null>(null)
+  const listWrap = useRef<HTMLDivElement | null>(null)
+
+  // The cleanup discards a late answer and forgets the ticks with it, so a
+  // reopen starts on the loading line with nothing selected rather than on the
+  // previous list with a selection nobody made twice.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void fetchBranchReport(sessionId).then(result => {
+      if (cancelled) return
+      if (result?.ok !== true) {
+        const missing = isNoRepo(result)
+        setReport(null)
+        setNoRepo(missing)
+        if (!missing) {
+          onClose()
+          onError({
+            title: t('title.branches'),
+            lines: [reasonOf(t, result, 'fallback.branches')],
+          })
+        }
+        return
+      }
+      setReport(result)
+    })
+    return () => {
+      cancelled = true
+      setReport(null)
+      setNoRepo(false)
+      setSelection([])
+      setFilter('')
+    }
+  }, [open, sessionId, onClose, onError, t])
+
+  useListFades(listScroll, listWrap)
+
+  /** One row's identity: its name within its own list, never across the two. */
+  const keyOf = (entry: BranchEntry): string => `${entry.kind}:${entry.name}`
+
+  // The rows are the groups in the order the branch dialog reads them — the
+  // branch HEAD is on, then the other local ones, then the remote-tracking ones —
+  // and the group is carried on the row so a filtered list can still label what
+  // each run of rows belongs to.
+  const locals = report?.locals ?? []
+  const rows: readonly DeleteRow[] = [
+    ...locals
+      .filter(entry => entry.current === true)
+      .map(entry => ({ entry, group: 'current' as const })),
+    ...locals
+      .filter(entry => entry.current !== true)
+      .map(entry => ({ entry, group: 'local' as const })),
+    ...(report?.remotes ?? []).map(entry => ({ entry, group: 'remote' as const })),
+  ]
+
+  /**
+   * The rows one filter value leaves.
+   *
+   * @param value - the filter's text.
+   * @returns the rows whose name contains it, case-insensitively.
+   */
+  const shownFor = (value: string): readonly DeleteRow[] => {
+    const needle = value.trim().toLowerCase()
+    return needle === ''
+      ? rows
+      : rows.filter(row => row.entry.name.toLowerCase().includes(needle))
+  }
+
+  const shown = shownFor(filter)
+
+  // The ticked rows, read back from the selection so the order is the list's
+  // rather than the clicks': a delete request that named its branches in click
+  // order would report its refusals in an order the dialog is not showing.
+  const chosen = rows.filter(row => selection.includes(keyOf(row.entry)))
+  const risky = chosen.filter(row => row.entry.current !== true && row.entry.safety !== 'safe').length
+
+  /**
+   * The branches to delete, in the shape the Host asked to be given them back.
+   *
+   * A row that is missing the pair a remote-tracking row is deleted by is left
+   * out rather than guessed at: the Host resolves the remote and the branch when
+   * it reads the list, so a row without them is one this half cannot name, and
+   * naming nothing is not a deletion to ask for.
+   */
+  const targets: readonly BranchDeleteTarget[] = chosen.flatMap(
+    (row): readonly BranchDeleteTarget[] => {
+      const entry = row.entry
+      if (entry.kind !== 'remote') return [{ name: entry.name, kind: 'local' }]
+      if (entry.remote === undefined || entry.branch === undefined) return []
+      return [{ name: entry.name, kind: 'remote', remote: entry.remote, branch: entry.branch }]
+    },
+  )
+
+  let content: ReactNode
+  if (noRepo) {
+    content = <p className="dsh-cg-dialog-hint">{t('branch.notRepo')}</p>
+  } else if (report !== null && rows.length === 0) {
+    content = <p className="dsh-cg-dialog-hint">{t('delete.none')}</p>
+  } else {
+    content = (
+      <>
+        <Input
+          className="dsh-cg-branch-filter"
+          type="text"
+          value={filter}
+          placeholder={t('branch.search')}
+          aria-label={t('branch.search')}
+          data-modal-autofocus
+          // A tick the filter has just hidden is dropped with it, which matters
+          // more here than it does for a single pick: the footer deletes what it
+          // can see the ticks for, and a branch deleted from behind a filter
+          // would be one nobody could have read off the screen before pressing.
+          onChange={event => {
+            const value = event.target.value
+            setFilter(value)
+            const visible = new Set(shownFor(value).map(row => keyOf(row.entry)))
+            setSelection(previous => previous.filter(key => visible.has(key)))
+          }}
+        />
+        {report === null
+          ? <p className="dsh-cg-dialog-hint">{t('branch.loading')}</p>
+          : shown.length === 0
+            ? <p className="dsh-cg-dialog-hint">{t('branch.noMatch')}</p>
+            : (
+              <div className="dsh-cg-branch-list-wrap" ref={listWrap}>
+                <div
+                  className="dsh-cg-branch-list"
+                  role="group"
+                  aria-label={t('delete.list')}
+                  ref={listScroll}
+                >
+                  {shown.map((row, index) => {
+                    const entry = row.entry
+                    const key = keyOf(entry)
+                    const meta = entryMeta(entry)
+                    return (
+                      <Fragment key={key}>
+                        {row.group === shown[index - 1]?.group
+                          ? null
+                          : (
+                            <span role="presentation" className="dsh-cg-branch-group">
+                              {t(BRANCH_GROUP_KEY[row.group])}
+                            </span>
+                          )}
+                        <label
+                          className="dsh-cg-delete-row"
+                          data-safety={entry.current === true ? 'current' : entry.safety}
+                        >
+                          <input
+                            type="checkbox"
+                            className="dsh-cg-delete-check"
+                            checked={selection.includes(key)}
+                            // The branch HEAD is on is the one row Git will never
+                            // delete, so it is the one row offered as a fact
+                            // rather than as a choice.
+                            disabled={entry.current === true}
+                            onChange={() => setSelection(previous => (
+                              previous.includes(key)
+                                ? previous.filter(one => one !== key)
+                                : [...previous, key]
+                            ))}
+                          />
+                          <span className="dsh-cg-delete-name">{entry.name}</span>
+                          {meta === '' ? null : <span className="dsh-cg-delete-meta">{meta}</span>}
+                          <span
+                            className="dsh-cg-safety"
+                            data-safety={entry.current === true ? 'current' : entry.safety}
+                          >
+                            {t(entry.current === true ? 'safety.current' : SAFETY_KEY[entry.safety])}
+                          </span>
+                        </label>
+                      </Fragment>
+                    )
+                  })}
+                </div>
+                <span className="dsh-cg-branch-fade dsh-cg-branch-fade-top" aria-hidden="true" />
+                <span className="dsh-cg-branch-fade dsh-cg-branch-fade-bottom" aria-hidden="true" />
+              </div>
+            )}
+        {/* The line under the list, and the one thing the footer's button cannot
+            say: how many of the ticked rows the marks are warning about. It is
+            not the count the button carries — that is how many will be asked
+            for, and this is how many of them Git will refuse — so it is stated
+            only when it is a number worth reading, which is when something is
+            ticked and at least one of those is not `safe`. */}
+        {selection.length === 0 || risky === 0
+          ? null
+          : <p className="dsh-cg-dialog-hint">{t('delete.risky', { count: risky })}</p>}
+        {report?.truncated === true
+          ? <p className="dsh-cg-dialog-hint">{t('branch.truncated')}</p>
+          : null}
+      </>
+    )
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('delete.title')}
+      description={t('delete.description')}
+      closeLabel={t('dialog.close')}
+      className="dsh-cg-branch-dialog"
+      footer={(
+        <>
+          <Button variant="outline" onClick={onClose}>{t('branch.cancel')}</Button>
+          <Button
+            variant="danger"
+            disabled={selection.length === 0}
+            onClick={() => onConfirm(targets)}
+          >
+            {selection.length === 0
+              ? t('delete.confirm')
+              : t('delete.confirmCount', { count: selection.length })}
           </Button>
         </>
       )}

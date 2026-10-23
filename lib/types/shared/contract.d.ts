@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'fetch-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'create-denied' | 'delete-denied' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'fetch-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
@@ -133,6 +133,133 @@ export interface BranchesPayload {
     readonly remotes?: readonly string[];
     /** One of the lists was cut at the Host's bound; the page says so. */
     readonly truncated?: boolean;
+}
+/**
+ * How safe one branch looks to delete, judged before Git is asked.
+ *
+ * The marks are `git branch -d`'s own rule restated, so the badge and the answer
+ * cannot disagree: Git deletes a branch whose tip is reachable from HEAD or from
+ * that branch's own upstream, and refuses every other one. A branch that is
+ * neither is one whose commits would be left reachable from nothing but the
+ * reflog, which is what every mark but `safe` is saying.
+ *
+ * `gone` is the loudest of them because it is the easiest to misread: an
+ * upstream that no longer exists looks, in a branch list, exactly like a branch
+ * that was never pushed.
+ */
+export type BranchSafety = 'safe' | 'unmerged' | 'unpushed' | 'gone';
+/** One branch the delete dialog may offer, with the facts its badge is drawn from. */
+export interface BranchEntry {
+    /** The name the page shows: a local name, or `origin/main`. */
+    readonly name: string;
+    readonly kind: 'local' | 'remote';
+    /**
+     * For a remote-tracking branch, the remote it belongs to and the branch name
+     * on that remote. The two are resolved by the Host against the configured
+     * remotes rather than by splitting the name, because a local branch may itself
+     * be called `origin/main`.
+     */
+    readonly remote?: string;
+    readonly branch?: string;
+    /** Whether HEAD is on this branch, which is the one Git will never delete. */
+    readonly current?: boolean;
+    /** The verdict the badge states. */
+    readonly safety: BranchSafety;
+    /** The upstream this branch tracks, when it tracks one. */
+    readonly upstream?: string;
+    /** How many commits this branch has that its upstream does not. */
+    readonly ahead?: number;
+    /** How many commits its upstream has that this branch does not. */
+    readonly behind?: number;
+}
+/**
+ * `POST /branch-report`: the branches the delete dialog may offer.
+ *
+ * A read of its own rather than a second field on `POST /branches`, because the
+ * two dialogs ask different questions and only one of them pays for this one:
+ * every mark here costs a `--merged` walk over the refs, and the switch dialog
+ * opens far more often than the delete dialog does.
+ */
+export interface BranchReportPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    readonly reason?: 'no-repo' | 'error';
+    /** The checked-out branch, or null while HEAD is detached. */
+    readonly current?: string | null;
+    readonly detached?: boolean;
+    /** Local branches, most recently committed first. */
+    readonly locals?: readonly BranchEntry[];
+    /** Remote-tracking branches, most recently committed first. */
+    readonly remotes?: readonly BranchEntry[];
+    /** One of the lists was cut at the Host's bound; the page says so. */
+    readonly truncated?: boolean;
+}
+/**
+ * `POST /branch-create`: the outcome of starting a branch and switching to it.
+ *
+ * Shaped like `CheckoutPayload` because that is what it is: the new branch is
+ * created and then checked out, so every state that refuses a switch — a
+ * detached HEAD is not one of them, an unknown starting point and a working tree
+ * in the way are — refuses this too.
+ */
+export interface CreateBranchPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'exists' | 'denied' | 'dirty';
+    /** The branch HEAD is on after a successful create, which is the new one. */
+    readonly branch?: string;
+}
+/** What became of one branch a delete request named. */
+export interface BranchDeletion {
+    /** The name as the dialog showed it: a local name, or `origin/main`. */
+    readonly name: string;
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+}
+/**
+ * One branch a delete request names, echoed back as the dialog read it.
+ *
+ * The page sends the entry it was given rather than a name this half re-derives,
+ * because only the page knows which of the two lists the row came from and a
+ * local branch may itself be called `origin/main`. The remote and branch pair is
+ * carried for a remote-tracking row so the Host never has to split the name
+ * again — and so a name it splits cannot differ from the one that was shown.
+ */
+export interface BranchDeleteTarget {
+    /** The name the row showed: a local name, or `origin/main`. */
+    readonly name: string;
+    readonly kind: 'local' | 'remote';
+    /** For a remote target, the remote the branch lives on. */
+    readonly remote?: string;
+    /** For a remote target, the branch name on that remote. */
+    readonly branch?: string;
+}
+/**
+ * `POST /branch-delete`: what became of every branch the request named.
+ *
+ * One answer for a list of deletions rather than one request each, because the
+ * dialog's whole point is that the choice is made once: the branches are deleted
+ * one at a time so that each has an outcome of its own, and a refusal on one
+ * branch is that branch's result rather than the request's.
+ */
+export interface DeleteBranchesPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    readonly reason?: 'no-repo' | 'error' | 'denied';
+    /** One entry per branch the request named, in the order it named them. */
+    readonly results?: readonly BranchDeletion[];
 }
 /** `POST /checkout`: the outcome of switching the working tree to a branch. */
 export interface CheckoutPayload {

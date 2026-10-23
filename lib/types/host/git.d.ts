@@ -35,7 +35,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type FetchPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
@@ -228,6 +228,71 @@ export declare function readBranches(target: GitTarget): Promise<BranchesPayload
  * @returns the outcome, including the reason a switch was refused.
  */
 export declare function switchBranch(target: GitTarget, name: string): Promise<CheckoutPayload>;
+/**
+ * Start a branch at one point and switch to it.
+ *
+ * The start point is resolved to a fully-qualified ref before Git is asked, for
+ * the same reason the switch resolves its own name: `refs/heads/main` is a ref
+ * and nothing else, so a name that begins with a dash can never be read as an
+ * option by the command that follows, and the exists-check and the ref Git is
+ * told to branch from can never disagree.
+ *
+ * The name itself is left to Git's rule. A name Git will not take is answered
+ * with Git's own sentence rather than a pattern of this half's invention, which
+ * is what keeps a name Git accepts — non-ASCII ones among them — from being
+ * refused by a rule that does not exist. The one check made here is the one Git
+ * cannot make cheaply: whether the name is already taken, which is a refusal the
+ * page words rather than a bare `fatal` from a race.
+ *
+ * Creating at another point is a switch, so a working tree in the way refuses it
+ * in the switch's own words, and the session's file policy is as load-bearing
+ * here as it is there.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param name - the local branch to create.
+ * @param start - the local or remote-tracking branch it starts at.
+ * @returns the outcome, including the reason the create was refused.
+ */
+export declare function createBranch(target: GitTarget, name: string, start: string): Promise<CreateBranchPayload>;
+/**
+ * Read the branches the delete dialog may offer, with the facts its marks need.
+ *
+ * A read of its own rather than a second half of `POST /branches`, because the
+ * two dialogs ask different questions: a switch wants names and nothing else,
+ * while this one wants each branch's upstream, its tracking state, and whether
+ * HEAD reaches it — three answers that cost walks the switch dialog would pay
+ * for on every open and never read.
+ *
+ * A remote-tracking branch is marked by the same rule as a local one, and the
+ * rule reads differently there: a remote branch HEAD does not reach is the
+ * ordinary case rather than a warning, so what the row says is simply that these
+ * commits are on that remote and nowhere else in this repository. Which remote
+ * owns the ref is resolved against the configured names rather than cut out of
+ * the ref, because a local branch may itself be called `origin/main`.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the two lists, each with its marks, and which branch HEAD is on.
+ */
+export declare function readBranchReport(target: GitTarget): Promise<BranchReportPayload>;
+/**
+ * Delete the branches a request named, one at a time.
+ *
+ * One at a time rather than one `git branch -d a b c`, because the answer the
+ * dialog needs is per branch: Git reports a mixed batch by exiting nonzero and
+ * naming the branch it refused, and telling which of the others went through
+ * would mean reading Git's own prose back — text that is translated, and whose
+ * misreading would mark a branch deleted that is still there. The exit code of
+ * one call per branch is an answer no locale can change.
+ *
+ * Nothing here offers a force. `-d` is the whole gate, and it is the right one:
+ * it refuses exactly the branches whose commits would be left reachable from
+ * nothing, which is the promise every mark in the dialog is making.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param wanted - the branches to delete, in the order the page listed them.
+ * @returns one outcome per branch, and whether all of them succeeded.
+ */
+export declare function deleteBranches(target: GitTarget, wanted: readonly BranchDeleteTarget[]): Promise<DeleteBranchesPayload>;
 /**
  * Merge one branch into the branch HEAD is on.
  *

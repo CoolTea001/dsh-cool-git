@@ -25,11 +25,14 @@
 
 import {
   commitAll,
+  createBranch,
+  deleteBranches,
   fetchRemotes,
   mergeBranch,
   pullFromRemote,
   pushToRemote,
   readBranches,
+  readBranchReport,
   readCommit,
   readDiff,
   readLog,
@@ -38,6 +41,7 @@ import {
   DEFAULT_LOG_LIMIT,
   type GitTarget,
 } from './git.js'
+import type { BranchDeleteTarget } from '../shared/contract.js'
 import { generateCommitMessage } from './message.js'
 import { coded, type Refusal } from './refusal.js'
 import { resolveWorkspace } from './workspace.js'
@@ -51,6 +55,9 @@ export const ROUTES = {
   commitAll: '/dsh-cool-git/api/commit-all',
   message: '/dsh-cool-git/api/message',
   branches: '/dsh-cool-git/api/branches',
+  branchReport: '/dsh-cool-git/api/branch-report',
+  branchCreate: '/dsh-cool-git/api/branch-create',
+  branchDelete: '/dsh-cool-git/api/branch-delete',
   checkout: '/dsh-cool-git/api/checkout',
   merge: '/dsh-cool-git/api/merge',
   fetch: '/dsh-cool-git/api/fetch',
@@ -68,6 +75,14 @@ const OBJECT_NAME = /^[0-9a-f]{4,40}$/i
  * is this route's: a request body is not a place to put a file.
  */
 const MAX_MESSAGE_LENGTH = 10_000
+
+/**
+ * Most branches one delete request may name.
+ *
+ * The bound is the branch list's own: the dialog cannot show more rows than the
+ * Host lists, so a request naming more than this is not a selection anyone made.
+ */
+const MAX_DELETE_TARGETS = 200
 
 function sendJson(res: any, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -342,19 +357,72 @@ function readHash(body: Record<string, unknown>): string | undefined {
 }
 
 /**
- * Read one request's branch argument.
+ * Read one ref name out of a request, under whatever key the caller read it from.
  *
- * The shape checked here is only about what can be handed to the shell at all;
- * whether the branch exists is Git's answer, not this half's.
+ * The shape checked here is only about what can be handed to the shell at all:
+ * a ref name cannot be empty, cannot be longer than Git's own ceiling, cannot
+ * carry a NUL, and cannot begin with a dash — the last one because the commands
+ * this half runs take some of their arguments positionally, where a name that
+ * looks like an option would be read as one. Whether the branch exists is Git's
+ * answer, not this half's.
+ *
+ * @param value - the field as the body carried it.
+ * @returns the name, or undefined when it is not one a command line may carry.
+ */
+function readRefName(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value === '' || value.length > 255) return undefined
+  if (value.includes('\0') || value.startsWith('-')) return undefined
+  return value
+}
+
+/**
+ * Read one request's branch argument.
  *
  * @param body - the parsed request body.
  * @returns the branch name, or undefined when the body names none.
  */
 function readBranch(body: Record<string, unknown>): string | undefined {
-  const branch = body.branch
-  if (typeof branch !== 'string' || branch === '' || branch.length > 255) return undefined
-  if (branch.includes('\0') || branch.startsWith('-')) return undefined
-  return branch
+  return readRefName(body.branch)
+}
+
+/**
+ * Read one request's list of branches to delete.
+ *
+ * Each entry is echoed back in the shape the delete dialog read it in — which
+ * list the row came from, and for a remote-tracking row the remote and branch it
+ * was split into — so nothing here re-derives a name from a string and no name
+ * the page showed can differ from the one that is deleted. An entry that does
+ * not fit that shape fails the whole request rather than being skipped: a
+ * deletion list that quietly lost a member is the one answer this route must
+ * never give.
+ *
+ * The bound is the branch list's own, so a request can never name more branches
+ * than the dialog could have shown.
+ *
+ * @param body - the parsed request body.
+ * @returns the targets, or undefined when the body does not carry a valid list.
+ */
+function readTargets(body: Record<string, unknown>): readonly BranchDeleteTarget[] | undefined {
+  const raw = body.targets
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_DELETE_TARGETS) return undefined
+
+  const targets: BranchDeleteTarget[] = []
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) return undefined
+    const record = item as Record<string, unknown>
+    const name = readRefName(record.name)
+    if (name === undefined) return undefined
+    if (record.kind === 'local') {
+      targets.push({ name, kind: 'local' })
+      continue
+    }
+    if (record.kind !== 'remote') return undefined
+    const remote = readRefName(record.remote)
+    const branch = readRefName(record.branch)
+    if (remote === undefined || branch === undefined) return undefined
+    targets.push({ name, kind: 'remote', remote, branch })
+  }
+  return targets
 }
 
 /**
@@ -454,6 +522,34 @@ export function registerRoutes(ctx: any): () => void {
       const branch = readBranch(body)
       if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
       return switchBranch(target, branch)
+    })),
+
+    // The delete dialog's own read: the same refs the switch lists, plus each
+    // one's upstream, its tracking state, and whether HEAD reaches it. A read of
+    // its own rather than a second half of `branches`, because those three
+    // answers cost walks and the switch dialog opens far more often than this one.
+    route(ROUTES.branchReport, (req, res) => handle(ctx, req, res, 'read', (_body, target) =>
+      readBranchReport(target))),
+
+    // Creating a branch is the switch with a ref made first, so it is the same
+    // write effect and the same file policy: the two names are a new branch and
+    // the branch it starts at, and which of Git's rules each has to satisfy is
+    // Git's answer rather than a shape checked here.
+    route(ROUTES.branchCreate, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const name = readRefName(body.name)
+      if (name === undefined) return Promise.resolve({ ok: false, ...coded('missing-name') })
+      const start = readRefName(body.start)
+      if (start === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      return createBranch(target, name, start)
+    })),
+
+    // The one route that removes refs, and the one whose answer is a list: each
+    // branch is deleted on its own so that a refusal belongs to the branch it
+    // was about, and the page reads that list back line by line.
+    route(ROUTES.branchDelete, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const targets = readTargets(body)
+      if (targets === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      return deleteBranches(target, targets)
     })),
 
     // The branch is the whole of this argument, and the Host decides what a name

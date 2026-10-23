@@ -70,6 +70,8 @@ type UiKey =
   | 'title.commit'
   | 'title.diff'
   | 'title.branches'
+  | 'title.branchCreate'
+  | 'title.branchDelete'
   | 'title.message'
   /** The error dialog's own two controls. */
   | 'dialog.close'
@@ -85,6 +87,9 @@ type UiKey =
   | 'head.fetch'
   /** The menu's merge row, and the dialog it opens. */
   | 'head.mergeFrom'
+  /** The menu's two branch rows, each opening a dialog of its own. */
+  | 'head.branchCreate'
+  | 'head.branchDelete'
   /** The remote control in the history pane's header. */
   | 'remote.publish'
   | 'remote.sync'
@@ -111,6 +116,25 @@ type UiKey =
   | 'merge.descriptionFrom'
   | 'merge.confirm'
   | 'merge.noneFrom'
+  /** The create dialog, which reuses the branch dialog's list as a start point. */
+  | 'create.title'
+  | 'create.description'
+  | 'create.name'
+  | 'create.confirm'
+  | 'create.none'
+  /** The delete dialog, and the marks its rows carry. */
+  | 'delete.title'
+  | 'delete.description'
+  | 'delete.list'
+  | 'delete.confirm'
+  | 'delete.confirmCount'
+  | 'delete.risky'
+  | 'delete.none'
+  | 'safety.safe'
+  | 'safety.unmerged'
+  | 'safety.unpushed'
+  | 'safety.gone'
+  | 'safety.current'
   /** The commit form. */
   | 'commit.placeholder'
   | 'commit.button'
@@ -212,6 +236,8 @@ export const en = {
   'title.commit': 'Commit failed',
   'title.diff': 'Could not read the diff',
   'title.branches': 'Could not read the branch list',
+  'title.branchCreate': 'Could not create the branch',
+  'title.branchDelete': 'Could not delete every branch',
   'title.message': 'Could not generate a commit message',
 
   'dialog.close': 'Close',
@@ -223,6 +249,8 @@ export const en = {
   'head.refresh': 'Refresh',
   'head.fetch': 'Fetch',
   'head.mergeFrom': 'Merge from…',
+  'head.branchCreate': 'Branch create…',
+  'head.branchDelete': 'Branch delete…',
 
   'remote.publish': 'Publish branch',
   'remote.sync': 'Sync · {behind} to pull · {ahead} to push',
@@ -249,6 +277,26 @@ export const en = {
   'merge.descriptionFrom': 'Choose the branch to merge into this one',
   'merge.confirm': 'Merge',
   'merge.noneFrom': 'No other branch to merge in',
+
+  'create.title': 'Create branch',
+  'create.description': 'Name the new branch and choose where it starts',
+  'create.name': 'New branch name',
+  'create.confirm': 'Create',
+  'create.none': 'No branch to start from',
+
+  'delete.title': 'Delete branches',
+  'delete.description': 'Choose the branches to delete',
+  'delete.list': 'Branches to delete',
+  'delete.confirm': 'Delete',
+  'delete.confirmCount': 'Delete {count}',
+  'delete.risky': '{count} of these are not merged or not pushed; Git will refuse those',
+  'delete.none': 'No branches to delete',
+
+  'safety.safe': 'Safe to delete',
+  'safety.unmerged': 'Not merged',
+  'safety.unpushed': 'Not pushed',
+  'safety.gone': 'Upstream gone',
+  'safety.current': 'Current',
 
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
@@ -296,6 +344,7 @@ export const en = {
   'error.bad-hash': 'Invalid commit id',
   'error.missing-message': 'Missing commit message',
   'error.missing-branch': 'Missing branch name',
+  'error.missing-name': 'Missing branch name to create',
 
   'error.git-denied': 'The current permission mode does not allow running Git commands',
   'error.git-exit': 'git exited with code {code}',
@@ -308,6 +357,13 @@ export const en = {
   'error.checkout-denied': 'The current permission mode does not allow switching branches: it needs to write the workspace',
   'error.checkout-dirty': 'Uncommitted changes would be overwritten; commit or stash them before switching',
   'error.checkout-dirty-paths': 'Uncommitted changes to {paths} would be overwritten; commit or stash them before switching',
+
+  'error.branch-exists': 'The branch {branch} already exists',
+  'error.create-denied': 'The current permission mode does not allow creating a branch: it needs to write the workspace',
+  'error.delete-denied': 'The current permission mode does not allow deleting branches: it needs to write the workspace',
+  'error.branch-not-merged': 'Branch {branch} is not fully merged, so Git refused to delete it; merge or push it first',
+  'error.branch-in-use': 'Branch {branch} is checked out in a worktree, so Git cannot delete it',
+  'error.unknown-remote': 'No such remote: {remote}',
 
   'error.merge-denied': 'The current permission mode does not allow merging: it needs to write the workspace',
   'error.merge-dirty': 'Uncommitted changes are in the way; commit or stash them before merging',
@@ -390,6 +446,8 @@ export const zh: typeof en = {
   'title.commit': '提交失败',
   'title.diff': '读取 Diff 失败',
   'title.branches': '读取分支列表失败',
+  'title.branchCreate': '创建分支失败',
+  'title.branchDelete': '删除分支失败',
   'title.message': '生成提交信息失败',
 
   'dialog.close': '关闭',
@@ -406,6 +464,8 @@ export const zh: typeof en = {
   'head.refresh': 'Refresh',
   'head.fetch': 'Fetch',
   'head.mergeFrom': 'Merge from…',
+  'head.branchCreate': 'Branch create…',
+  'head.branchDelete': 'Branch delete…',
 
   'remote.publish': '发布分支',
   'remote.sync': '同步变更 · 待拉取 {behind} · 待推送 {ahead}',
@@ -432,6 +492,26 @@ export const zh: typeof en = {
   'merge.descriptionFrom': '选择要合并进来的分支',
   'merge.confirm': '合并',
   'merge.noneFrom': '没有可合并的其它分支',
+
+  'create.title': '创建分支',
+  'create.description': '输入新分支名，并选择它的起点',
+  'create.name': '新分支名',
+  'create.confirm': '创建',
+  'create.none': '没有可作为起点的分支',
+
+  'delete.title': '删除分支',
+  'delete.description': '选择要删除的分支',
+  'delete.list': '待删除的分支',
+  'delete.confirm': '删除',
+  'delete.confirmCount': '删除 {count} 个',
+  'delete.risky': '其中 {count} 个未合并或未推送，Git 会拒绝删除',
+  'delete.none': '没有可删除的分支',
+
+  'safety.safe': '可安全删除',
+  'safety.unmerged': '未合并',
+  'safety.unpushed': '未推送',
+  'safety.gone': '上游已消失',
+  'safety.current': '当前',
 
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
@@ -479,6 +559,7 @@ export const zh: typeof en = {
   'error.bad-hash': '提交标识不合法',
   'error.missing-message': '缺少提交信息',
   'error.missing-branch': '缺少分支名',
+  'error.missing-name': '缺少要创建的分支名',
 
   'error.git-denied': '当前权限模式不允许执行 Git 命令',
   'error.git-exit': 'git 退出码 {code}',
@@ -491,6 +572,13 @@ export const zh: typeof en = {
   'error.checkout-denied': '当前权限模式不允许切换分支：该操作需要写入工作区',
   'error.checkout-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再切换',
   'error.checkout-dirty-paths': '有未提交的改动会被覆盖（{paths}），请先提交或暂存后再切换',
+
+  'error.branch-exists': '分支 {branch} 已存在',
+  'error.create-denied': '当前权限模式不允许创建分支：该操作需要写入工作区',
+  'error.delete-denied': '当前权限模式不允许删除分支：该操作需要写入工作区',
+  'error.branch-not-merged': '分支 {branch} 尚未完全合并，Git 拒绝删除；请先合并或推送',
+  'error.branch-in-use': '分支 {branch} 已在某个工作区中被检出，Git 无法删除',
+  'error.unknown-remote': '不存在该远端：{remote}',
 
   'error.merge-denied': '当前权限模式不允许合并：该操作需要写入工作区',
   'error.merge-dirty': '存在未提交的改动，请先提交或暂存后再合并',

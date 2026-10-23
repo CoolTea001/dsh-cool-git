@@ -356,6 +356,36 @@ const GIT_CSS = [
   '.dsh-cg-branch-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+
+  // The create dialog's name field, which sits above the filter and is the one
+  // control in that dialog the reader has to fill in. It is spaced like the
+  // filter below it so the two read as one column of fields.
+  '.dsh-cg-branch-name{flex:none;width:100%;box-sizing:border-box}',
+  '.dsh-cg-branch-name+.dsh-cg-branch-filter{margin-top:8px}',
+
+  // One row of the delete dialog. It is a `label` rather than a `button` because
+  // the checkbox inside it is the control: a click anywhere on the row is a click
+  // on that box, which is what makes a 28px row a 28px target, and the wrapper is
+  // what carries the ticked/unticked state for the row's own painting.
+  '.dsh-cg-delete-row{flex:none;display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border-radius:var(--dsw-radius-sm,6px);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer}',
+  '.dsh-cg-delete-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-delete-row:has(.dsh-cg-delete-check:checked){background:var(--dsw-alias-interactive-bg-hover)}',
+  // The branch HEAD is on: shown, marked, and not a choice.
+  '.dsh-cg-delete-row:has(.dsh-cg-delete-check:disabled){cursor:default}',
+  '.dsh-cg-delete-row:has(.dsh-cg-delete-check:disabled):hover{background:transparent}',
+  '.dsh-cg-delete-check{flex:none;margin:0;accent-color:var(--dsw-alias-state-error-primary)}',
+  '.dsh-cg-delete-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  // The facts behind the mark — the upstream and the two counts. They give ground
+  // before the name does: a name ending in `…` names nothing, while a lost count
+  // is one the badge beside it has already spoken for.
+  '.dsh-cg-delete-meta{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  // The safety mark. Every row has one and only the ones worth reading are
+  // coloured: a `safe` row's mark is the muted label colour and reads as the
+  // absence of a warning, which is what it is.
+  '.dsh-cg-safety{flex:none;padding:0 6px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
+  '.dsh-cg-safety[data-safety=unmerged],.dsh-cg-safety[data-safety=unpushed],.dsh-cg-safety[data-safety=gone]{color:var(--dsw-alias-state-warn-primary)}',
+  '.dsh-cg-safety[data-safety=current]{color:var(--dsw-alias-label-secondary)}',
+
   // One line of the dialog's own state: still reading, a directory that is not a
   // repository, no branch at all, a filter that matched nothing. A failure is the
   // error dialog's, so nothing here paints one.

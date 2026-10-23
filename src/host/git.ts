@@ -41,12 +41,19 @@ import { join } from 'node:path'
 
 import {
   classifyChange,
+  type BranchDeleteTarget,
+  type BranchDeletion,
+  type BranchEntry,
+  type BranchReportPayload,
+  type BranchSafety,
   type BranchesPayload,
   type ChangedFile,
   type CheckoutPayload,
   type CommitAllPayload,
   type CommitPayload,
   type CommitSummary,
+  type CreateBranchPayload,
+  type DeleteBranchesPayload,
   type DiffPayload,
   type FailureCode,
   type FetchPayload,
@@ -179,9 +186,45 @@ const AUTH_FAILURE = new RegExp(
   'i',
 )
 
+/**
+ * What Git prints when the branch being created is already there.
+ *
+ * The name is checked before Git is asked, so this is the race the check cannot
+ * close rather than the ordinary answer; it is worded anyway, because a race
+ * that surfaces `fatal:` in a dialog that had a sentence ready is the kind of
+ * gap this half exists to avoid.
+ */
+const BRANCH_EXISTS = /already exists/i
+
+/**
+ * What Git prints when it will not delete a branch for want of a merge.
+ *
+ * This is the one refusal the delete dialog's marks predict, so it is the one
+ * the page words itself: Git's own sentence ends in a `-D` hint, and this plugin
+ * has no force to offer — restating it is what keeps the page from advertising a
+ * command it will not run.
+ */
+const BRANCH_NOT_MERGED = /not fully merged/i
+
+/**
+ * What Git prints when a worktree is standing on the branch being deleted.
+ *
+ * The current branch and a branch checked out in another worktree are the same
+ * answer from Git and the same fact to the reader: this branch is in use. The
+ * page tells them apart by which row it disabled, not by which sentence it got.
+ */
+const BRANCH_IN_USE = /used by worktree|cannot delete branch/i
+
+/**
+ * What Git prints when the ref a delete named is not on the remote.
+ *
+ * A branch someone else already deleted is the ordinary reason a delete fails
+ * after a fetch: the dialog was drawn from a list that was true when it opened.
+ */
+const REMOTE_REF_MISSING = /remote ref does not exist|unable to delete/i
+
 /** Field separator inside one formatted record; `%x1f` is expanded by Git. */
 const FIELD = '\x1f'
-
 /** Separator that ends the commit-detail header block; `%x1e` is Git-expanded. */
 const RECORD = '\x1e'
 
@@ -1322,14 +1365,39 @@ async function refExists(root: GitTarget, ref: string): Promise<boolean> {
  * @returns the local name, or null when no configured remote prefixes the ref.
  */
 async function localNameForRemote(root: GitTarget, ref: string): Promise<string | null> {
+  const split = splitRemote(await remotesOf(root), ref)
+  return split === null ? null : split.branch
+}
+
+/**
+ * The remote and the branch name one remote-tracking ref is made of.
+ *
+ * The remote names are the configured ones rather than a guess cut out of the
+ * ref: a remote may itself contain a slash, so the longest matching remote is
+ * the only correct answer, and no match means no configured remote owns the ref
+ * — a stale directory left by a removed remote — which the caller states rather
+ * than inventing a name.
+ *
+ * The split is resolved here rather than by the page because a local branch may
+ * itself be called `origin/main`: the two are only told apart by asking which
+ * remotes exist, and that is a question only this half can answer.
+ *
+ * @param remotes - the configured remote names.
+ * @param ref - the remote-tracking ref, e.g. `origin/feature/x`.
+ * @returns the remote and the branch on it, or null when no remote prefixes it.
+ */
+function splitRemote(
+  remotes: readonly string[],
+  ref: string,
+): { readonly remote: string; readonly branch: string } | null {
   let best: string | null = null
-  for (const remote of await remotesOf(root)) {
+  for (const remote of remotes) {
     if (!ref.startsWith(`${remote}/`)) continue
     if (best === null || remote.length > best.length) best = remote
   }
   if (best === null) return null
-  const local = ref.slice(best.length + 1)
-  return local === '' ? null : local
+  const branch = ref.slice(best.length + 1)
+  return branch === '' ? null : { remote: best, branch }
 }
 
 /**
@@ -1348,22 +1416,484 @@ function checkoutFailure(run: GitRun): CheckoutPayload {
     return { ok: false, ...coded('checkout-denied'), reason: 'denied' }
   }
 
+  const dirty = dirtyRefusal(diagnosticText(run))
+  if (dirty !== null) return { ok: false, ...dirty, reason: 'dirty' }
+
+  return { ok: false, ...refusalOf(run), reason: 'error' }
+}
+
+/**
+ * The refusal a working tree in the way amounts to, when Git named the paths.
+ *
+ * The paths are what makes the message actionable, so they are lifted out of the
+ * block Git prints rather than left in a wall of advice the page would truncate
+ * away. They travel unsplit: the sentence is the page's, and a list joined for it
+ * here is the same list in either language.
+ *
+ * Shared with the branch this half starts, because Git refuses both the same way:
+ * creating a branch at another point is a switch with a ref made first, and a
+ * working tree in the way stops it in the same words.
+ *
+ * @param text - Git's own diagnosis of the failed invocation.
+ * @returns the coded refusal, or null when the tree was not what Git refused.
+ */
+function dirtyRefusal(text: string): Refusal | null {
+  if (!DIRTY_WORKTREE.test(text)) return null
+  const paths = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '' && !/^(?:error|fatal|Please|Aborting|note:)/i.test(line) && !line.includes(' '))
+    .slice(0, 5)
+  return paths.length === 0
+    ? coded('checkout-dirty')
+    : coded('checkout-dirty-paths', { paths: paths.join(', ') })
+}
+
+/**
+ * Start a branch at one point and switch to it.
+ *
+ * The start point is resolved to a fully-qualified ref before Git is asked, for
+ * the same reason the switch resolves its own name: `refs/heads/main` is a ref
+ * and nothing else, so a name that begins with a dash can never be read as an
+ * option by the command that follows, and the exists-check and the ref Git is
+ * told to branch from can never disagree.
+ *
+ * The name itself is left to Git's rule. A name Git will not take is answered
+ * with Git's own sentence rather than a pattern of this half's invention, which
+ * is what keeps a name Git accepts — non-ASCII ones among them — from being
+ * refused by a rule that does not exist. The one check made here is the one Git
+ * cannot make cheaply: whether the name is already taken, which is a refusal the
+ * page words rather than a bare `fatal` from a race.
+ *
+ * Creating at another point is a switch, so a working tree in the way refuses it
+ * in the switch's own words, and the session's file policy is as load-bearing
+ * here as it is there.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param name - the local branch to create.
+ * @param start - the local or remote-tracking branch it starts at.
+ * @returns the outcome, including the reason the create was refused.
+ */
+export async function createBranch(
+  target: GitTarget,
+  name: string,
+  start: string,
+): Promise<CreateBranchPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  if (await refExists(root, `refs/heads/${name}`)) {
+    return { ok: false, ...coded('branch-exists', { branch: name }), reason: 'exists' }
+  }
+
+  const base = await startRef(root, start)
+  if (base === null) {
+    return { ok: false, ...coded('unknown-branch', { name: start }), reason: 'unknown-branch' }
+  }
+
+  const run = await runSwitch(
+    root,
+    ['switch', '-c', name, base],
+    ['checkout', '-b', name, base],
+  )
+  if (run.code !== 0) return createFailure(run, name)
+  return { ok: true, branch: name }
+}
+
+/**
+ * The fully-qualified ref a new branch starts at, when the name resolves to one.
+ *
+ * Only a branch may be a starting point, local or remote-tracking: the dialog
+ * offers branches and nothing else, so a tag or a raw commit is not a name this
+ * half invents a meaning for. A remote-tracking start is what sets the new
+ * branch's upstream, which is Git's own answer to branching off `origin/main`.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param name - the local or remote-tracking branch to start at.
+ * @returns the full ref, or null when no branch answers to the name.
+ */
+async function startRef(root: GitTarget, name: string): Promise<string | null> {
+  if (await refExists(root, `refs/heads/${name}`)) return `refs/heads/${name}`
+  if (await refExists(root, `refs/remotes/${name}`)) return `refs/remotes/${name}`
+  return null
+}
+
+/**
+ * Describe why starting a branch was refused.
+ *
+ * A dirty working tree is worded with the switch's own sentence — the operation
+ * is a switch, and the paths Git named are the same paths — while the other two
+ * cases are this operation's own: a name taken between the check and the call,
+ * and a session that may not write.
+ *
+ * @param run - the failed invocation.
+ * @param name - the branch the request was creating.
+ * @returns the payload the page renders.
+ */
+function createFailure(run: GitRun, name: string): CreateBranchPayload {
+  if (run.denied === true) {
+    return { ok: false, ...coded('create-denied'), reason: 'denied' }
+  }
+
   const text = diagnosticText(run)
-  if (DIRTY_WORKTREE.test(text)) {
-    const paths = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line !== '' && !/^(?:error|fatal|Please|Aborting|note:)/i.test(line) && !line.includes(' '))
-      .slice(0, 5)
-    // The paths travel unsplit: the sentence is the page's, and a list joined
-    // for it here is the same list in either language.
-    const refusal = paths.length === 0
-      ? coded('checkout-dirty')
-      : coded('checkout-dirty-paths', { paths: paths.join(', ') })
-    return { ok: false, ...refusal, reason: 'dirty' }
+  const dirty = dirtyRefusal(text)
+  if (dirty !== null) return { ok: false, ...dirty, reason: 'dirty' }
+  if (BRANCH_EXISTS.test(text)) {
+    return { ok: false, ...coded('branch-exists', { branch: name }), reason: 'exists' }
   }
 
   return { ok: false, ...refusalOf(run), reason: 'error' }
+}
+
+/** One record `for-each-ref` printed for a branch. */
+interface RefRecord {
+  readonly name: string
+  /** The upstream's short name, empty when the branch tracks nothing. */
+  readonly upstream: string
+  /** Git's own `[ahead 1, behind 2]` / `[gone]` note, empty when in step. */
+  readonly track: string
+  /** Whether HEAD is on this branch. */
+  readonly current: boolean
+}
+
+/**
+ * The fields one branch record is read from.
+ *
+ * `%(HEAD)` is what makes the current branch free: it is the same `*` the
+ * `branch` command draws, answered by the same walk that lists the refs, so the
+ * dialog never asks a second question to find out where it is. `%(symref)` is
+ * carried only to drop a remote's symbolic `HEAD`, which shortens to a bare
+ * remote name and is not a branch anyone can delete.
+ */
+const REF_RECORD_FORMAT =
+  '%(refname:short)%00%(upstream:short)%00%(upstream:track)%00%(symref)%00%(HEAD)'
+
+/** One namespace's branch records, or why they could not be read. */
+type RefRecords =
+  | { readonly ok: true; readonly records: readonly RefRecord[]; readonly truncated: boolean }
+  | { readonly ok: false; readonly refusal: Refusal }
+
+/**
+ * Read one ref namespace as records, cut at the page's own bound.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param namespace - the ref namespace to read, e.g. `refs/heads/`.
+ * @returns the records, or why the read failed.
+ */
+async function readRefRecords(root: GitTarget, namespace: string): Promise<RefRecords> {
+  const list = await runGit(root, [
+    'for-each-ref', '--sort=-committerdate', `--count=${MAX_BRANCHES + 1}`,
+    `--format=${REF_RECORD_FORMAT}`, namespace,
+  ])
+  if (list.code !== 0) return { ok: false, refusal: refusalOf(list) }
+
+  const records: RefRecord[] = []
+  let truncated = false
+  for (const line of list.stdout.split('\n')) {
+    if (line === '') continue
+    const [name = '', upstream = '', track = '', symref = '', head = ''] = line.split('\0')
+    if (symref !== '') continue
+    if (records.length === MAX_BRANCHES) {
+      truncated = true
+      break
+    }
+    records.push({ name, upstream, track, current: head === '*' })
+  }
+  return { ok: true, records, truncated }
+}
+
+/** The names one `--merged` walk answered with, or why it could not answer. */
+type MergedNames =
+  | { readonly ok: true; readonly names: ReadonlySet<string> }
+  | { readonly ok: false; readonly refusal: Refusal }
+
+/**
+ * The branches in one namespace whose tip HEAD already reaches.
+ *
+ * This is half of `git branch -d`'s own rule — the other half is the branch's
+ * upstream — and it is asked as one walk rather than one `merge-base` per branch
+ * because the dialog's marks have to be drawn from a fixed number of calls.
+ *
+ * The answer is deliberately not cut at the list's own bound. A branch the page
+ * shows must be classified, and which branches a `--count` would keep depends on
+ * a sort that has nothing to do with which ones are merged, so a cut here would
+ * mark an arbitrary branch as unmerged. What comes back is one short name per
+ * line, which is the smallest answer this question has.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param namespace - the ref namespace to walk, e.g. `refs/heads/`.
+ * @returns the merged names, or why the walk failed.
+ */
+async function mergedRefNames(root: GitTarget, namespace: string): Promise<MergedNames> {
+  const list = await runGit(root, [
+    'for-each-ref', '--merged=HEAD', '--format=%(refname:short)', namespace,
+  ])
+  if (list.code !== 0) return { ok: false, refusal: refusalOf(list) }
+  const names = list.stdout.split('\n').filter(name => name !== '')
+  return { ok: true, names: new Set(names) }
+}
+
+/**
+ * The verdict one branch's badge states.
+ *
+ * `git branch -d` deletes a branch whose tip HEAD reaches, and one whose tip its
+ * own upstream reaches; it refuses everything else. So the two safe answers are
+ * a branch merged into HEAD and a branch whose upstream is level with it, and the
+ * three unsafe ones are told apart by what the reader would have to do about it:
+ * a branch no copy of which exists anywhere (`unmerged`), one with commits only
+ * this checkout has (`unpushed`), and one whose upstream has been deleted, which
+ * looks exactly like a branch that was never pushed and is the mark most worth
+ * spelling out (`gone`).
+ *
+ * @param record - the branch's own record.
+ * @param merged - whether HEAD already reaches this branch's tip.
+ * @returns the mark the row carries.
+ */
+function safetyOf(record: RefRecord, merged: boolean): BranchSafety {
+  if (merged) return 'safe'
+  if (record.upstream === '') return 'unmerged'
+  if (record.track.includes('gone')) return 'gone'
+  if (record.track.includes('ahead')) return 'unpushed'
+  // Not merged into HEAD, but every commit it has is already on its upstream:
+  // Git deletes this one, with a warning that says exactly that.
+  return 'safe'
+}
+
+/**
+ * The counts Git's own tracking note is made of.
+ *
+ * @param track - Git's `[ahead 1, behind 2]` note, possibly empty.
+ * @returns the counts it named, each absent when Git did not name it.
+ */
+function aheadBehindOf(track: string): { ahead?: number; behind?: number } {
+  const ahead = /ahead (\d+)/.exec(track)
+  const behind = /behind (\d+)/.exec(track)
+  return {
+    ...(ahead === null ? {} : { ahead: Number(ahead[1]) }),
+    ...(behind === null ? {} : { behind: Number(behind[1]) }),
+  }
+}
+
+/**
+ * Read the branches the delete dialog may offer, with the facts its marks need.
+ *
+ * A read of its own rather than a second half of `POST /branches`, because the
+ * two dialogs ask different questions: a switch wants names and nothing else,
+ * while this one wants each branch's upstream, its tracking state, and whether
+ * HEAD reaches it — three answers that cost walks the switch dialog would pay
+ * for on every open and never read.
+ *
+ * A remote-tracking branch is marked by the same rule as a local one, and the
+ * rule reads differently there: a remote branch HEAD does not reach is the
+ * ordinary case rather than a warning, so what the row says is simply that these
+ * commits are on that remote and nowhere else in this repository. Which remote
+ * owns the ref is resolved against the configured names rather than cut out of
+ * the ref, because a local branch may itself be called `origin/main`.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the two lists, each with its marks, and which branch HEAD is on.
+ */
+export async function readBranchReport(target: GitTarget): Promise<BranchReportPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  const locals = await readRefRecords(root, 'refs/heads/')
+  if (!locals.ok) return { ok: false, ...locals.refusal, reason: 'error' }
+  const remotes = await readRefRecords(root, 'refs/remotes/')
+  if (!remotes.ok) return { ok: false, ...remotes.refusal, reason: 'error' }
+
+  // `--merged=HEAD` has no answer on an unborn branch: there is nothing to merge
+  // into and, the list below being empty, nothing to classify either.
+  const localMerged = repo.hasHead
+    ? await mergedRefNames(root, 'refs/heads/')
+    : { ok: true as const, names: new Set<string>() }
+  if (!localMerged.ok) return { ok: false, ...localMerged.refusal, reason: 'error' }
+  const remoteMerged = repo.hasHead
+    ? await mergedRefNames(root, 'refs/remotes/')
+    : { ok: true as const, names: new Set<string>() }
+  if (!remoteMerged.ok) return { ok: false, ...remoteMerged.refusal, reason: 'error' }
+
+  const current = await currentBranch(root)
+  const configured = await remotesOf(root)
+
+  const localEntries: BranchEntry[] = locals.records.map(record => ({
+    name: record.name,
+    kind: 'local',
+    current: record.current,
+    safety: safetyOf(record, localMerged.names.has(record.name)),
+    ...(record.upstream === '' ? {} : { upstream: record.upstream }),
+    ...aheadBehindOf(record.track),
+  }))
+
+  const remoteEntries: BranchEntry[] = []
+  for (const record of remotes.records) {
+    const split = splitRemote(configured, record.name)
+    if (split === null) continue
+    remoteEntries.push({
+      name: record.name,
+      kind: 'remote',
+      remote: split.remote,
+      branch: split.branch,
+      safety: safetyOf(record, remoteMerged.names.has(record.name)),
+      ...aheadBehindOf(record.track),
+    })
+  }
+
+  return {
+    ok: true,
+    current,
+    detached: current === null,
+    locals: localEntries,
+    remotes: remoteEntries,
+    truncated: locals.truncated || remotes.truncated,
+  }
+}
+
+/**
+ * Delete the branches a request named, one at a time.
+ *
+ * One at a time rather than one `git branch -d a b c`, because the answer the
+ * dialog needs is per branch: Git reports a mixed batch by exiting nonzero and
+ * naming the branch it refused, and telling which of the others went through
+ * would mean reading Git's own prose back — text that is translated, and whose
+ * misreading would mark a branch deleted that is still there. The exit code of
+ * one call per branch is an answer no locale can change.
+ *
+ * Nothing here offers a force. `-d` is the whole gate, and it is the right one:
+ * it refuses exactly the branches whose commits would be left reachable from
+ * nothing, which is the promise every mark in the dialog is making.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param wanted - the branches to delete, in the order the page listed them.
+ * @returns one outcome per branch, and whether all of them succeeded.
+ */
+export async function deleteBranches(
+  target: GitTarget,
+  wanted: readonly BranchDeleteTarget[],
+): Promise<DeleteBranchesPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+  const configured = await remotesOf(root)
+
+  const results: BranchDeletion[] = []
+  for (const item of wanted) {
+    results.push(item.kind === 'remote'
+      ? await deleteRemoteBranch(root, configured, item)
+      : await deleteLocalBranch(root, item.name))
+  }
+  return { ok: results.every(result => result.ok), results }
+}
+
+/**
+ * Delete one local branch, with Git's own `-d` deciding.
+ *
+ * The name is checked against `refs/heads/` first so a name that is not a branch
+ * is stated as such rather than surfacing Git's wording, and the one shape Git
+ * would read as an option is refused here: `branch -d` takes a short name and
+ * cannot be handed a full ref — a fully-qualified name is answered with "branch
+ * not found" — so this is the one place a name this half passes on is not
+ * already unambiguous.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param name - the local branch to delete.
+ * @returns what became of it.
+ */
+async function deleteLocalBranch(root: GitTarget, name: string): Promise<BranchDeletion> {
+  if (name.startsWith('-') || !await refExists(root, `refs/heads/${name}`)) {
+    return { name, ok: false, ...coded('unknown-branch', { name }) }
+  }
+
+  const run = await runGit(root, ['branch', '-d', name])
+  if (run.code === 0) return { name, ok: true }
+  return { name, ok: false, ...deleteFailure(run, name) }
+}
+
+/**
+ * Delete one branch on the remote that holds it.
+ *
+ * The ref is passed fully qualified, which is what keeps a branch name that
+ * looks like an option from being read as one: `--delete` takes refs, and
+ * `refs/heads/...` is unambiguously a ref, so the name Git is told to remove is
+ * the name the dialog showed and not one the command line could reinterpret.
+ *
+ * The remote is checked against the configured ones because the page sends back
+ * the pair it was given rather than a name this half re-splits, and a request
+ * that names a remote the repository does not have is a refusal to state rather
+ * than a push to attempt.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param configured - the configured remote names.
+ * @param item - the remote-tracking branch to delete.
+ * @returns what became of it.
+ */
+async function deleteRemoteBranch(
+  root: GitTarget,
+  configured: readonly string[],
+  item: BranchDeleteTarget,
+): Promise<BranchDeletion> {
+  const remote = item.remote ?? ''
+  const branch = item.branch ?? ''
+  const named = remote === '' ? item.name : remote
+  if (branch === '' || branch.startsWith('-') || !configured.includes(remote)) {
+    return { name: item.name, ok: false, ...coded('unknown-remote', { remote: named }) }
+  }
+
+  const run = await runGit(
+    root,
+    ['push', remote, '--delete', `refs/heads/${branch}`],
+    [0],
+    GIT_NETWORK_TIMEOUT_MS,
+  )
+  if (run.code === 0) return { name: item.name, ok: true }
+  return { name: item.name, ok: false, ...remoteDeleteFailure(run, branch) }
+}
+
+/**
+ * Describe why deleting one local branch was refused.
+ *
+ * The two refusals the dialog can predict are worded here, because it is the
+ * dialog that predicted them: a branch Git will not delete for want of a merge
+ * is the case every mark but `safe` is warning about, and a branch some worktree
+ * is standing on — the current one included — is the case the dialog disables.
+ * Both sentences name the branch, because a batch's answer is read one line at a
+ * time and a line that does not say which branch it is about is not an answer.
+ *
+ * @param run - the failed invocation.
+ * @param name - the branch the request was deleting.
+ * @returns the coded refusal, or Git's own first line.
+ */
+function deleteFailure(run: GitRun, name: string): Refusal {
+  if (run.denied === true) return coded('delete-denied')
+
+  const text = diagnosticText(run)
+  if (BRANCH_NOT_MERGED.test(text)) return coded('branch-not-merged', { branch: name })
+  if (BRANCH_IN_USE.test(text)) return coded('branch-in-use', { branch: name })
+  return refusalOf(run)
+}
+
+/**
+ * Describe why deleting one remote branch was refused.
+ *
+ * The credential answers are the ones `fetch` already words, because a delete is
+ * a push and fails the same way when there is nothing to authenticate with;
+ * everything else is Git's own first line — a missing ref, an unreachable host,
+ * a rejected hook — which is more specific than anything this half could invent.
+ *
+ * @param run - the failed push invocation.
+ * @param branch - the branch name on the remote, for the one refusal that names it.
+ * @returns the coded refusal, or Git's own first line.
+ */
+function remoteDeleteFailure(run: GitRun, branch: string): Refusal {
+  if (run.denied === true) return coded('delete-denied')
+
+  const text = diagnosticText(run)
+  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) return coded('auth-helper')
+  if (AUTH_FAILURE.test(text)) return coded('auth')
+  if (REMOTE_REF_MISSING.test(text)) return coded('unknown-branch', { name: branch })
+  return refusalOf(run)
 }
 
 /**

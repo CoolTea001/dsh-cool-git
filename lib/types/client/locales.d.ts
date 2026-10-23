@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.message'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -51,6 +51,8 @@ type UiKey =
  | 'head.fetch'
 /** The menu's merge row, and the dialog it opens. */
  | 'head.mergeFrom'
+/** The menu's two branch rows, each opening a dialog of its own. */
+ | 'head.branchCreate' | 'head.branchDelete'
 /** The remote control in the history pane's header. */
  | 'remote.publish' | 'remote.sync'
 /** The two pane headers, each followed by its row count. */
@@ -59,6 +61,10 @@ type UiKey =
  | 'branch.title' | 'branch.description' | 'branch.cancel' | 'branch.confirm' | 'branch.search' | 'branch.list' | 'branch.current' | 'branch.local' | 'branch.remote' | 'branch.notRepo' | 'branch.none' | 'branch.loading' | 'branch.noMatch' | 'branch.truncated'
 /** The merge dialog, which reuses the branch dialog's list and footer. */
  | 'merge.titleFrom' | 'merge.descriptionFrom' | 'merge.confirm' | 'merge.noneFrom'
+/** The create dialog, which reuses the branch dialog's list as a start point. */
+ | 'create.title' | 'create.description' | 'create.name' | 'create.confirm' | 'create.none'
+/** The delete dialog, and the marks its rows carry. */
+ | 'delete.title' | 'delete.description' | 'delete.list' | 'delete.confirm' | 'delete.confirmCount' | 'delete.risky' | 'delete.none' | 'safety.safe' | 'safety.unmerged' | 'safety.unpushed' | 'safety.gone' | 'safety.current'
 /** The commit form. */
  | 'commit.placeholder' | 'commit.button' | 'commit.busy'
 /** The commit form's Generate control, and what the model asked be read first. */
@@ -123,6 +129,8 @@ export declare const en: {
     'title.commit': string;
     'title.diff': string;
     'title.branches': string;
+    'title.branchCreate': string;
+    'title.branchDelete': string;
     'title.message': string;
     'dialog.close': string;
     'dialog.ok': string;
@@ -132,6 +140,8 @@ export declare const en: {
     'head.refresh': string;
     'head.fetch': string;
     'head.mergeFrom': string;
+    'head.branchCreate': string;
+    'head.branchDelete': string;
     'remote.publish': string;
     'remote.sync': string;
     'pane.files': string;
@@ -154,6 +164,23 @@ export declare const en: {
     'merge.descriptionFrom': string;
     'merge.confirm': string;
     'merge.noneFrom': string;
+    'create.title': string;
+    'create.description': string;
+    'create.name': string;
+    'create.confirm': string;
+    'create.none': string;
+    'delete.title': string;
+    'delete.description': string;
+    'delete.list': string;
+    'delete.confirm': string;
+    'delete.confirmCount': string;
+    'delete.risky': string;
+    'delete.none': string;
+    'safety.safe': string;
+    'safety.unmerged': string;
+    'safety.unpushed': string;
+    'safety.gone': string;
+    'safety.current': string;
     'commit.placeholder': string;
     'commit.button': string;
     'commit.busy': string;
@@ -194,6 +221,7 @@ export declare const en: {
     'error.bad-hash': string;
     'error.missing-message': string;
     'error.missing-branch': string;
+    'error.missing-name': string;
     'error.git-denied': string;
     'error.git-exit': string;
     'error.no-root': string;
@@ -204,6 +232,12 @@ export declare const en: {
     'error.checkout-denied': string;
     'error.checkout-dirty': string;
     'error.checkout-dirty-paths': string;
+    'error.branch-exists': string;
+    'error.create-denied': string;
+    'error.delete-denied': string;
+    'error.branch-not-merged': string;
+    'error.branch-in-use': string;
+    'error.unknown-remote': string;
     'error.merge-denied': string;
     'error.merge-dirty': string;
     'error.merge-conflict': string;
