@@ -56,6 +56,27 @@ import { coded, type Refusal } from './refusal.js'
 const GIT_TIMEOUT_MS = 20_000
 
 /**
+ * The exit code Git uses for its own fatal refusals.
+ *
+ * `git rev-parse --show-toplevel` outside a repository is one of them, and it is
+ * the answer `resolveRepo` reads as "this directory has no repository". A
+ * command that never reached Git — no `git` on `PATH`, a sandbox denial, a shell
+ * that could not parse the line — exits with something else on POSIX, so the
+ * code is how the two are told apart there.
+ */
+const GIT_FATAL_EXIT = 128
+
+/**
+ * What Git prints when the directory has no repository at all.
+ *
+ * The text is also needed on Windows: a PowerShell 5.1 executor reports every
+ * failed native command as exit 1 (`$LASTEXITCODE` is not propagated; PowerShell
+ * 7 does), so the code alone cannot tell Git's fatal answer from a shell that
+ * never ran Git there.
+ */
+const NOT_A_REPO = /not a git repository/i
+
+/**
  * Wall-clock bound for the two invocations that cross the network.
  *
  * A fetch or a push legitimately takes longer than a local read — a slow remote
@@ -189,17 +210,49 @@ function inDir(target: GitTarget, workdir: string): GitTarget {
 }
 
 /**
+ * Which text domain the mounted shell executor parses the command string in.
+ *
+ * `ctx.shell` is one seam over two domains: the POSIX providers run the string
+ * through `bash -c`, and the Windows providers hand it to `pwsh -Command`, which
+ * parses PowerShell itself. A command line is therefore written for the parser
+ * that will read it — quoting is a property of the executor, not of Git.
+ */
+type ShellFlavor = 'posix' | 'powershell'
+
+/**
+ * Which domain the shell service in this composition speaks.
+ *
+ * The PowerShell executor publishes the `pwshPath` it resolved (see
+ * `@deepseek-ai/dsh-pwsh-local`), so its presence is the executor's own answer
+ * to this question — the seam itself carries no platform fact. A provider that
+ * announces nothing falls back to the host platform, which is where every
+ * shipped executor runs; the POSIX providers were the only ones before Windows
+ * had a counterpart.
+ *
+ * @param shell - the `shell` capability service.
+ * @returns the parser that will read this plugin's command strings.
+ */
+function shellFlavor(shell: any): ShellFlavor {
+  if (typeof shell?.pwshPath === 'string') return 'powershell'
+  return process.platform === 'win32' ? 'powershell' : 'posix'
+}
+
+/**
  * Quote one value for the shell line the seam runs.
  *
- * The seam executes the command as `bash -c <command>`, so every argument that
- * is not a literal this module wrote must survive as a single word. Wrapping in
- * single quotes does that; the only character that can end such a word is a
- * single quote itself, which is closed, escaped, and reopened.
+ * Every argument that is not a literal this module wrote must survive as a
+ * single word, and both parsers take a single-quoted word literally — no
+ * expansion, no backslash processing — so the only character that can end such
+ * a word is a single quote itself. Each domain closes and reopens that word its
+ * own way: POSIX escapes the quote outside the word, PowerShell doubles it
+ * inside.
  *
  * @param value - the raw argument.
+ * @param flavor - the parser that will read the line.
  * @returns a single quoted shell word.
  */
-function quote(value: string): string {
+function quote(value: string, flavor: ShellFlavor): string {
+  if (flavor === 'powershell') return `'${value.replace(/'/g, "''")}'`
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
@@ -207,10 +260,17 @@ function quote(value: string): string {
  * Build the full command line for one Git invocation.
  *
  * @param args - the subcommand and its arguments, each quoted individually.
+ * @param flavor - the parser that will read the line.
  * @returns the command string handed to `shell.resolve`.
  */
-function command(args: readonly string[]): string {
-  return ['git', '--no-pager', '-c', 'core.quotePath=false', ...args].map(quote).join(' ')
+function command(args: readonly string[], flavor: ShellFlavor): string {
+  const words = ['git', '--no-pager', '-c', 'core.quotePath=false', ...args].map(
+    (word) => quote(word, flavor),
+  )
+  // PowerShell reads a quoted word in command position as a string expression,
+  // and only the call operator runs it as a command; POSIX already runs a
+  // quoted first word (and `&` there would background it instead).
+  return flavor === 'powershell' ? `& ${words.join(' ')}` : words.join(' ')
 }
 
 function messageOf(error: unknown): string {
@@ -224,6 +284,8 @@ function messageOf(error: unknown): string {
  * @param args - subcommand and arguments, before quoting.
  * @param acceptCodes - exit codes that are a normal answer rather than a failure.
  * @param timeoutMs - wall-clock bound; the network commands raise it.
+ * @param stdin - text handed to the command on its standard input, for the one
+ *   argument that is free text rather than a name.
  * @returns the invocation's outcome; never rejects.
  */
 async function runGit(
@@ -231,10 +293,11 @@ async function runGit(
   args: readonly string[],
   acceptCodes: readonly number[] = [0],
   timeoutMs: number = GIT_TIMEOUT_MS,
+  stdin?: string,
 ): Promise<GitRun> {
   const { shell, sandboxPolicy } = target
   const request = {
-    command: command(args),
+    command: command(args, shellFlavor(shell)),
     workdir: target.workdir,
     timeoutMs,
     onExpiry: 'kill' as const,
@@ -243,6 +306,7 @@ async function runGit(
     // Carried only when there is one: an unconfined executor takes no policy,
     // and the seam stays free to apply its own fallback then.
     ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+    ...(stdin === undefined ? {} : { stdin }),
   }
 
   // resolve → execute → result is the seam's three-step protocol, and a throw at
@@ -318,7 +382,16 @@ function refusalOf(run: GitRun): Refusal {
 async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
   const top = await runGit(target, ['rev-parse', '--show-toplevel'])
   if (top.failure !== undefined) return { refusal: { error: top.failure }, reason: 'error' }
-  if (top.code !== 0) return { refusal: refusalOf(top), reason: 'no-repo' }
+  if (top.code !== 0) {
+    // Git's own "no repository here" answer — a fatal exit on POSIX, and the
+    // same sentence on Windows, whose PowerShell 5.1 executor reports every
+    // failed native command as exit 1. Any other nonzero exit is a failure to
+    // state as such: reporting every one of them as an empty directory is how a
+    // shell that could not run the command read as a directory holding no
+    // repository.
+    const noRepo = top.code === GIT_FATAL_EXIT || NOT_A_REPO.test(diagnosticText(top))
+    return { refusal: refusalOf(top), reason: noRepo ? 'no-repo' : 'error' }
+  }
   const root = top.stdout.trim()
   if (root === '') return { refusal: coded('no-root'), reason: 'no-repo' }
 
@@ -1471,7 +1544,12 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
 
   // No `--no-verify`: a repository's own hooks are part of what committing to it
   // means, and a hook that refuses is reported as the refusal it is.
-  const commit = await runGit(root, ['commit', '-m', message])
+  //
+  // `-F -` puts the message on stdin rather than on the command line: a commit
+  // message is free text, and a Windows PowerShell 5.1 executor drops the
+  // double quotes out of native arguments (it has no quoting layer to escape
+  // them), so `-m` would silently change what the user wrote.
+  const commit = await runGit(root, ['commit', '-F', '-'], [0], GIT_TIMEOUT_MS, message)
   if (commit.failure !== undefined) return { ok: false, error: commit.failure, reason: 'error' }
   if (commit.code !== 0) return commitFailure(commit)
 
