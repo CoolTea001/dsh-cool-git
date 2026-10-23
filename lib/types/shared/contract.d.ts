@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-direction' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-remote-target' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
@@ -150,15 +150,7 @@ export interface CheckoutPayload {
     /** The branch HEAD is on after a successful switch. */
     readonly branch?: string;
 }
-/**
- * Which way one merge runs.
- *
- * `to` merges this branch into the named one, `from` merges the named one into
- * this branch. Both leave HEAD where it was: the direction says which side of
- * the operation the current branch is on, not whether the working tree moves.
- */
-export type MergeDirection = 'to' | 'from';
-/** `POST /merge`: the outcome of merging one branch into another. */
+/** `POST /merge`: the outcome of merging one branch into the one HEAD is on. */
 export interface MergePayload {
     readonly ok: boolean;
     /** Raw diagnostic text: Git's own words, or a transport or seam message. */
@@ -167,17 +159,17 @@ export interface MergePayload {
     readonly failure?: Failure;
     /**
      * Why the merge did not happen, when the page can act on it: there is no
-     * repository, the named branch does not exist or is the wrong kind for the
-     * direction, HEAD is detached or unborn, the session may not write, local
-     * changes are in the way, or the two sides conflict.
+     * repository, the named branch does not exist, HEAD is detached or unborn, the
+     * session may not write, local changes are in the way, or the two sides
+     * conflict.
      */
-    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'remote-target' | 'same-branch' | 'detached' | 'no-commits' | 'denied' | 'dirty' | 'conflict';
+    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'same-branch' | 'detached' | 'no-commits' | 'denied' | 'dirty' | 'conflict';
     /**
-     * The branch the request named: the target for `to`, the source for `from`.
+     * The branch the request named, which is the merge's source.
      *
      * The Host echoes it back because the page words its own failure around it:
-     * both directions leave HEAD where it was, so the branch the dialog held is
-     * the only trace of what was asked once that dialog has closed.
+     * a merge leaves HEAD where it was, so the branch the dialog held is the only
+     * trace of what was asked once that dialog has closed.
      */
     readonly branch?: string;
     /**

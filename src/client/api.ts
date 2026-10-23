@@ -13,7 +13,6 @@ import type {
   CommitPayload,
   DiffPayload,
   LogPayload,
-  MergeDirection,
   MergePayload,
   MessagePayload,
   StatusPayload,
@@ -165,26 +164,23 @@ export function checkoutBranch(
 }
 
 /**
- * Ask the Host to merge one branch into another.
+ * Ask the Host to merge one branch into the one HEAD is on.
  *
- * The direction is the caller's, because it is what the user chose: `to` merges
- * this branch into the named one, `from` merges the named one into this one.
- * What the name may be is the Host's answer either way — a source may be a
- * remote-tracking ref, a target may not — and both directions leave the branch
- * HEAD is on where it is, so the page re-reads the repository afterwards rather
- * than switching anything itself.
+ * The named branch is the source, because that is the only merge Git has: it
+ * merges into the branch it is on, which is the branch the page is showing. What
+ * the name may be is the Host's answer — a local branch or a remote-tracking ref
+ * — and the merge leaves HEAD where it is, so the page re-reads the repository
+ * afterwards rather than switching anything itself.
  *
  * @param sessionId - the session whose directory Git runs in, when known.
- * @param branch - the branch to merge: the source for `from`, the target for `to`.
- * @param direction - which side of the merge the current branch is on.
+ * @param branch - the branch to merge in.
  * @returns the merge payload.
  */
 export function mergeBranch(
   sessionId: string | undefined,
   branch: string,
-  direction: MergeDirection,
 ): Promise<MergePayload> {
-  return postJson('/merge', { sessionId, branch, direction })
+  return postJson('/merge', { sessionId, branch })
 }
 
 /**

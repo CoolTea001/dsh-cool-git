@@ -12,13 +12,12 @@
  * under a `workspace-write` session — and refuse the very writes the session
  * allows.
  *
- * Reading is the bulk of this module. Six commands change something — the
- * branch switch, the merge in either direction, the fast-forward pull, the
- * push, and the commit — and each reports a sandbox refusal as such rather than
- * as a Git error, because under a `read-only` mode that refusal is the whole
- * answer. The commit is the one that writes the index as well as the history,
- * which is why it is a single call rather than a stage the page could leave
- * half-finished.
+ * Reading is the bulk of this module. Five commands change something — the
+ * branch switch, the merge, the fast-forward pull, the push, and the commit —
+ * and each reports a sandbox refusal as such rather than as a Git error, because
+ * under a `read-only` mode that refusal is the whole answer. The commit is the
+ * one that writes the index as well as the history, which is why it is a single
+ * call rather than a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -36,7 +35,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type LogPayload, type MergeDirection, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type DiffPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
@@ -230,16 +229,15 @@ export declare function readBranches(target: GitTarget): Promise<BranchesPayload
  */
 export declare function switchBranch(target: GitTarget, name: string): Promise<CheckoutPayload>;
 /**
- * Merge one branch into another, leaving HEAD where it was.
+ * Merge one branch into the branch HEAD is on.
  *
- * Two directions, one rule: the branch the reader stands on afterwards is the
- * branch they stood on before. `from` is a plain `git merge` and gets that for
- * free. `to` is the harder half, because Git can only merge *into* the branch it
- * is on — so it checks the target out, merges the current branch into it, and
- * checks the current branch back out. That is two working-tree moves around one
- * merge, which is why this direction asks for a clean tree first (see
- * `mergeInto`): uncommitted work would ride along to a branch nobody asked it to
- * visit.
+ * That is a plain `git merge`, and it is the only shape this page offers: Git
+ * merges into the branch it is on, and the branch it is on is the one the reader
+ * is looking at, so the operation stated is the operation Git has. The other
+ * direction — the current branch into a branch nobody is standing on — would be a
+ * checkout, a merge, and a checkout back: three working-tree moves for one
+ * intention, buying two saved clicks at the price of a commit made on a branch
+ * the page is not showing, where nothing on screen would show it happen.
  *
  * A conflicting merge is aborted rather than left in the tree. The page has no
  * way to finish one — the commit form refuses while unmerged paths exist — so an
@@ -247,17 +245,11 @@ export declare function switchBranch(target: GitTarget, name: string): Promise<C
  * avoid. Aborting puts the working tree back where it was and words the refusal;
  * the branch is then merged by hand, with Git's own tools and markers.
  *
- * The name is checked before anything runs, in the direction's own terms: a
- * merge source may be a local or a remote-tracking branch, while only a local
- * one can be a target, because a remote-tracking ref is a name Git accepts on
- * the command line and cannot move.
- *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param name - the branch the request named: the target for `to`, the source for `from`.
- * @param direction - which side of the merge the current branch is on.
+ * @param name - the branch to merge in, local or remote-tracking.
  * @returns the outcome, including the reason a merge was refused.
  */
-export declare function mergeBranch(target: GitTarget, name: string, direction: MergeDirection): Promise<MergePayload>;
+export declare function mergeBranch(target: GitTarget, name: string): Promise<MergePayload>;
 /**
  * Pull the current branch from its upstream.
  *

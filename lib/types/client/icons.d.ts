@@ -46,8 +46,8 @@ export declare const IconRefresh: () => ReactElement;
  * (assets/more.svg).
  *
  * One control for the operations the sidebar's first row cannot afford a button
- * each — Refresh, Merge to, Merge from — which is also why the glyph is a mark
- * for a list rather than for any one of them.
+ * each — Refresh, Merge from — which is also why the glyph is a mark for a list
+ * rather than for any one of them.
  */
 export declare const IconMore: () => ReactElement;
 /**

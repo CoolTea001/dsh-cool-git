@@ -40,7 +40,6 @@ export type FailureCode =
   | 'bad-hash'
   | 'missing-message'
   | 'missing-branch'
-  | 'missing-direction'
   // Reading the repository.
   | 'git-denied'
   | 'git-exit'
@@ -58,7 +57,6 @@ export type FailureCode =
   | 'merge-dirty'
   | 'merge-conflict'
   | 'merge-same-branch'
-  | 'merge-remote-target'
   | 'merge-detached'
   | 'merge-no-commits'
   // Handing off to the remote.
@@ -225,16 +223,7 @@ export interface CheckoutPayload {
   readonly branch?: string
 }
 
-/**
- * Which way one merge runs.
- *
- * `to` merges this branch into the named one, `from` merges the named one into
- * this branch. Both leave HEAD where it was: the direction says which side of
- * the operation the current branch is on, not whether the working tree moves.
- */
-export type MergeDirection = 'to' | 'from'
-
-/** `POST /merge`: the outcome of merging one branch into another. */
+/** `POST /merge`: the outcome of merging one branch into the one HEAD is on. */
 export interface MergePayload {
   readonly ok: boolean
   /** Raw diagnostic text: Git's own words, or a transport or seam message. */
@@ -243,15 +232,14 @@ export interface MergePayload {
   readonly failure?: Failure
   /**
    * Why the merge did not happen, when the page can act on it: there is no
-   * repository, the named branch does not exist or is the wrong kind for the
-   * direction, HEAD is detached or unborn, the session may not write, local
-   * changes are in the way, or the two sides conflict.
+   * repository, the named branch does not exist, HEAD is detached or unborn, the
+   * session may not write, local changes are in the way, or the two sides
+   * conflict.
    */
   readonly reason?:
     | 'no-repo'
     | 'error'
     | 'unknown-branch'
-    | 'remote-target'
     | 'same-branch'
     | 'detached'
     | 'no-commits'
@@ -259,11 +247,11 @@ export interface MergePayload {
     | 'dirty'
     | 'conflict'
   /**
-   * The branch the request named: the target for `to`, the source for `from`.
+   * The branch the request named, which is the merge's source.
    *
    * The Host echoes it back because the page words its own failure around it:
-   * both directions leave HEAD where it was, so the branch the dialog held is
-   * the only trace of what was asked once that dialog has closed.
+   * a merge leaves HEAD where it was, so the branch the dialog held is the only
+   * trace of what was asked once that dialog has closed.
    */
   readonly branch?: string
   /**

@@ -93,7 +93,6 @@ import type {
   CommitSummary,
   Failure,
   LogPayload,
-  MergeDirection,
   StatusPayload,
 } from '../shared/contract.js'
 
@@ -158,18 +157,6 @@ const KIND_KEY: Readonly<Record<ChangeKind, MessageKey>> = {
 
 /** The half of a remote round trip that is running, if any. */
 type RemoteRun = 'pull' | 'push'
-
-/**
- * One merge in flight: the branch the request named, and the way it runs.
- *
- * The pair is kept rather than the direction alone because both are needed when
- * the answer arrives — the direction picks the heading, and the branch is the
- * name that heading and its reason are worded around.
- */
-interface MergeRun {
-  readonly branch: string
-  readonly direction: MergeDirection
-}
 
 /** Which row the diff pane is showing, if any. */
 type Selection =
@@ -535,8 +522,8 @@ export function GitView(props: {
   const [refreshing, setRefreshing] = useState(false)
   /** The branch a checkout is in flight for, or null at rest. */
   const [switching, setSwitching] = useState<string | null>(null)
-  /** The merge in flight: the branch it names and the way it runs, or null at rest. */
-  const [merging, setMerging] = useState<MergeRun | null>(null)
+  /** The branch a merge is in flight for, or null at rest. */
+  const [merging, setMerging] = useState<string | null>(null)
   /** The half of the remote round trip in flight, or null at rest. */
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   /** Whether the changed-path pane's commit is in flight. */
@@ -743,25 +730,25 @@ export function GitView(props: {
   }, [sessionId, handleSwitched, reportError, t])
 
   /**
-   * Merge the branch the dialog confirmed, the way that dialog was opened.
+   * Merge the branch the dialog confirmed into the branch HEAD is on.
    *
-   * One handler for both directions because the page's part is identical: the
-   * branch and the direction go over the wire, and the Host decides what a name
-   * may be from the direction. Neither direction moves HEAD, but both rewrite the
-   * history — and a fast-forward rewrites the working tree as well — so a success
-   * takes the checkout's path and re-reads everything. A refusal is the error
-   * dialog's, worded around the branch the request named.
+   * The page's part is one name: the Host decides what a name may be, and Git
+   * merges into the branch it is on. The merge leaves HEAD where it is, but it
+   * rewrites the history — and a fast-forward rewrites the working tree as well —
+   * so a success takes the checkout's path and re-reads everything. A refusal is
+   * the error dialog's, worded around the branch the request named.
    *
-   * @param branch - the branch the dialog confirmed: the source or the target.
-   * @param direction - which side of the merge the current branch is on.
+   * @param branch - the branch the dialog confirmed, which is the merge's source.
    */
-  const handleMerge = useCallback((branch: string, direction: MergeDirection): void => {
-    setMerging({ branch, direction })
-    void mergeBranch(sessionId, branch, direction).then(result => {
+  const handleMerge = useCallback((branch: string): void => {
+    setMerging(branch)
+    void mergeBranch(sessionId, branch).then(result => {
       setMerging(null)
       if (result?.ok !== true) {
-        const title = direction === 'to' ? 'title.mergeTo' : 'title.mergeFrom'
-        reportError({ title: t(title, { branch }), lines: [reasonOf(t, result, title, { branch })] })
+        reportError({
+          title: t('title.mergeFrom', { branch }),
+          lines: [reasonOf(t, result, 'title.mergeFrom', { branch })],
+        })
         return
       }
       handleSwitched()
@@ -1135,18 +1122,17 @@ function ErrorDialog(props: {
  *
  * More is one control rather than a button per operation because the row has to
  * fit the sidebar's own floor: Refresh used to be the row's single icon, and the
- * two merges would have been two more. A menu states them by name instead — a
- * dropdown can be as wide as its words, and a 22px square cannot.
+ * merge would have been one more. A menu states them by name instead — a dropdown
+ * can be as wide as its words, and a 22px square cannot.
  *
- * The branch switch and the two merges are all stated as decisions rather than
+ * The branch switch and the merge are both stated as decisions rather than
  * accidents: the dialog lists what Git reported and applies nothing until the
  * choice is confirmed with a button of its own, and this row closes it before
  * handing the branch to the page. Which decision it is comes from the menu row
  * that opened it — Refresh runs at once because it has nothing to choose, while
- * a merge is one word away from being the wrong direction and gets a dialog of
- * its own. The operations themselves are the page's (`GitView`), which owns
- * every operation in flight and disables the rest of the page's controls while
- * one runs.
+ * a merge names another branch and gets a dialog of its own. The operations
+ * themselves are the page's (`GitView`), which owns every operation in flight and
+ * disables the rest of the page's controls while one runs.
  *
  * The dialog is the platform's own Modal, which owns the parts that are easy to
  * get wrong — the body portal, the mask, the focus walk, Escape, and returning
@@ -1168,7 +1154,7 @@ function ErrorDialog(props: {
  * @param props.busy - whether any repository operation is in flight.
  * @param props.onRefresh - called to re-read the repository state and history.
  * @param props.onCheckout - called with the branch the dialog confirmed.
- * @param props.onMerge - called with the branch and the direction confirmed.
+ * @param props.onMerge - called with the branch the dialog confirmed.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the header row.
  */
@@ -1182,7 +1168,7 @@ function SideHead(props: {
   readonly busy: boolean
   readonly onRefresh: () => void
   readonly onCheckout: (branch: string) => void
-  readonly onMerge: (branch: string, direction: MergeDirection) => void
+  readonly onMerge: (branch: string) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const {
@@ -1215,11 +1201,8 @@ function SideHead(props: {
   const choose = useCallback((branch: string): void => {
     const mode = pick
     setPick(null)
-    if (mode === 'merge-to' || mode === 'merge-from') {
-      onMerge(branch, mode === 'merge-to' ? 'to' : 'from')
-      return
-    }
-    onCheckout(branch)
+    if (mode === 'merge-from') onMerge(branch)
+    else onCheckout(branch)
   }, [pick, onCheckout, onMerge])
 
   /**
@@ -1234,19 +1217,17 @@ function SideHead(props: {
   const runMenuRow = useCallback((id: string): void => {
     setMenuOpen(false)
     if (id === 'refresh') onRefresh()
-    else if (id === 'merge-to') setPick('merge-to')
     else if (id === 'merge-from') setPick('merge-from')
   }, [onRefresh])
 
   // The rows, in the order a reader meets them: the one operation that runs at
-  // once, then the two that each need a branch to be chosen first. The rule
-  // between them is the menu's own way of saying which is which. No row carries
-  // a glyph: the words are the whole of what each row does, and three icons in a
-  // 144px card would only take width from them.
+  // once, then the one that needs a branch to be chosen first. The rule between
+  // them is the menu's own way of saying which is which. No row carries a glyph:
+  // the words are the whole of what each row does, and icons in a 144px card
+  // would only take width from them.
   const menuItems = [
     { id: 'refresh', label: t('head.refresh') },
     { type: 'separator' as const, id: 'merge' },
-    { id: 'merge-to', label: t('head.mergeTo') },
     { id: 'merge-from', label: t('head.mergeFrom') },
   ]
 
@@ -1295,8 +1276,8 @@ function SideHead(props: {
             aria-haspopup="dialog"
             aria-expanded={pick === 'switch'}
             // The pill opens the one decision it names: a switch. The list is
-            // shared with the two merges, so what the pill toggles is the mode,
-            // and a picker opened from the menu is left alone.
+            // shared with the merge, so what the pill toggles is the mode, and a
+            // picker opened from the menu is left alone.
             onClick={() => setPick(value => (value === 'switch' ? null : 'switch'))}
           >
             <span
@@ -1591,13 +1572,12 @@ const BRANCH_GROUP_KEY: Readonly<Record<BranchGroup, MessageKey>> = {
 /**
  * What the branch list was opened for.
  *
- * One dialog for the three decisions because the decision and the list are the
- * same shape: which branch. Only the words change, and which branches may be
- * picked — a switch may land on any branch, a merge may name only another one,
- * and only a merge *from* may name a remote-tracking branch, because a
- * remote-tracking ref can be merged in and cannot be merged into.
+ * One dialog for the two decisions because the decision and the list are the same
+ * shape: which branch. Only the words change, and which branches may be picked —
+ * a switch may land on any branch, and a merge may name another one, local or
+ * remote-tracking, but never the branch HEAD is already on.
  */
-type BranchPick = 'switch' | 'merge-to' | 'merge-from'
+type BranchPick = 'switch' | 'merge-from'
 
 /**
  * The branches Git reports, as a dialog the choice is confirmed in.
@@ -1608,9 +1588,9 @@ type BranchPick = 'switch' | 'merge-to' | 'merge-from'
  * come from — current, local, remote — each labelled where it starts, so a
  * remote name is never mistaken for a local one of the same shape and the branch
  * already checked out needs no mark of its own. Which groups are offered is the
- * decision's answer rather than a setting: a switch lists all three, a merge from
- * drops the branch HEAD is on (a branch cannot be merged into itself), and a
- * merge to keeps only the local ones.
+ * decision's answer rather than a setting: a switch lists all three, while a
+ * merge drops the branch HEAD is on, because Git refuses to merge a branch into
+ * itself.
  *
  * The pointer is the whole of the selection: a click marks one row — a switch
  * opens on the branch it is already showing, while a merge opens on nothing,
@@ -1755,21 +1735,13 @@ function BranchDialog(props: {
     }
   })
 
-  // The three decisions differ only in their words, and in which rows they may
-  // offer. A switch is the dialog's original reading: every group, with the
-  // branch HEAD is on among them. A merge may not name that branch — Git refuses
-  // to merge a branch into itself — so its row goes; and only the direction that
-  // merges *from* keeps the remote-tracking refs, because a remote-tracking ref
-  // can be merged in and cannot be merged into.
-  const title = mode === 'merge-to'
-    ? t('merge.titleTo')
-    : mode === 'merge-from' ? t('merge.titleFrom') : t('branch.title')
-  const description = mode === 'merge-to'
-    ? t('merge.descriptionTo')
-    : mode === 'merge-from' ? t('merge.descriptionFrom') : t('branch.description')
-  const emptyText = mode === 'merge-to'
-    ? t('merge.noneTo')
-    : mode === 'merge-from' ? t('merge.noneFrom') : t('branch.none')
+  // The two decisions differ only in their words, and in which rows they may
+  // offer. A switch is the dialog's original reading: every group, with the branch
+  // HEAD is on among them. A merge may not name that branch — Git refuses to merge
+  // a branch into itself — so its row goes.
+  const title = mode === 'merge-from' ? t('merge.titleFrom') : t('branch.title')
+  const description = mode === 'merge-from' ? t('merge.descriptionFrom') : t('branch.description')
+  const emptyText = mode === 'merge-from' ? t('merge.noneFrom') : t('branch.none')
 
   // `null` is the one state that means "no answer yet": an answer that named no
   // branch is an empty list, which is a fact this dialog states rather than a
@@ -1785,7 +1757,7 @@ function BranchDialog(props: {
     ...(branches ?? [])
       .filter(name => name !== current)
       .map(name => ({ name, group: 'local' as const })),
-    ...(mode === 'merge-to' ? [] : remoteBranches.map(name => ({ name, group: 'remote' as const }))),
+    ...remoteBranches.map(name => ({ name, group: 'remote' as const })),
   ]
 
   /**
