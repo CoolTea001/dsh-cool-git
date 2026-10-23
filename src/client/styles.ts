@@ -267,7 +267,13 @@ const GIT_CSS = [
   // the way down. At zero the name is gone from the row entirely — the icon's gap
   // that the name was paying for goes with it, and what is left of that gap simply
   // runs into the pill's own padding, where nothing is drawn.
-  '.dsh-cg-branch-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  //
+  // It states its own `text-align` because the pill is a `<button>`, and the
+  // browser's button stylesheet centres a button's text: while the name is shortened
+  // below its own width that centring is what would cut the name at both ends
+  // instead of ending it in an ellipsis — and any frame that widened this label
+  // without moving the icon with it would open a hollow between the two.
+  '.dsh-cg-branch-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
   // The pill's anchor is where the row is told what may be shortened, and in which
   // order. A deficit is shared in proportion to each item's `flex-shrink` times its
   // base size, so "first" and "second" are a ratio: the pill carries a thousand
@@ -360,8 +366,14 @@ const GIT_CSS = [
   // The create dialog's name field, which sits above the filter and is the one
   // control in that dialog the reader has to fill in. It is spaced like the
   // filter below it so the two read as one column of fields.
-  '.dsh-cg-branch-name{flex:none;width:100%;box-sizing:border-box}',
-  '.dsh-cg-branch-name+.dsh-cg-branch-filter{margin-top:8px}',
+  //
+  // Its class is the dialog's own and stays distinct from the pill's
+  // `dsh-cg-branch-name`: the two are different elements — a field frame here, a
+  // label there — and sharing the name put this rule's `width:100%` on the pill's
+  // label, which the button's centred text then stretched away from the icon and
+  // over the pill's right edge.
+  '.dsh-cg-branch-create-name{flex:none;width:100%;box-sizing:border-box}',
+  '.dsh-cg-branch-create-name+.dsh-cg-branch-filter{margin-top:8px}',
 
   // One row of the delete dialog. It is a `label` rather than a `button` because
   // the checkbox inside it is the control: a click anywhere on the row is a click

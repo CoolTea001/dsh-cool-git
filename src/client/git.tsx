@@ -2062,7 +2062,7 @@ function BranchDialog(props: {
         {mode === 'create'
           ? (
             <Input
-              className="dsh-cg-branch-name"
+              className="dsh-cg-branch-create-name"
               type="text"
               value={name}
               placeholder={t('create.name')}
