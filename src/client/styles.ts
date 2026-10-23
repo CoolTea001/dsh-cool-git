@@ -184,7 +184,7 @@ const GIT_CSS = [
   '.dsh-cg-tip .dsh-cg-icon:disabled,.dsh-cg-tip .dsh-cg-branch:disabled{pointer-events:none}',
   '@keyframes dsh-cg-spin{to{transform:rotate(360deg)}}',
   // One spin for every glyph that marks a wait: the branch pill, the two halves
-  // of the sync button, the refresh control, and the commit form's Generate
+  // of the sync button, the More control, and the commit form's Generate
   // square — which the rule names rather than the toolbar's `.dsh-cg-icon`
   // because that one is the platform's primary button and wears no class of the
   // toolbar's own. The sync button's arrows turn
@@ -194,14 +194,16 @@ const GIT_CSS = [
   '.dsh-cg-icon[data-busy=true] svg,.dsh-cg-branch-icon[data-busy=true] svg,.dsh-cg-sync-arrow[data-busy=true] svg,.dsh-cg-commit-generate[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
-  // beside it, and then the one control the row keeps — Refresh. It draws no rule of
+  // beside it, and then the one control the row keeps — More. It draws no rule of
   // its own: the toolbar and the commit form below it are one block of the column,
   // closed together by the form's own hairline (see `.dsh-cg-commit-bar`). Each
   // name carries its own glyph (a directory for the Workspace, a forked commit for
   // the branch), so the row states which is which without either label having to
-  // say it; the operation is an icon rather than a word because the controls have
-  // to fit the row at its narrowest, which is the sidebar's own floor. The remote
-  // control is not here: it lives in Commit history's header, beside the commits it moves.
+  // say it; the control is an icon rather than a word because it has to fit the row
+  // at its narrowest, which is the sidebar's own floor — the operations behind it
+  // are named in the menu, which can afford to be as wide as its words. The remote
+  // control is not here: it lives in Commit history's header, beside the commits it
+  // moves.
   //
   // Two of the row's parts may give ground, and the branch's name goes first: the
   // pill is the row's own item rather than a member of the group beside it, because
@@ -230,7 +232,7 @@ const GIT_CSS = [
   // that pixel swallows the fraction, and a real loss — the pill already down to
   // its icon — is still the ellipsis it should be.
   '.dsh-cg-workspace-name{min-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // The icon-button group both rows end with — Refresh in the sidebar's first row
+  // The icon-button group both rows end with — More in the sidebar's first row
   // and the remote control in Commit history's header. `margin-left:auto` is what
   // keeps the group at its row's right edge however long the name on the left is,
   // and `flex:none` is what makes the group the fixed part of the row: the control

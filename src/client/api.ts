@@ -13,6 +13,8 @@ import type {
   CommitPayload,
   DiffPayload,
   LogPayload,
+  MergeDirection,
+  MergePayload,
   MessagePayload,
   StatusPayload,
   SyncPayload,
@@ -147,9 +149,9 @@ export function fetchBranches(sessionId: string | undefined): Promise<BranchesPa
 /**
  * Ask the Host to check out one branch.
  *
- * This is the only call that changes the repository: the Host runs a real
- * checkout, so the working tree on disk is different afterwards and every
- * other answer on this page is stale.
+ * This is one of the calls that change the repository, and it is the one that
+ * moves HEAD: the Host runs a real checkout, so the working tree on disk is
+ * different afterwards and every other answer on this page is stale.
  *
  * @param sessionId - the session whose directory Git runs in, when known.
  * @param branch - the local or remote-tracking branch to switch to.
@@ -160,6 +162,29 @@ export function checkoutBranch(
   branch: string,
 ): Promise<CheckoutPayload> {
   return postJson('/checkout', { sessionId, branch })
+}
+
+/**
+ * Ask the Host to merge one branch into another.
+ *
+ * The direction is the caller's, because it is what the user chose: `to` merges
+ * this branch into the named one, `from` merges the named one into this one.
+ * What the name may be is the Host's answer either way — a source may be a
+ * remote-tracking ref, a target may not — and both directions leave the branch
+ * HEAD is on where it is, so the page re-reads the repository afterwards rather
+ * than switching anything itself.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param branch - the branch to merge: the source for `from`, the target for `to`.
+ * @param direction - which side of the merge the current branch is on.
+ * @returns the merge payload.
+ */
+export function mergeBranch(
+  sessionId: string | undefined,
+  branch: string,
+  direction: MergeDirection,
+): Promise<MergePayload> {
+  return postJson('/merge', { sessionId, branch, direction })
 }
 
 /**

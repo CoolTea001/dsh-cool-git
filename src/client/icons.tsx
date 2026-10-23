@@ -97,6 +97,16 @@ export const IconPublish = svgIcon('publish')
 export const IconRefresh = svgIcon('refresh')
 
 /**
+ * The toolbar's overflow trigger: the mark that opens the More menu
+ * (assets/more.svg).
+ *
+ * One control for the operations the sidebar's first row cannot afford a button
+ * each — Refresh, Merge to, Merge from — which is also why the glyph is a mark
+ * for a list rather than for any one of them.
+ */
+export const IconMore = svgIcon('more')
+
+/**
  * Copy the patch on screen: the Diff pane header's copy control
  * (assets/copy.svg).
  */

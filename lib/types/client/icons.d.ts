@@ -42,6 +42,15 @@ export declare const IconPublish: () => ReactElement;
 /** Re-read the repository (assets/refresh.svg). */
 export declare const IconRefresh: () => ReactElement;
 /**
+ * The toolbar's overflow trigger: the mark that opens the More menu
+ * (assets/more.svg).
+ *
+ * One control for the operations the sidebar's first row cannot afford a button
+ * each — Refresh, Merge to, Merge from — which is also why the glyph is a mark
+ * for a list rather than for any one of them.
+ */
+export declare const IconMore: () => ReactElement;
+/**
  * Copy the patch on screen: the Diff pane header's copy control
  * (assets/copy.svg).
  */

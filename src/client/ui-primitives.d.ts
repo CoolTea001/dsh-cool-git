@@ -105,4 +105,52 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
   /** Attach a hover/focus tooltip to one anchor element. */
   export function Tooltip(props: TooltipProps): ReactElement
+
+  /** One selectable row of a {@link Menu}'s list. */
+  export interface MenuItem {
+    /** Stable id, handed back to the menu's `onSelect`. */
+    id: string
+    /** Visible row label. */
+    label: ReactNode
+    /** Leading icon, rendered in the row's own gutter. */
+    icon?: ReactNode
+    /** Whether the row cannot be activated. */
+    disabled?: boolean
+  }
+
+  /** A hairline between two runs of rows; not selectable. */
+  export interface MenuSeparator {
+    type: 'separator'
+    id: string
+  }
+
+  /** One primary-menu entry: a row or a separator. */
+  export type MenuEntry = MenuItem | MenuSeparator
+
+  /** Anchored dropdown menu props (the subset this plugin uses). */
+  export interface MenuProps {
+    /** Whether the list is showing (owner-controlled). */
+    open: boolean
+    /** The trigger element, rendered in place inside the menu's own wrapper. */
+    anchor: ReactNode
+    /** Selectable rows and separators, in the order the list draws them. */
+    items?: readonly MenuEntry[]
+    /** Row activation; closing the list stays the owner's decision. */
+    onSelect?: (id: string) => void
+    /** Outside click, Escape, or a blur that moved focus into an iframe. */
+    onClose: () => void
+    /** List alignment against the anchor (default `start`). */
+    align?: 'start' | 'end'
+    /** Open below (`bottom`, default) or above (`top`) the anchor. */
+    side?: 'bottom' | 'top' | 'right'
+    /** Render the list into `document.body`, escaping ancestor clipping. */
+    portal?: boolean
+    /** Extra class on the anchor wrapper span. */
+    className?: string
+    /** Extra class on the dropdown card; the only hook that reaches a portaled list. */
+    listClassName?: string
+  }
+
+  /** Render an anchored dropdown menu with its own keyboard walk. */
+  export function Menu(props: MenuProps): ReactElement
 }

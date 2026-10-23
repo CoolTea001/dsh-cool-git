@@ -38,17 +38,25 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.message'
+ | 'title.switchBranch' | 'title.refresh' | 'title.mergeTo' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.message'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
- | 'head.currentBranch' | 'head.detached' | 'head.refresh'
+ | 'head.currentBranch' | 'head.detached'
+/** The row's overflow control: the menu it opens, not one of the rows inside it. */
+ | 'head.more'
+/** The menu's Refresh row, which is the operation the row used to carry alone. */
+ | 'head.refresh'
+/** The menu's two merge rows, and the dialog each one opens. */
+ | 'head.mergeTo' | 'head.mergeFrom'
 /** The remote control in the history pane's header. */
  | 'remote.publish' | 'remote.sync'
 /** The two pane headers, each followed by its row count. */
  | 'pane.files' | 'pane.history'
 /** The branch dialog. */
  | 'branch.title' | 'branch.description' | 'branch.cancel' | 'branch.confirm' | 'branch.search' | 'branch.list' | 'branch.current' | 'branch.local' | 'branch.remote' | 'branch.notRepo' | 'branch.none' | 'branch.loading' | 'branch.noMatch' | 'branch.truncated'
+/** The merge dialogs, which reuse the branch dialog's list and footer. */
+ | 'merge.titleTo' | 'merge.descriptionTo' | 'merge.titleFrom' | 'merge.descriptionFrom' | 'merge.confirm' | 'merge.noneTo' | 'merge.noneFrom'
 /** The commit form. */
  | 'commit.placeholder' | 'commit.button' | 'commit.busy'
 /** The commit form's Generate control, and what the model asked be read first. */
@@ -105,6 +113,8 @@ export declare const en: {
     'fallback.message': string;
     'title.switchBranch': string;
     'title.refresh': string;
+    'title.mergeTo': string;
+    'title.mergeFrom': string;
     'title.pull': string;
     'title.push': string;
     'title.publish': string;
@@ -116,7 +126,10 @@ export declare const en: {
     'dialog.ok': string;
     'head.currentBranch': string;
     'head.detached': string;
+    'head.more': string;
     'head.refresh': string;
+    'head.mergeTo': string;
+    'head.mergeFrom': string;
     'remote.publish': string;
     'remote.sync': string;
     'pane.files': string;
@@ -135,6 +148,13 @@ export declare const en: {
     'branch.loading': string;
     'branch.noMatch': string;
     'branch.truncated': string;
+    'merge.titleTo': string;
+    'merge.descriptionTo': string;
+    'merge.titleFrom': string;
+    'merge.descriptionFrom': string;
+    'merge.confirm': string;
+    'merge.noneTo': string;
+    'merge.noneFrom': string;
     'commit.placeholder': string;
     'commit.button': string;
     'commit.busy': string;
@@ -175,6 +195,7 @@ export declare const en: {
     'error.bad-hash': string;
     'error.missing-message': string;
     'error.missing-branch': string;
+    'error.missing-direction': string;
     'error.git-denied': string;
     'error.git-exit': string;
     'error.no-root': string;
@@ -185,6 +206,13 @@ export declare const en: {
     'error.checkout-denied': string;
     'error.checkout-dirty': string;
     'error.checkout-dirty-paths': string;
+    'error.merge-denied': string;
+    'error.merge-dirty': string;
+    'error.merge-conflict': string;
+    'error.merge-same-branch': string;
+    'error.merge-remote-target': string;
+    'error.merge-detached': string;
+    'error.merge-no-commits': string;
     'error.pull-no-commits': string;
     'error.push-no-commits': string;
     'error.pull-detached': string;

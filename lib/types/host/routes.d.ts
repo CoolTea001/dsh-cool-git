@@ -32,6 +32,7 @@ export declare const ROUTES: {
     readonly message: "/dsh-cool-git/api/message";
     readonly branches: "/dsh-cool-git/api/branches";
     readonly checkout: "/dsh-cool-git/api/checkout";
+    readonly merge: "/dsh-cool-git/api/merge";
     readonly pull: "/dsh-cool-git/api/pull";
     readonly push: "/dsh-cool-git/api/push";
 };

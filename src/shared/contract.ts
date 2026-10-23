@@ -40,6 +40,7 @@ export type FailureCode =
   | 'bad-hash'
   | 'missing-message'
   | 'missing-branch'
+  | 'missing-direction'
   // Reading the repository.
   | 'git-denied'
   | 'git-exit'
@@ -52,6 +53,14 @@ export type FailureCode =
   | 'checkout-denied'
   | 'checkout-dirty'
   | 'checkout-dirty-paths'
+  // Merging one branch into another.
+  | 'merge-denied'
+  | 'merge-dirty'
+  | 'merge-conflict'
+  | 'merge-same-branch'
+  | 'merge-remote-target'
+  | 'merge-detached'
+  | 'merge-no-commits'
   // Handing off to the remote.
   | 'pull-no-commits'
   | 'push-no-commits'
@@ -214,6 +223,57 @@ export interface CheckoutPayload {
   readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'denied' | 'dirty'
   /** The branch HEAD is on after a successful switch. */
   readonly branch?: string
+}
+
+/**
+ * Which way one merge runs.
+ *
+ * `to` merges this branch into the named one, `from` merges the named one into
+ * this branch. Both leave HEAD where it was: the direction says which side of
+ * the operation the current branch is on, not whether the working tree moves.
+ */
+export type MergeDirection = 'to' | 'from'
+
+/** `POST /merge`: the outcome of merging one branch into another. */
+export interface MergePayload {
+  readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+  readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
+  /**
+   * Why the merge did not happen, when the page can act on it: there is no
+   * repository, the named branch does not exist or is the wrong kind for the
+   * direction, HEAD is detached or unborn, the session may not write, local
+   * changes are in the way, or the two sides conflict.
+   */
+  readonly reason?:
+    | 'no-repo'
+    | 'error'
+    | 'unknown-branch'
+    | 'remote-target'
+    | 'same-branch'
+    | 'detached'
+    | 'no-commits'
+    | 'denied'
+    | 'dirty'
+    | 'conflict'
+  /**
+   * The branch the request named: the target for `to`, the source for `from`.
+   *
+   * The Host echoes it back because the page words its own failure around it:
+   * both directions leave HEAD where it was, so the branch the dialog held is
+   * the only trace of what was asked once that dialog has closed.
+   */
+  readonly branch?: string
+  /**
+   * The Host's own one-line account of what the merge did, on success.
+   *
+   * The same register as Git's own output, and the page does not draw it today:
+   * a successful merge is reported by the re-read state, and the error dialog is
+   * the only place a failed one is worded.
+   */
+  readonly summary?: string
 }
 
 /** `POST /pull` and `POST /push`: the outcome of one hand-off with the remote. */

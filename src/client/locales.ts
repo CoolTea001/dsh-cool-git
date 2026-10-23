@@ -62,6 +62,8 @@ type UiKey =
   /** The heading over each failure the page can report. */
   | 'title.switchBranch'
   | 'title.refresh'
+  | 'title.mergeTo'
+  | 'title.mergeFrom'
   | 'title.pull'
   | 'title.push'
   | 'title.publish'
@@ -75,7 +77,13 @@ type UiKey =
   /** The sidebar's first row. */
   | 'head.currentBranch'
   | 'head.detached'
+  /** The row's overflow control: the menu it opens, not one of the rows inside it. */
+  | 'head.more'
+  /** The menu's Refresh row, which is the operation the row used to carry alone. */
   | 'head.refresh'
+  /** The menu's two merge rows, and the dialog each one opens. */
+  | 'head.mergeTo'
+  | 'head.mergeFrom'
   /** The remote control in the history pane's header. */
   | 'remote.publish'
   | 'remote.sync'
@@ -97,6 +105,14 @@ type UiKey =
   | 'branch.loading'
   | 'branch.noMatch'
   | 'branch.truncated'
+  /** The merge dialogs, which reuse the branch dialog's list and footer. */
+  | 'merge.titleTo'
+  | 'merge.descriptionTo'
+  | 'merge.titleFrom'
+  | 'merge.descriptionFrom'
+  | 'merge.confirm'
+  | 'merge.noneTo'
+  | 'merge.noneFrom'
   /** The commit form. */
   | 'commit.placeholder'
   | 'commit.button'
@@ -190,6 +206,8 @@ export const en = {
 
   'title.switchBranch': 'Could not switch to {branch}',
   'title.refresh': 'Refresh failed',
+  'title.mergeTo': 'Could not merge into {branch}',
+  'title.mergeFrom': 'Could not merge {branch} in',
   'title.pull': 'Pull failed',
   'title.push': 'Push failed',
   'title.publish': 'Publish failed',
@@ -203,7 +221,10 @@ export const en = {
 
   'head.currentBranch': 'Current branch',
   'head.detached': 'detached',
+  'head.more': 'More',
   'head.refresh': 'Refresh',
+  'head.mergeTo': 'Merge to…',
+  'head.mergeFrom': 'Merge from…',
 
   'remote.publish': 'Publish branch',
   'remote.sync': 'Sync · {behind} to pull · {ahead} to push',
@@ -225,6 +246,14 @@ export const en = {
   'branch.loading': 'Reading branches…',
   'branch.noMatch': 'No matching branches',
   'branch.truncated': 'Too many branches; only the most recent are listed',
+
+  'merge.titleTo': 'Merge this branch into another',
+  'merge.descriptionTo': 'Choose the branch this branch is merged into',
+  'merge.titleFrom': 'Merge another branch into this one',
+  'merge.descriptionFrom': 'Choose the branch to merge into this one',
+  'merge.confirm': 'Merge',
+  'merge.noneTo': 'No other local branch to merge into',
+  'merge.noneFrom': 'No other branch to merge in',
 
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
@@ -272,6 +301,7 @@ export const en = {
   'error.bad-hash': 'Invalid commit id',
   'error.missing-message': 'Missing commit message',
   'error.missing-branch': 'Missing branch name',
+  'error.missing-direction': 'Missing merge direction',
 
   'error.git-denied': 'The current permission mode does not allow running Git commands',
   'error.git-exit': 'git exited with code {code}',
@@ -284,6 +314,14 @@ export const en = {
   'error.checkout-denied': 'The current permission mode does not allow switching branches: it needs to write the workspace',
   'error.checkout-dirty': 'Uncommitted changes would be overwritten; commit or stash them before switching',
   'error.checkout-dirty-paths': 'Uncommitted changes to {paths} would be overwritten; commit or stash them before switching',
+
+  'error.merge-denied': 'The current permission mode does not allow merging: it needs to write the workspace',
+  'error.merge-dirty': 'Uncommitted changes are in the way; commit or stash them before merging',
+  'error.merge-conflict': 'The merge with {branch} conflicts, so it was aborted; merge it by hand to resolve the conflict',
+  'error.merge-same-branch': 'Cannot merge {branch} into itself',
+  'error.merge-remote-target': 'A remote-tracking branch cannot receive a merge: {name}',
+  'error.merge-detached': 'HEAD is detached, so there is no branch to merge',
+  'error.merge-no-commits': 'This branch has no commits yet, so there is nothing to merge',
 
   'error.pull-no-commits': 'This branch has no commits yet, so there is nothing to pull',
   'error.push-no-commits': 'This branch has no commits yet, so there is nothing to push',
@@ -350,6 +388,8 @@ export const zh: typeof en = {
 
   'title.switchBranch': '切换到 {branch} 失败',
   'title.refresh': '刷新仓库失败',
+  'title.mergeTo': '合并到 {branch} 失败',
+  'title.mergeFrom': '合并 {branch} 失败',
   'title.pull': '拉取失败',
   'title.push': '推送失败',
   'title.publish': '发布分支失败',
@@ -363,7 +403,13 @@ export const zh: typeof en = {
 
   'head.currentBranch': '当前分支',
   'head.detached': '游离',
+  'head.more': '更多',
   'head.refresh': '刷新',
+  // The two merges keep their English names in both locales: they are what the
+  // operation is called in a Git command, and a translated row would name
+  // something the reader cannot match to `git merge`.
+  'head.mergeTo': 'Merge to…',
+  'head.mergeFrom': 'Merge from…',
 
   'remote.publish': '发布分支',
   'remote.sync': '同步变更 · 待拉取 {behind} · 待推送 {ahead}',
@@ -385,6 +431,14 @@ export const zh: typeof en = {
   'branch.loading': '正在读取分支…',
   'branch.noMatch': '没有匹配的分支',
   'branch.truncated': '分支过多，仅显示最近的部分分支',
+
+  'merge.titleTo': '将当前分支合并到指定分支',
+  'merge.descriptionTo': '选择要合并到的目标分支',
+  'merge.titleFrom': '将指定分支合并到当前分支',
+  'merge.descriptionFrom': '选择要合并进来的分支',
+  'merge.confirm': '合并',
+  'merge.noneTo': '没有可合并到的其它本地分支',
+  'merge.noneFrom': '没有可合并的其它分支',
 
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
@@ -432,6 +486,7 @@ export const zh: typeof en = {
   'error.bad-hash': '提交标识不合法',
   'error.missing-message': '缺少提交信息',
   'error.missing-branch': '缺少分支名',
+  'error.missing-direction': '缺少合并方向',
 
   'error.git-denied': '当前权限模式不允许执行 Git 命令',
   'error.git-exit': 'git 退出码 {code}',
@@ -444,6 +499,14 @@ export const zh: typeof en = {
   'error.checkout-denied': '当前权限模式不允许切换分支：该操作需要写入工作区',
   'error.checkout-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再切换',
   'error.checkout-dirty-paths': '有未提交的改动会被覆盖（{paths}），请先提交或暂存后再切换',
+
+  'error.merge-denied': '当前权限模式不允许合并：该操作需要写入工作区',
+  'error.merge-dirty': '存在未提交的改动，请先提交或暂存后再合并',
+  'error.merge-conflict': '与 {branch} 的合并存在冲突，已中止；请手动合并以解决冲突',
+  'error.merge-same-branch': '无法将 {branch} 合并到它自己',
+  'error.merge-remote-target': '远程跟踪分支不能作为合并目标：{name}',
+  'error.merge-detached': 'HEAD 处于游离状态，没有可合并的分支',
+  'error.merge-no-commits': '当前分支还没有任何提交，无法合并',
 
   'error.pull-no-commits': '当前分支还没有任何提交，无法 Pull',
   'error.push-no-commits': '当前分支还没有任何提交，无法 Push',

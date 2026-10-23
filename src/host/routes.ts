@@ -25,6 +25,7 @@
 
 import {
   commitAll,
+  mergeBranch,
   pullFromRemote,
   pushToRemote,
   readBranches,
@@ -39,6 +40,7 @@ import {
 import { generateCommitMessage } from './message.js'
 import { coded, type Refusal } from './refusal.js'
 import { resolveWorkspace } from './workspace.js'
+import type { MergeDirection } from '../shared/contract.js'
 
 /** Route table, kept in one place so the two halves cannot drift. */
 export const ROUTES = {
@@ -50,6 +52,7 @@ export const ROUTES = {
   message: '/dsh-cool-git/api/message',
   branches: '/dsh-cool-git/api/branches',
   checkout: '/dsh-cool-git/api/checkout',
+  merge: '/dsh-cool-git/api/merge',
   pull: '/dsh-cool-git/api/pull',
   push: '/dsh-cool-git/api/push',
 } as const
@@ -354,6 +357,21 @@ function readBranch(body: Record<string, unknown>): string | undefined {
 }
 
 /**
+ * Read one request's merge direction.
+ *
+ * The two directions are the whole of this argument — which side of the merge
+ * the current branch is on — so a body that does not name one of them is
+ * refused rather than defaulted to, because either default would silently merge
+ * the branch the user did not ask for.
+ *
+ * @param body - the parsed request body.
+ * @returns the direction, or undefined when the body names neither.
+ */
+function readDirection(body: Record<string, unknown>): MergeDirection | undefined {
+  return body.direction === 'to' || body.direction === 'from' ? body.direction : undefined
+}
+
+/**
  * Read one request's commit message.
  *
  * A message is free-form text, so nothing about its content is checked; the two
@@ -450,6 +468,19 @@ export function registerRoutes(ctx: any): () => void {
       const branch = readBranch(body)
       if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
       return switchBranch(target, branch)
+    })),
+
+    // One route for both directions: the branch is the argument the user picked
+    // either way, and `to`/`from` only says which side of the merge the current
+    // branch is on. The Host still decides what a name may be — a source may be
+    // a remote-tracking ref, a target may not — because that is Git's rule and
+    // not a shape a request body can be trusted to know.
+    route(ROUTES.merge, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const branch = readBranch(body)
+      if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      const direction = readDirection(body)
+      if (direction === undefined) return Promise.resolve({ ok: false, ...coded('missing-direction') })
+      return mergeBranch(target, branch, direction)
     })),
 
     // The two remote operations name no arguments of their own: which branch,
