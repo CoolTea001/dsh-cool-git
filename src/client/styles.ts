@@ -312,11 +312,17 @@ const GIT_CSS = [
   // border, and without it a `width:100%` frame grows past the content column by
   // both.
   //
+  // The list's rows are in the same portal and are named here for the same
+  // reason. They set `width:100%` and a horizontal padding of their own, which
+  // under the default content-box sizing made every row 16px wider than the
+  // column it lives in — a horizontal overflow the scroller below turned into a
+  // sideways bar under a list that only ever scrolls down.
+  //
   // The body is a column of its own so the filter is a block-level box rather
   // than an inline one with a line box of its own under it: the keys that walk
   // the list are bound here, and the height stays the sum of the parts.
   '.dsh-cg-branch-body{display:flex;flex-direction:column;min-width:0}',
-  '.dsh-cg-branch-filter,.dsh-cg-branch-list,.dsh-cg-branch-row{box-sizing:border-box}',
+  '.dsh-cg-branch-filter,.dsh-cg-branch-list,.dsh-cg-branch-row,.dsh-cg-delete-row{box-sizing:border-box}',
   '.dsh-cg-branch-filter{flex:none;width:100%}',
   // A branch name is a path, and two remote branches cut at the same ellipsis are
   // one name to the eye, so the card is widened past the platform's default. The
@@ -331,7 +337,13 @@ const GIT_CSS = [
   // wrapper's box and painted after the list. The list keeps its own height
   // cap, so the wrapper is exactly the visible box.
   '.dsh-cg-branch-list-wrap{position:relative;display:flex;flex-direction:column;min-height:0;margin-top:8px}',
-  '.dsh-cg-branch-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);overflow:auto}',
+  // The list scrolls one way. Its rows elide their own text, so nothing in it is
+  // meant to be reached by scrolling sideways, and a vertical list that paints a
+  // horizontal bar for an overflowing pixel or two says a gesture exists that has
+  // nothing behind it. `overflow-x` is closed for that reason and the scroller
+  // still takes both scrollbars' plumbing, so the fade below and the platform's
+  // bar keep their geometry.
+  '.dsh-cg-branch-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:1px;max-height:min(360px,40vh);overflow-x:hidden;overflow-y:auto}',
   // The two edge fades, the same rhythm as the Terminal tab's command dialog: a
   // gradient that dissolves rows into the card's own surface (layer-2 is the
   // Modal card background), shown only while that edge really hides content,
@@ -402,6 +414,12 @@ const GIT_CSS = [
   // repository, no branch at all, a filter that matched nothing. A failure is the
   // error dialog's, so nothing here paints one.
   '.dsh-cg-dialog-hint{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.7}',
+  // A state line can follow the filter instead of the list — while the report is
+  // still being read, and when the filter matches nothing — so it gets the gap
+  // the list's wrapper has. Without it the line sat against the field it
+  // belonged to, which read as the field's own caption rather than the list's
+  // answer.
+  '.dsh-cg-branch-filter+.dsh-cg-dialog-hint{margin-top:8px}',
   // The "too many branches" line follows the list's wrapper, not the scroller
   // inside it.
   '.dsh-cg-branch-list-wrap+.dsh-cg-dialog-hint{margin-top:8px}',
