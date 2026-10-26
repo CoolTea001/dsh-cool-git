@@ -230,7 +230,7 @@ export interface BranchesPayload {
  */
 export type BranchSafety = 'safe' | 'unmerged' | 'unpushed' | 'gone'
 
-/** One branch the delete dialog may offer, with the facts its badge is drawn from. */
+/** One branch the delete dialog may offer, with the verdict its mark is drawn from. */
 export interface BranchEntry {
   /** The name the page shows: a local name, or `origin/main`. */
   readonly name: string

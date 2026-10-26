@@ -64,7 +64,7 @@ type UiKey =
 /** The create dialog, which reuses the branch dialog's list as a start point. */
  | 'create.title' | 'create.description' | 'create.name' | 'create.confirm' | 'create.none'
 /** The delete dialog, and the marks its rows carry. */
- | 'delete.title' | 'delete.description' | 'delete.list' | 'delete.confirm' | 'delete.confirmCount' | 'delete.risky' | 'delete.none' | 'safety.safe' | 'safety.unmerged' | 'safety.unpushed' | 'safety.gone' | 'safety.current'
+ | 'delete.title' | 'delete.description' | 'delete.list' | 'delete.confirm' | 'delete.confirmCount' | 'delete.none' | 'safety.unmerged' | 'safety.unpushed' | 'safety.gone'
 /** The commit form. */
  | 'commit.placeholder' | 'commit.button' | 'commit.busy'
 /** The commit form's Generate control, and what the model asked be read first. */
@@ -174,13 +174,10 @@ export declare const en: {
     'delete.list': string;
     'delete.confirm': string;
     'delete.confirmCount': string;
-    'delete.risky': string;
     'delete.none': string;
-    'safety.safe': string;
     'safety.unmerged': string;
     'safety.unpushed': string;
     'safety.gone': string;
-    'safety.current': string;
     'commit.placeholder': string;
     'commit.button': string;
     'commit.busy': string;

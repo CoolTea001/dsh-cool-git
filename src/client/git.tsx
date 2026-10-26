@@ -69,6 +69,7 @@ import {
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
 import {
+  IconAlert,
   IconArrowRight,
   IconBranch,
   IconCheck,
@@ -2207,31 +2208,11 @@ function BranchDialog(props: {
   )
 }
 
-/** The badge each safety mark is drawn from. */
-const SAFETY_KEY: Readonly<Record<BranchSafety, MessageKey>> = {
-  safe: 'safety.safe',
+/** The tooltip each unsafe mark states. A safe row carries no mark and no words. */
+const SAFETY_TIP_KEY: Readonly<Record<Exclude<BranchSafety, 'safe'>, MessageKey>> = {
   unmerged: 'safety.unmerged',
   unpushed: 'safety.unpushed',
   gone: 'safety.gone',
-}
-
-/**
- * The line under a branch's name, which is what its badge is not.
- *
- * The upstream and the two counts are the facts behind the mark rather than the
- * mark itself: `unpushed` says a branch has commits nothing else has, and `↑2`
- * says how many. They are read as-is — a ref name is a path, and a count is a
- * number — so nothing here is translated. The badge carries the words.
- *
- * @param entry - the branch the row is drawn from.
- * @returns the meta line, or an empty string when there is nothing to say.
- */
-function entryMeta(entry: BranchEntry): string {
-  const parts: string[] = []
-  if (entry.upstream !== undefined && entry.upstream !== '') parts.push(entry.upstream)
-  if (entry.ahead !== undefined && entry.ahead > 0) parts.push(`↑${entry.ahead}`)
-  if (entry.behind !== undefined && entry.behind > 0) parts.push(`↓${entry.behind}`)
-  return parts.join(' ')
 }
 
 /**
@@ -2239,18 +2220,22 @@ function entryMeta(entry: BranchEntry): string {
  *
  * A dialog of its own rather than a fourth mode on the branch list, because the
  * decision is a different shape: that list answers with one branch and this one
- * with as many as are ticked, its rows carry facts — a merge state, an upstream,
- * two counts — that a switch has no use for, and one of its rows is disabled
+ * with as many as are ticked, its rows carry a verdict — whether Git will take
+ * the branch — that a switch has no use for, and one of its rows is disabled
  * rather than merely unhelpful. What the two do share is the scroll box, the
  * filter and the edge fades, which are read from the same refs by the same hook.
  *
- * Every row carries a safety mark and every row is still selectable, the current
- * branch aside: the mark is what the page knows, and whether a branch may be
- * deleted is Git's answer, given when the delete is asked for. A branch whose
- * commits are nowhere else is refused by Git's own `-d`, and the page's job is to
- * have said so on the row rather than to have hidden the row. The one exception
- * is the branch HEAD is on, which Git will refuse in every case and which is
- * therefore the one row the dialog does not offer at all.
+ * A row Git would refuse to delete carries an alert at its right edge, and a row
+ * it would take carries nothing: the mark is the one thing worth reading before a
+ * tick, and spelling "safe to delete" on every other row only made the list
+ * noisier. The alert states its reason in a tooltip, so the row itself stays a
+ * name and nothing else. Every row is still selectable, the current branch aside:
+ * the mark is what the page knows, and whether a branch may be deleted is Git's
+ * answer, given when the delete is asked for. A branch whose commits are nowhere
+ * else is refused by Git's own `-d`, and the page's job is to have said so on the
+ * row rather than to have hidden the row. The one exception is the branch HEAD is
+ * on, which Git will refuse in every case: it is the one row drawn disabled
+ * rather than offered, and its group heading is what names it.
  *
  * The selection is held as the rows' own keys rather than as names, because the
  * two lists can hold the same name: a local branch may be called `origin/main`,
@@ -2359,7 +2344,6 @@ function BranchDeleteDialog(props: {
   // rather than the clicks': a delete request that named its branches in click
   // order would report its refusals in an order the dialog is not showing.
   const chosen = rows.filter(row => selection.includes(keyOf(row.entry)))
-  const risky = chosen.filter(row => row.entry.current !== true && row.entry.safety !== 'safe').length
 
   /**
    * The branches to delete, in the shape the Host asked to be given them back.
@@ -2419,7 +2403,14 @@ function BranchDeleteDialog(props: {
                   {shown.map((row, index) => {
                     const entry = row.entry
                     const key = keyOf(entry)
-                    const meta = entryMeta(entry)
+                    // The one sentence a marked row has to say, or null when the
+                    // row has nothing to warn about. The current branch is not
+                    // an unsafe delete — it is not a delete at all — so it
+                    // carries no mark either; the group heading already says
+                    // which row it is.
+                    const tip = entry.current === true || entry.safety === 'safe'
+                      ? null
+                      : t(SAFETY_TIP_KEY[entry.safety])
                     return (
                       <Fragment key={key}>
                         {row.group === shown[index - 1]?.group
@@ -2429,10 +2420,7 @@ function BranchDeleteDialog(props: {
                               {t(BRANCH_GROUP_KEY[row.group])}
                             </span>
                           )}
-                        <label
-                          className="dsh-cg-delete-row"
-                          data-safety={entry.current === true ? 'current' : entry.safety}
-                        >
+                        <label className="dsh-cg-delete-row">
                           <input
                             type="checkbox"
                             className="dsh-cg-delete-check"
@@ -2448,12 +2436,33 @@ function BranchDeleteDialog(props: {
                             ))}
                           />
                           <span className="dsh-cg-delete-name">{entry.name}</span>
-                          {meta === '' ? null : <span className="dsh-cg-delete-meta">{meta}</span>}
-                          <span
-                            className="dsh-cg-safety"
-                            data-safety={entry.current === true ? 'current' : entry.safety}
-                          >
-                            {t(entry.current === true ? 'safety.current' : SAFETY_KEY[entry.safety])}
+                          {/* One slot at the right edge of every row, so the
+                              marks line up and a row without one still gives its
+                              name the same width as its neighbours. The alert is
+                              the anchor of the platform's tooltip: its text
+                              states why Git will refuse the branch, and it is
+                              also the image's accessible name, so a reader
+                              without a pointer still hears the reason. */}
+                          <span className="dsh-cg-delete-trail">
+                            {tip === null
+                              ? null
+                              : (
+                                <Tooltip
+                                  label={tip}
+                                  side="top"
+                                  align="end"
+                                  portal
+                                  maxWidth={TOOLTIP_MAX_WIDTH}
+                                >
+                                  <span
+                                    className="dsh-cg-delete-alert"
+                                    role="img"
+                                    aria-label={tip}
+                                  >
+                                    <IconAlert />
+                                  </span>
+                                </Tooltip>
+                              )}
                           </span>
                         </label>
                       </Fragment>
@@ -2464,15 +2473,6 @@ function BranchDeleteDialog(props: {
                 <span className="dsh-cg-branch-fade dsh-cg-branch-fade-bottom" aria-hidden="true" />
               </div>
             )}
-        {/* The line under the list, and the one thing the footer's button cannot
-            say: how many of the ticked rows the marks are warning about. It is
-            not the count the button carries — that is how many will be asked
-            for, and this is how many of them Git will refuse — so it is stated
-            only when it is a number worth reading, which is when something is
-            ticked and at least one of those is not `safe`. */}
-        {selection.length === 0 || risky === 0
-          ? null
-          : <p className="dsh-cg-dialog-hint">{t('delete.risky', { count: risky })}</p>}
         {report?.truncated === true
           ? <p className="dsh-cg-dialog-hint">{t('branch.truncated')}</p>
           : null}

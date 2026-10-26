@@ -128,13 +128,10 @@ type UiKey =
   | 'delete.list'
   | 'delete.confirm'
   | 'delete.confirmCount'
-  | 'delete.risky'
   | 'delete.none'
-  | 'safety.safe'
   | 'safety.unmerged'
   | 'safety.unpushed'
   | 'safety.gone'
-  | 'safety.current'
   /** The commit form. */
   | 'commit.placeholder'
   | 'commit.button'
@@ -289,14 +286,11 @@ export const en = {
   'delete.list': 'Branches to delete',
   'delete.confirm': 'Delete',
   'delete.confirmCount': 'Delete {count}',
-  'delete.risky': '{count} of these are not merged or not pushed; Git will refuse those',
   'delete.none': 'No branches to delete',
 
-  'safety.safe': 'Safe to delete',
-  'safety.unmerged': 'Not merged',
-  'safety.unpushed': 'Not pushed',
-  'safety.gone': 'Upstream gone',
-  'safety.current': 'Current',
+  'safety.unmerged': 'It is not merged into the current branch and has no upstream, so Git will refuse to delete it',
+  'safety.unpushed': 'It has commits that have not been pushed, so Git will refuse to delete it',
+  'safety.gone': 'The remote branch it tracked is gone, so Git will refuse to delete it',
 
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',
@@ -504,14 +498,11 @@ export const zh: typeof en = {
   'delete.list': '待删除的分支',
   'delete.confirm': '删除',
   'delete.confirmCount': '删除 {count} 个',
-  'delete.risky': '其中 {count} 个未合并或未推送，Git 会拒绝删除',
   'delete.none': '没有可删除的分支',
 
-  'safety.safe': '可安全删除',
-  'safety.unmerged': '未合并',
-  'safety.unpushed': '未推送',
-  'safety.gone': '上游已消失',
-  'safety.current': '当前',
+  'safety.unmerged': '它未合并到当前分支，也没有上游分支，Git 会拒绝删除',
+  'safety.unpushed': '它有尚未推送到远端的提交，Git 会拒绝删除',
+  'safety.gone': '它跟踪的远程分支已消失，Git 会拒绝删除',
 
   'commit.placeholder': 'Commit Message',
   'commit.button': 'Commit',

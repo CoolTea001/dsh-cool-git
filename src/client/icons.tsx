@@ -132,6 +132,16 @@ export const IconCheck = svgIcon('check')
 export const IconArrowRight = svgIcon('arrow-right')
 
 /**
+ * The warning on a branch Git will refuse to delete (assets/alert.svg).
+ *
+ * A ring with an exclamation rather than a filled triangle: the mark says this
+ * row cannot go through, not that the dialog has already failed, and the
+ * platform's tooltip beside it carries the reason. Only the rows that have
+ * something to refuse are drawn with one — a safe row is quiet.
+ */
+export const IconAlert = svgIcon('alert')
+
+/**
  * The commit form's Generate control: the model writes the message that the
  * Commit button beside it would otherwise be handed (assets/generate.svg).
  *

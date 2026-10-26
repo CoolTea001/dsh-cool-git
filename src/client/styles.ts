@@ -424,16 +424,15 @@ const GIT_CSS = [
   '.dsh-cg-delete-row:has(.dsh-cg-delete-check:disabled):hover{background:transparent}',
   '.dsh-cg-delete-check{flex:none;margin:0;accent-color:var(--dsw-alias-state-error-primary)}',
   '.dsh-cg-delete-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
-  // The facts behind the mark — the upstream and the two counts. They give ground
-  // before the name does: a name ending in `…` names nothing, while a lost count
-  // is one the badge beside it has already spoken for.
-  '.dsh-cg-delete-meta{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
-  // The safety mark. Every row has one and only the ones worth reading are
-  // coloured: a `safe` row's mark is the muted label colour and reads as the
-  // absence of a warning, which is what it is.
-  '.dsh-cg-safety{flex:none;padding:0 6px;border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
-  '.dsh-cg-safety[data-safety=unmerged],.dsh-cg-safety[data-safety=unpushed],.dsh-cg-safety[data-safety=gone]{color:var(--dsw-alias-state-warn-primary)}',
-  '.dsh-cg-safety[data-safety=current]{color:var(--dsw-alias-label-secondary)}',
+  // The right edge of every row: the mark a branch Git will refuse, or nothing for
+  // a branch Git will take. The slot is kept on safe rows too, so a row without a
+  // mark still ends where a marked row's name ends and the marks read as one
+  // column.
+  '.dsh-cg-delete-trail{flex:none;display:flex;align-items:center;justify-content:flex-end;min-width:16px}',
+  // The mark itself. It is the anchor of the platform's tooltip, so the pointer
+  // says a reason is available, and the colour is the theme's warning token.
+  '.dsh-cg-delete-alert{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--dsw-alias-state-warn-primary);cursor:help}',
+  '.dsh-cg-delete-alert svg{display:block;width:14px;height:14px}',
 
   // One line of the dialog's own state: still reading, a directory that is not a
   // repository, no branch at all, a filter that matched nothing. A failure is the
