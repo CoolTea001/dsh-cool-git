@@ -299,7 +299,9 @@ const GIT_CSS = [
   // ones. The list is the decision, so it caps its own height instead of
   // stretching the card — in `min()` with a viewport share, because a short
   // window must not push the card's footer off the mask — and the filter is the
-  // control the Modal focuses when it opens.
+  // control the Modal focuses when it opens, in the two modes whose answer is a
+  // row. A create focuses its name field in the footer instead; the filter sits
+  // above the list it narrows in every mode.
   //
   // The filter is the platform's own `Input` primitive, so its border, fill,
   // radius, type scale, and focus color are the platform's and follow the theme
@@ -386,17 +388,29 @@ const GIT_CSS = [
   '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-branch-row-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
 
-  // The create dialog's name field, which sits above the filter and is the one
-  // control in that dialog the reader has to fill in. It is spaced like the
-  // filter below it so the two read as one column of fields.
+  // The create dialog's name field, which sits in the footer beside the two
+  // buttons that submit it and is the one control in that dialog the reader has
+  // to fill in. It grows into the room the buttons leave rather than taking the
+  // body column's full width, so the name and the action that applies it read as
+  // one row; `min-width` is released for the same reason the filter's is, so a
+  // narrow card shortens the field instead of pushing the buttons out of it.
+  //
+  // It also takes the height of the buttons beside it rather than the platform's
+  // field height: the primitive's frame is 32px while an `md` Button is 36px, and
+  // a field shorter than the actions that submit it made the row read as two
+  // misaligned things. The inner field stays centred in the taller frame.
+  //
+  // Its frame is portaled out of the box-sizing reset's scope with the card, so
+  // `border-box` is stated here: the frame carries padding and a hairline border,
+  // and `border-box` keeps both inside whatever width the footer's flex row hands
+  // it rather than letting the frame grow past the buttons by them.
   //
   // Its class is the dialog's own and stays distinct from the pill's
   // `dsh-cg-branch-name`: the two are different elements — a field frame here, a
-  // label there — and sharing the name put this rule's `width:100%` on the pill's
+  // label there — and sharing the name put this rule's sizing on the pill's
   // label, which the button's centred text then stretched away from the icon and
   // over the pill's right edge.
-  '.dsh-cg-branch-create-name{flex:none;width:100%;box-sizing:border-box}',
-  '.dsh-cg-branch-create-name+.dsh-cg-branch-filter{margin-top:8px}',
+  '.dsh-cg-branch-create-name{flex:1 1 auto;min-width:0;height:36px;box-sizing:border-box}',
 
   // One row of the delete dialog. It is a `label` rather than a `button` because
   // the checkbox inside it is the control: a click anywhere on the row is a click

@@ -279,7 +279,7 @@ export const en = {
   'merge.noneFrom': 'No other branch to merge in',
 
   'create.title': 'Create branch',
-  'create.description': 'Name the new branch and choose where it starts',
+  'create.description': 'Choose a starting point and enter a new branch name',
   'create.name': 'New branch name',
   'create.confirm': 'Create',
   'create.none': 'No branch to start from',
@@ -494,7 +494,7 @@ export const zh: typeof en = {
   'merge.noneFrom': '没有可合并的其它分支',
 
   'create.title': '创建分支',
-  'create.description': '输入新分支名，并选择它的起点',
+  'create.description': '选择分支起点，并输入新的分支名',
   'create.name': '新分支名',
   'create.confirm': '创建',
   'create.none': '没有可作为起点的分支',

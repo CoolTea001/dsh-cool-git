@@ -2052,26 +2052,6 @@ function BranchDialog(props: {
   } else {
     content = (
       <>
-        {/* The create's own field, above the filter because it is the question
-            the dialog is actually asking: the list below is where the new branch
-            starts, and that is the answer nobody has to type. It takes the
-            initial focus in this mode for the same reason the filter takes it in
-            the others — the reader has something to write — and the filter keeps
-            its marker in the other two modes. Only one of the two can carry it,
-            so which one does is the mode's answer. */}
-        {mode === 'create'
-          ? (
-            <Input
-              className="dsh-cg-branch-create-name"
-              type="text"
-              value={name}
-              placeholder={t('create.name')}
-              aria-label={t('create.name')}
-              data-modal-autofocus
-              onChange={event => setName(event.target.value)}
-            />
-          )
-          : null}
         <Input
           className="dsh-cg-branch-filter"
           type="text"
@@ -2082,8 +2062,8 @@ function BranchDialog(props: {
           // `autoFocus` runs before the layer can note the control to return to.
           // The primitive passes the marker through to the native field, which is
           // the element the layer actually focuses. A create hands the marker to
-          // its own field instead, so the attribute is dropped here in that mode
-          // rather than two controls claiming the same focus.
+          // the name field in the footer instead, so the attribute is dropped here
+          // in that mode rather than two controls claiming the same focus.
           data-modal-autofocus={mode === 'create' ? undefined : true}
           // A selection the filter has just hidden is dropped with it: the footer's
           // button applies the row it can name, and a row the list no longer shows
@@ -2187,6 +2167,27 @@ function BranchDialog(props: {
       className="dsh-cg-branch-dialog"
       footer={(
         <>
+          {/* A create asks for the name in the footer, left of the buttons that
+              apply it: the typed name is the dialog's answer, and the buttons are
+              what submit that answer, so the two read as one row. It takes the
+              initial focus in this mode for the same reason the filter takes it
+              in the others — the reader has something to write — and it keeps
+              the marker in the footer because the Modal searches the whole card
+              for it. The field is flexed, so it fills the room the two buttons
+              leave and the buttons stay at the card's right edge. */}
+          {mode === 'create'
+            ? (
+              <Input
+                className="dsh-cg-branch-create-name"
+                type="text"
+                value={name}
+                placeholder={t('create.name')}
+                aria-label={t('create.name')}
+                data-modal-autofocus
+                onChange={event => setName(event.target.value)}
+              />
+            )
+            : null}
           <Button variant="outline" onClick={onClose}>{t('branch.cancel')}</Button>
           <Button
             variant="primary"
