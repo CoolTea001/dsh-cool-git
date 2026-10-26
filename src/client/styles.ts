@@ -329,6 +329,17 @@ const GIT_CSS = [
   // card is not height-capped here: the list below is what gives ground on a
   // short window, in `min()` with a viewport share.
   '.dsh-cg-branch-dialog{width:min(450px,100%)}',
+  // The delete dialog's submit is a filled danger action rather than the
+  // platform's ghost weight: removing branches is the one irreversible thing
+  // either branch dialog does, and it has to read that way while it is still
+  // waiting for a tick, not only once one is made. The fill is the theme's error
+  // token, so it follows light and dark presets, and the label is the token the
+  // platform pairs with a filled control. The rule is scoped by the card because
+  // the footer is portaled out of this plugin's subtree with the dialog. The
+  // hover is a shade deeper rather than another token, which would be the
+  // business accent and would paint the destructive action purple.
+  '.dsh-cg-branch-dialog .dsh-cg-delete-confirm{background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground)}',
+  '.dsh-cg-branch-dialog .dsh-cg-delete-confirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 86%,#000)}',
   // Scrolls like the sidebar's two lists, whose rule above states how the
   // platform's bar is kept out of the frame until the pointer is inside.
   // The scroller is wrapped rather than being the positioned element itself:

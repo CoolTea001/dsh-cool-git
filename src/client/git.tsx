@@ -2491,7 +2491,8 @@ function BranchDeleteDialog(props: {
         <>
           <Button variant="outline" onClick={onClose}>{t('branch.cancel')}</Button>
           <Button
-            variant="danger"
+            variant="primary"
+            className="dsh-cg-delete-confirm"
             disabled={selection.length === 0}
             onClick={() => onConfirm(targets)}
           >
