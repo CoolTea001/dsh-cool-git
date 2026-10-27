@@ -1,4 +1,4 @@
-![dsh-cool-git cover](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.2.0.png)
+![dsh-cool-git cover](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.3.0.png)
 
 # dsh-cool-git
 
@@ -13,7 +13,7 @@ DeepSeek Harness Git plugin — adds Git management to the session tab bar, cove
 ## Features
 
 - **Workspace binding:** view and manage the code changes in the current workspace
-- **Branch switching:** switch quickly between local and remote branches
+- **Branch management:** switch, create, and delete branches
 - **Sync:** one-click Pull & Push to sync changes
 - **Diff view:** view per-file change diffs
 - **Commit history:** browse the commit history and view the file diffs

@@ -1,4 +1,4 @@
-![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.2.0.png)
+![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.3.0.png)
 
 # dsh-cool-git
 
@@ -9,10 +9,11 @@
 ## 描述
 
 DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支持 commit | pull | push | branch | diff 等基础功能。
+
 ## 功能介绍
 
 - **工作区绑定：** 查看并管理当前工作区的代码变更
-- **分支切换：** 支持快速切换本地/远程分支
+- **分支管理：** 支持分支切换/分支创建/分支删除
 - **变更同步：** 支持一键 Pull & Push 同步代码变更
 - **Diff 查看：** 支持查看文件变更 Diff
 - **提交历史：** 支持查看提交历史并查看文件变更 Diff
