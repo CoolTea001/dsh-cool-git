@@ -862,16 +862,23 @@ export function GitView(props: {
    * so the branch list on screen is stale after one just as it is after a clean
    * run.
    *
+   * The returned promise is the dialog's to wait on: unlike the other decisions,
+   * a delete keeps its dialog on screen while the request runs, so the button
+   * that asked for it is the one that reports the wait.
+   *
    * @param targets - the branches the dialog selected.
+   * @returns a promise that resolves once the request has been answered.
    */
-  const handleDelete = useCallback((targets: readonly BranchDeleteTarget[]): void => {
+  const handleDelete = useCallback(async (targets: readonly BranchDeleteTarget[]): Promise<void> => {
     setDeleting(true)
-    void deleteBranches(sessionId, targets).then(result => {
-      setDeleting(false)
+    try {
+      const result = await deleteBranches(sessionId, targets)
       const lines = deletionLines(t, result)
       if (lines.length > 0) reportError({ title: t('title.branchDelete'), lines })
       handleSynced()
-    })
+    } finally {
+      setDeleting(false)
+    }
   }, [sessionId, handleSynced, reportError, t])
 
   /**
@@ -1290,7 +1297,8 @@ function ErrorDialog(props: {
  * @param props.onCheckout - called with the branch the dialog confirmed.
  * @param props.onMerge - called with the branch the dialog confirmed.
  * @param props.onCreate - called with the name and starting point the dialog confirmed.
- * @param props.onDelete - called with the branches the delete dialog confirmed.
+ * @param props.onDelete - called with the branches the delete dialog confirmed;
+ *   resolves once the answer has arrived.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the header row.
  */
@@ -1310,7 +1318,7 @@ function SideHead(props: {
   readonly onCheckout: (branch: string) => void
   readonly onMerge: (branch: string) => void
   readonly onCreate: (name: string, start: string) => void
-  readonly onDelete: (targets: readonly BranchDeleteTarget[]) => void
+  readonly onDelete: (targets: readonly BranchDeleteTarget[]) => Promise<void>
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const {
@@ -1339,6 +1347,25 @@ function SideHead(props: {
   const closeDialog = useCallback((): void => {
     setPick(null)
   }, [])
+
+  /** Close the delete dialog without deleting anything. */
+  const closeDelete = useCallback((): void => {
+    setDeleteOpen(false)
+  }, [])
+
+  /**
+   * Delete the branches the dialog confirmed, and close it when the answer is in.
+   *
+   * The dialog stays up for the wait — its own submit is the control showing it —
+   * and is dismissed once the request has been answered, refusals included: the
+   * page's error dialog states those, and the list this dialog was showing has
+   * already been replaced by the re-read.
+   *
+   * @param targets - the branches the dialog selected.
+   */
+  const confirmDelete = useCallback((targets: readonly BranchDeleteTarget[]): void => {
+    void onDelete(targets).finally(closeDelete)
+  }, [onDelete, closeDelete])
 
   /**
    * Hand the branch the dialog confirmed to the page, with the decision it was
@@ -1468,11 +1495,9 @@ function SideHead(props: {
         t={t}
         open={deleteOpen}
         sessionId={sessionId}
-        onClose={() => setDeleteOpen(false)}
-        onConfirm={targets => {
-          setDeleteOpen(false)
-          onDelete(targets)
-        }}
+        busy={deleting}
+        onClose={closeDelete}
+        onConfirm={confirmDelete}
         onError={onError}
       />
       <div className="dsh-cg-tools">
@@ -2246,10 +2271,18 @@ const SAFETY_TIP_KEY: Readonly<Record<Exclude<BranchSafety, 'safe'>, MessageKey>
  * closes the dialog and is stated by the page's one error dialog, except for a
  * directory that is not a repository, which is the dialog's own empty state.
  *
+ * The delete is the one operation this dialog waits for: the footer's button
+ * turns into the wait itself and the card stays up until the request is
+ * answered, so the click that started it has somewhere to show for it. A
+ * refusal takes the same path — the page's error dialog states what Git said
+ * about each branch, and the list behind it has already been re-read.
+ *
  * @param props.t - the page's translate seat.
  * @param props.open - whether the dialog is showing.
  * @param props.sessionId - the session whose repository is being read.
- * @param props.onClose - called by Cancel, the close button, Escape, or the mask.
+ * @param props.busy - whether the delete the dialog asked for is still in flight.
+ * @param props.onClose - called by Cancel, the close button, Escape, or the mask;
+ *   ignored while a delete is in flight.
  * @param props.onConfirm - called with the branches to delete when the footer is pressed.
  * @param props.onError - called with the failure to state in the error dialog.
  * @returns the dialog element.
@@ -2258,11 +2291,12 @@ function BranchDeleteDialog(props: {
   readonly t: Translate
   readonly open: boolean
   readonly sessionId: string | undefined
+  readonly busy: boolean
   readonly onClose: () => void
   readonly onConfirm: (targets: readonly BranchDeleteTarget[]) => void
   readonly onError: (error: GitError) => void
 }): ReactElement {
-  const { t, open, sessionId, onClose, onConfirm, onError } = props
+  const { t, open, sessionId, busy, onClose, onConfirm, onError } = props
   /** The branches Git reported, or null while it has not answered yet. */
   const [report, setReport] = useState<BranchReportPayload | null>(null)
   /** A directory that is not a repository: the dialog's own empty state. */
@@ -2272,6 +2306,16 @@ function BranchDeleteDialog(props: {
   const [filter, setFilter] = useState('')
   const listScroll = useRef<HTMLDivElement | null>(null)
   const listWrap = useRef<HTMLDivElement | null>(null)
+
+  /**
+   * The dismissal to draw while the delete runs.
+   *
+   * Escape, the mask and the close button all arrive through the Modal's one
+   * `onClose`, so the dialog keeps its place until the answer is in: hiding it
+   * mid-request would take the only control reporting the wait off screen, and
+   * the page's own re-read is what tells the story afterwards.
+   */
+  const hold = useCallback((): void => {}, [])
 
   // The cleanup discards a late answer and forgets the ticks with it, so a
   // reopen starts on the loading line with nothing selected rather than on the
@@ -2377,6 +2421,11 @@ function BranchDeleteDialog(props: {
           placeholder={t('branch.search')}
           aria-label={t('branch.search')}
           data-modal-autofocus
+          // The list is what the request was made from, so nothing in it moves
+          // while the answer is outstanding: the ticks are the request's own
+          // record, and a second tick or a filter that hid one would describe a
+          // delete nobody asked for.
+          disabled={busy}
           // A tick the filter has just hidden is dropped with it, which matters
           // more here than it does for a single pick: the footer deletes what it
           // can see the ticks for, and a branch deleted from behind a filter
@@ -2427,8 +2476,9 @@ function BranchDeleteDialog(props: {
                             checked={selection.includes(key)}
                             // The branch HEAD is on is the one row Git will never
                             // delete, so it is the one row offered as a fact
-                            // rather than as a choice.
-                            disabled={entry.current === true}
+                            // rather than as a choice. Every row freezes while the
+                            // request runs, for the filter's reason.
+                            disabled={entry.current === true || busy}
                             onChange={() => setSelection(previous => (
                               previous.includes(key)
                                 ? previous.filter(one => one !== key)
@@ -2483,28 +2533,40 @@ function BranchDeleteDialog(props: {
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={busy ? hold : onClose}
       title={t('delete.title')}
       description={t('delete.description')}
       closeLabel={t('dialog.close')}
       className="dsh-cg-branch-dialog"
       footer={(
         <>
-          <Button variant="outline" onClick={onClose}>{t('branch.cancel')}</Button>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
+            {t('branch.cancel')}
+          </Button>
           <Button
             variant="primary"
-            className="dsh-cg-delete-confirm"
-            disabled={selection.length === 0}
+            className={busy
+              ? 'dsh-cg-delete-confirm dsh-cg-delete-confirm-busy'
+              : 'dsh-cg-delete-confirm'}
+            disabled={busy || selection.length === 0}
+            // The ring stands in for the label's leading edge while the answer is
+            // outstanding: the button that asked for the delete is the one place
+            // the wait can be read off, because the dialog is staying up for it.
+            icon={busy ? <span className="dsh-cg-delete-spinner">{SPINNER_ICON}</span> : undefined}
             onClick={() => onConfirm(targets)}
           >
-            {selection.length === 0
-              ? t('delete.confirm')
-              : t('delete.confirmCount', { count: selection.length })}
+            {busy
+              ? t('delete.busy')
+              : selection.length === 0
+                ? t('delete.confirm')
+                : t('delete.confirmCount', { count: selection.length })}
           </Button>
         </>
       )}
     >
-      <div className="dsh-cg-branch-body">{content}</div>
+      {/* The dialog's whole answer is the request that is running, so the body
+          reports the wait as one state rather than looking interactive. */}
+      <div className="dsh-cg-branch-body" aria-busy={busy || undefined}>{content}</div>
     </Modal>
   )
 }

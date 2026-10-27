@@ -128,6 +128,7 @@ type UiKey =
   | 'delete.list'
   | 'delete.confirm'
   | 'delete.confirmCount'
+  | 'delete.busy'
   | 'delete.none'
   | 'safety.unmerged'
   | 'safety.unpushed'
@@ -286,6 +287,7 @@ export const en = {
   'delete.list': 'Branches to delete',
   'delete.confirm': 'Delete',
   'delete.confirmCount': 'Delete {count}',
+  'delete.busy': 'Deleting…',
   'delete.none': 'No branches to delete',
 
   'safety.unmerged': 'It is not merged into the current branch and has no upstream, so Git will refuse to delete it',
@@ -498,6 +500,7 @@ export const zh: typeof en = {
   'delete.list': '待删除的分支',
   'delete.confirm': '删除',
   'delete.confirmCount': '删除 {count} 个',
+  'delete.busy': '正在删除…',
   'delete.none': '没有可删除的分支',
 
   'safety.unmerged': '它未合并到当前分支，也没有上游分支，Git 会拒绝删除',

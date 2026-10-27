@@ -342,6 +342,18 @@ const GIT_CSS = [
   // business accent and would paint the destructive action purple.
   '.dsh-cg-branch-dialog .dsh-cg-delete-confirm{background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground)}',
   '.dsh-cg-branch-dialog .dsh-cg-delete-confirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 86%,#000)}',
+  // The delete confirm is the one platform button on the page that carries a
+  // spinner: it is the dialog's whole answer while the request runs, so the ring
+  // takes the label's leading edge and turns there. The wrapper fills the
+  // primitive's 16px icon slot; the svg is sized here because the button owns no
+  // glyph rule of its own, and the spin keyframe is the one every other wait on
+  // the page shares.
+  '.dsh-cg-delete-spinner{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px}',
+  '.dsh-cg-delete-spinner svg{display:block;width:14px;height:14px;animation:dsh-cg-spin .9s linear infinite}',
+  // The primitive dims a disabled button, but the wait is this button's whole job
+  // while it runs, so the danger fill and the ring stay at full strength: the one
+  // thing left to read on the card should not also be the faintest.
+  '.dsh-cg-branch-dialog .dsh-cg-delete-confirm-busy:disabled{opacity:1;cursor:progress}',
   // Scrolls like the sidebar's two lists, whose rule above states how the
   // platform's bar is kept out of the frame until the pointer is inside.
   // The scroller is wrapped rather than being the positioned element itself:
