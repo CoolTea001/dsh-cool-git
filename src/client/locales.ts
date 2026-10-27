@@ -270,8 +270,8 @@ export const en = {
   'branch.noMatch': 'No matching branches',
   'branch.truncated': 'Too many branches; only the most recent are listed',
 
-  'merge.titleFrom': 'Merge another branch into this one',
-  'merge.descriptionFrom': 'Choose the branch to merge into this one',
+  'merge.titleFrom': 'Merge branch',
+  'merge.descriptionFrom': 'Merge the selected branch into the current branch',
   'merge.confirm': 'Merge',
   'merge.noneFrom': 'No other branch to merge in',
 
@@ -482,8 +482,8 @@ export const zh: typeof en = {
   'branch.noMatch': '没有匹配的分支',
   'branch.truncated': '分支过多，仅显示最近的部分分支',
 
-  'merge.titleFrom': '将指定分支合并到当前分支',
-  'merge.descriptionFrom': '选择要合并进来的分支',
+  'merge.titleFrom': '合并分支',
+  'merge.descriptionFrom': '将选中分支合并到当前分支',
   'merge.confirm': '合并',
   'merge.noneFrom': '没有可合并的其它分支',
 
