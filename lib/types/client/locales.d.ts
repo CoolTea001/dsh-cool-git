@@ -49,6 +49,8 @@ type UiKey =
  | 'head.refresh'
 /** The menu's Fetch row: the remotes re-read, with nothing chosen. */
  | 'head.fetch'
+/** The menu's Pull and Push rows, each one half of the round trip taken alone. */
+ | 'head.pull' | 'head.push'
 /** The menu's merge row, and the dialog it opens. */
  | 'head.mergeFrom'
 /** The menu's two branch rows, each opening a dialog of its own. */
@@ -139,6 +141,8 @@ export declare const en: {
     'head.more': string;
     'head.refresh': string;
     'head.fetch': string;
+    'head.pull': string;
+    'head.push': string;
     'head.mergeFrom': string;
     'head.branchCreate': string;
     'head.branchDelete': string;

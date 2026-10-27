@@ -884,12 +884,13 @@ export function GitView(props: {
   /**
    * Send this branch to its upstream, and report the answer.
    *
-   * Publish and the second half of Sync run this one call, because the Host
-   * decides which of the two it is from the repository itself: a branch with no
-   * upstream is pushed to the single configured remote and recorded as its
-   * upstream. The only difference the page makes is what it calls a failure.
+   * Three rows run this one call — Publish, Sync's second half, and the menu's
+   * own Push — because the Host decides which of them it is from the repository
+   * itself: a branch with no upstream is pushed to the single configured remote
+   * and recorded as its upstream. The only difference the page makes is what it
+   * calls a failure.
    *
-   * @param title - the entry naming which of the two was asked.
+   * @param title - the entry naming which of the three was asked.
    */
   const pushRemote = useCallback((title: MessageKey): void => {
     setSyncing('push')
@@ -905,6 +906,36 @@ export function GitView(props: {
   }, [sessionId, handleSynced, reportError, t])
 
   /**
+   * Pull this branch's upstream, and report the answer.
+   *
+   * Pull and Sync both start here: the menu's Pull row asks for this one half on
+   * its own, and Sync takes it as the first half of its round trip. A refusal
+   * still re-reads the counts — the remote has moved whether or not anything was
+   * brought in — and a success rewrites the working tree, so the diff on screen
+   * goes with the selection it described.
+   *
+   * The state is released before the promise resolves, so a caller that chains
+   * its own request (Sync's push) takes the spinner over rather than leaving the
+   * pull's half turning under it.
+   *
+   * @returns whether anything was pulled, which is what Sync waits for before it
+   *   has a history to push.
+   */
+  const pullRemote = useCallback((): Promise<boolean> => {
+    setSyncing('pull')
+    return pullBranch(sessionId).then(result => {
+      setSyncing(null)
+      if (result?.ok !== true) {
+        reportError({ title: t('title.pull'), lines: [reasonOf(t, result, 'title.pull')] })
+        handleSynced()
+        return false
+      }
+      handleSwitched()
+      return true
+    })
+  }, [sessionId, handleSwitched, handleSynced, reportError, t])
+
+  /**
    * Run the round trip: pull, then push.
    *
    * The order is what makes a single button safe. Fast-forwarding first means
@@ -918,22 +949,10 @@ export function GitView(props: {
    * header offers Publish instead — so the pull has a target by construction.
    */
   const syncRemote = useCallback((): void => {
-    setSyncing('pull')
-    void pullBranch(sessionId).then(result => {
-      if (result?.ok !== true) {
-        setSyncing(null)
-        reportError({ title: t('title.pull'), lines: [reasonOf(t, result, 'title.pull')] })
-        // A rejected pull still tells the user the remote has moved, so the
-        // counts are re-read even though nothing was pulled.
-        handleSynced()
-        return
-      }
-      // The pull rewrote the working tree, so the diff on screen is stale and is
-      // dropped here — the push that follows moves nothing on disk.
-      handleSwitched()
-      pushRemote('title.push')
+    void pullRemote().then(pulled => {
+      if (pulled) pushRemote('title.push')
     })
-  }, [sessionId, handleSwitched, handleSynced, reportError, pushRemote, t])
+  }, [pullRemote, pushRemote])
 
   /**
    * Publish this branch: push it to the single configured remote and let that
@@ -1101,6 +1120,7 @@ export function GitView(props: {
           sessionId={sessionId}
           refreshing={refreshing}
           fetching={fetching}
+          syncing={syncing}
           switching={switching}
           merging={merging !== null}
           creating={creating}
@@ -1108,6 +1128,8 @@ export function GitView(props: {
           busy={busy}
           onRefresh={() => void refresh()}
           onFetch={handleFetch}
+          onPull={() => void pullRemote()}
+          onPush={() => pushRemote('title.push')}
           onCheckout={handleCheckout}
           onMerge={handleMerge}
           onCreate={handleCreate}
@@ -1259,19 +1281,25 @@ function ErrorDialog(props: {
  * instead — a dropdown can be as wide as its words, and a 22px square cannot.
  *
  * The menu is read top to bottom as one sentence about the repository: the two
- * rows that only re-read it (Refresh, Fetch) above the rule, and the two that
- * change it below. Fetch sits with Refresh rather than with the remote round trip
- * because that is what it is — a read of the remotes, whose whole effect is that
- * the numbers beside Sync and the remote branches in the picker become true.
+ * rows that only re-read it (Refresh, Fetch) above the first rule, the two halves
+ * of the remote round trip taken on their own (Pull, Push) above the second, the
+ * branch rows (create, delete) above the third, and the merge under the last.
+ * Fetch sits with Refresh rather than with Pull because that is what it is — a
+ * read of the remotes, whose whole effect is that the numbers beside Sync and the
+ * remote branches in the picker become true — while Pull and Push sit apart from
+ * it, and from each other, because each moves the branch: Sync's order is the
+ * one that cannot rewind work, but a reader who wants only one half of it can
+ * now ask for exactly that.
  *
  * The branch switch and the merge are both stated as decisions rather than
  * accidents: the dialog lists what Git reported and applies nothing until the
  * choice is confirmed with a button of its own, and this row closes it before
  * handing the branch to the page. Which decision it is comes from the menu row
- * that opened it — Refresh and Fetch run at once because they have nothing to
- * choose, while a merge names another branch and gets a dialog of its own. The
- * operations themselves are the page's (`GitView`), which owns every operation in
- * flight and disables the rest of the page's controls while one runs.
+ * that opened it — Refresh, Fetch, Pull and Push run at once because they have
+ * nothing to choose, while a merge names another branch and gets a dialog of its
+ * own. The operations themselves are the page's (`GitView`), which owns every
+ * operation in flight and disables the rest of the page's controls while one
+ * runs.
  *
  * The dialog is the platform's own Modal, which owns the parts that are easy to
  * get wrong — the body portal, the mask, the focus walk, Escape, and returning
@@ -1289,11 +1317,14 @@ function ErrorDialog(props: {
  * @param props.sessionId - the session whose repository is being switched.
  * @param props.refreshing - a re-read of the repository is in flight.
  * @param props.fetching - a fetch of the remote-tracking refs is in flight.
+ * @param props.syncing - the half of the remote round trip in flight, if any.
  * @param props.switching - the branch a checkout is in flight for, if any.
  * @param props.merging - whether a merge is in flight.
  * @param props.busy - whether any repository operation is in flight.
  * @param props.onRefresh - called to re-read the repository state and history.
  * @param props.onFetch - called to refresh the remote-tracking refs.
+ * @param props.onPull - called to fast-forward the branch from its upstream.
+ * @param props.onPush - called to send the branch to its upstream.
  * @param props.onCheckout - called with the branch the dialog confirmed.
  * @param props.onMerge - called with the branch the dialog confirmed.
  * @param props.onCreate - called with the name and starting point the dialog confirmed.
@@ -1308,6 +1339,7 @@ function SideHead(props: {
   readonly sessionId: string | undefined
   readonly refreshing: boolean
   readonly fetching: boolean
+  readonly syncing: RemoteRun | null
   readonly switching: string | null
   readonly merging: boolean
   readonly creating: boolean
@@ -1315,6 +1347,8 @@ function SideHead(props: {
   readonly busy: boolean
   readonly onRefresh: () => void
   readonly onFetch: () => void
+  readonly onPull: () => void
+  readonly onPush: () => void
   readonly onCheckout: (branch: string) => void
   readonly onMerge: (branch: string) => void
   readonly onCreate: (name: string, start: string) => void
@@ -1322,8 +1356,8 @@ function SideHead(props: {
   readonly onError: (error: GitError) => void
 }): ReactElement {
   const {
-    t, status, sessionId, refreshing, fetching, switching, merging, creating, deleting, busy,
-    onRefresh, onFetch, onCheckout, onMerge, onCreate, onDelete, onError,
+    t, status, sessionId, refreshing, fetching, syncing, switching, merging, creating, deleting,
+    busy, onRefresh, onFetch, onPull, onPush, onCheckout, onMerge, onCreate, onDelete, onError,
   } = props
   /** Whether the More menu is showing. */
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1338,10 +1372,13 @@ function SideHead(props: {
    * Whether a row behind the More control is running right now.
    *
    * Every operation the menu itself can start, and none of the ones it cannot: a
-   * commit or a sync belongs to another control, and a spinner on this one would
-   * be claiming a wait that is not its own.
+   * commit or a branch switch belongs to another control, and a spinner on this
+   * one would be claiming a wait that is not its own. The remote round trip is
+   * one of the menu's now — Pull and Push are its own rows — so it turns this
+   * spinner even when the same two calls were started from Sync in the history
+   * pane's header.
    */
-  const menuBusy = refreshing || fetching || merging || creating || deleting
+  const menuBusy = refreshing || fetching || syncing !== null || merging || creating || deleting
 
   /** Close the branch list without applying anything. */
   const closeDialog = useCallback((): void => {
@@ -1400,21 +1437,26 @@ function SideHead(props: {
     setMenuOpen(false)
     if (id === 'refresh') onRefresh()
     else if (id === 'fetch') onFetch()
+    else if (id === 'pull') onPull()
+    else if (id === 'push') onPush()
     else if (id === 'branch-create') setPick('create')
     else if (id === 'branch-delete') setDeleteOpen(true)
     else if (id === 'merge-from') setPick('merge-from')
-  }, [onRefresh, onFetch])
+  }, [onRefresh, onFetch, onPull, onPush])
 
   // The rows, in the order a reader meets them: the two that only re-read the
-  // repository and then run at once, the two that move branches, then the one
-  // that merges them. The rules between them are the menu's own way of saying
-  // which is which — how many of the three groups a row belongs to is the whole
-  // of what a rule separates, so the grouping is argued in the order alone. No
-  // row carries a glyph: the words are the whole of what each row does, and
-  // icons in a 144px card would only take width from them.
+  // repository and then run at once, the two halves of the remote round trip,
+  // the two that move branches, then the one that merges them. Each rule says
+  // which of the four groups the rows under it belong to, so the grouping is
+  // argued in the order alone. No row carries a glyph: the words are the whole
+  // of what each row does, and icons in a 144px card would only take width from
+  // them.
   const menuItems = [
     { id: 'refresh', label: t('head.refresh') },
     { id: 'fetch', label: t('head.fetch') },
+    { type: 'separator' as const, id: 'remote' },
+    { id: 'pull', label: t('head.pull') },
+    { id: 'push', label: t('head.push') },
     { type: 'separator' as const, id: 'branches' },
     { id: 'branch-create', label: t('head.branchCreate') },
     { id: 'branch-delete', label: t('head.branchDelete') },

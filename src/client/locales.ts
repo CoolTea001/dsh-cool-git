@@ -85,6 +85,9 @@ type UiKey =
   | 'head.refresh'
   /** The menu's Fetch row: the remotes re-read, with nothing chosen. */
   | 'head.fetch'
+  /** The menu's Pull and Push rows, each one half of the round trip taken alone. */
+  | 'head.pull'
+  | 'head.push'
   /** The menu's merge row, and the dialog it opens. */
   | 'head.mergeFrom'
   /** The menu's two branch rows, each opening a dialog of its own. */
@@ -246,6 +249,8 @@ export const en = {
   'head.more': 'More',
   'head.refresh': 'Refresh',
   'head.fetch': 'Fetch',
+  'head.pull': 'Pull',
+  'head.push': 'Push',
   'head.mergeFrom': 'Merge from…',
   'head.branchCreate': 'Branch create…',
   'head.branchDelete': 'Branch delete…',
@@ -454,11 +459,13 @@ export const zh: typeof en = {
   'head.more': '更多',
   // The menu's rows keep their English names in both locales: each one is what
   // its Git command is called, and a translated row would name something the
-  // reader cannot match to `git fetch` or `git merge`. The control that opens
-  // the menu is not one of them — it is a row of the page's own, so `head.more`
-  // stays translated.
+  // reader cannot match to `git fetch`, `git pull` or `git merge`. The control
+  // that opens the menu is not one of them — it is a row of the page's own, so
+  // `head.more` stays translated.
   'head.refresh': 'Refresh',
   'head.fetch': 'Fetch',
+  'head.pull': 'Pull',
+  'head.push': 'Push',
   'head.mergeFrom': 'Merge from…',
   'head.branchCreate': 'Branch create…',
   'head.branchDelete': 'Branch delete…',
