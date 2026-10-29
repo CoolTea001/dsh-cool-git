@@ -1,4 +1,4 @@
-![dsh-cool-git cover](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.3.0.png)
+![dsh-cool-git cover](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.4.0.png)
 
 # dsh-cool-git
 
@@ -8,16 +8,16 @@ English · [中文](./README.zh.md)
 
 ## Description
 
-DeepSeek Harness Git plugin — adds Git management to the session tab bar, covering the basics: commit | pull | push | branch | diff.
+DeepSeek Harness Git plugin — adds a Git panel to the session tab bar: changes, commits, history, branches, and remote sync in one place, with AI-written commit messages.
 
 ## Features
 
-- **Workspace binding:** view and manage the code changes in the current workspace
-- **Branch management:** switch, create, and delete branches
-- **Sync:** one-click Pull & Push to sync changes
-- **Diff view:** view per-file change diffs
-- **Commit history:** browse the commit history and view the file diffs
-- **Auto-generated commit message:** use DSH's current default model to generate a commit message and fill it into the Commit Message field
+- **Workspace-aware:** opens the repository of the current session
+- **Changes & diffs:** folder tree, staged state, and per-file diffs
+- **Commit history:** browse commits and their diffs
+- **Commit:** stage and commit every change at once, with AI-written messages (model and prompt configurable per workspace)
+- **Branches:** switch, create, delete (with risk marks), and merge
+- **Remote:** fetch, pull, push, publish, and one-click sync (pull, then push)
 
 ## Installation
 
@@ -26,23 +26,6 @@ Use DSH's add-plugin feature and enter the package name: `dsh-cool-git`.
 ## Contributing
 
 Contributions via Issues and PRs are welcome.
-
-```
-// Clone project
-git clone https://github.com/CoolTea001/dsh-cool-git.git
-
-// Install dependencies
-cd dsh-cool-git
-pnpm install
-
-// Start local development
-pnpm run dev
-
-// Local install: use DSH's add-plugin feature and enter the local project path
-
-// Restart DSH service
-dsh web
-```
 
 ## License
 

@@ -1,4 +1,4 @@
-![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.3.0.png)
+![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.4.0.png)
 
 # dsh-cool-git
 
@@ -8,16 +8,16 @@
 
 ## 描述
 
-DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支持 commit | pull | push | branch | diff 等基础功能。
+DeepSeek Harness Git 插件 —— 会话 Tab 栏中添加 Git 管理面板，变更、提交、历史、分支、远端同步一站完成，Message 可 AI 生成。
 
 ## 功能介绍
 
-- **工作区绑定：** 查看并管理当前工作区的代码变更
-- **分支管理：** 支持分支切换/分支创建/分支删除
-- **变更同步：** 支持一键 Pull & Push 同步代码变更
-- **Diff 查看：** 支持查看文件变更 Diff
-- **提交历史：** 支持查看提交历史并查看文件变更 Diff
-- **自动生成提交信息：** 使用 DSH 当前默认模型，自动生成提交信息并填入 Commit Message 框中；
+- **工作区感知：** 跟随当前会话定位仓库
+- **变更与 Diff：** 文件夹树、暂存状态、单文件 Diff
+- **提交历史：** 浏览提交，查看当次 Diff
+- **提交：** 全部变更一次提交，AI 生成提交信息（模型与提示词可按工作区配置）
+- **分支：** 切换、新建、删除（标注风险）、合并
+- **远端：** Fetch、Pull、Push、Publish，一键同步（先拉后推）
 
 ## 安装教程
 
@@ -26,23 +26,6 @@ DeepSeek Harness Git 插件 —— 会话 Tab 栏添加 Git 管理功能，支�
 ## 参与贡献
 
 欢迎提交 Issue 和 PR。
-
-```
-// 克隆项目
-git clone https://github.com/CoolTea001/dsh-cool-git.git
-
-// 安装依赖
-cd dsh-cool-git
-pnpm install
-
-// 启动本地开发
-pnpm run dev
-
-// 本地安装：使用 DSH 的新增插件功能，输入本地项目路径即可
-
-// 重启 DSH 服务
-dsh web
-```
 
 ## 开源协议
 
