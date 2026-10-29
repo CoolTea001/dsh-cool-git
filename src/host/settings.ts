@@ -7,7 +7,7 @@
  * the rest of the harness's user data instead of in the working tree — a Git
  * tab must not leave a settings file behind in the repository it is showing.
  *
- * The file is one JSON document at `<dsh home>/dsh-cool-git/settings.json`:
+ * The file is one JSON document at `<dsh home>/cool-git/settings.json`:
  *
  *   {
  *     "version": 1,
@@ -19,11 +19,17 @@
  *     }
  *   }
  *
+ * The pre-rename location, `<dsh home>/dsh-cool-git/settings.json`, is still read
+ * while the current path holds no document. Nothing writes there any more: the
+ * next save lands on the current path and carries the whole map with it, so the
+ * rename moves what a Workspace had chosen instead of resetting it.
+ *
  * A missing member is the meaningful state: no `model` means "use DSH's current
- * default selection", and no `prompt` means "use the built-in prompt". Removing
- * an override is therefore a deletion rather than a copy of today's default,
- * which is what lets a later change to the built-in prompt reach a Workspace
- * that never meant to diverge from it.
+ * default selection", and no `prompt` means "use the built-in prompt". The prompt
+ * field opens on the built-in text, so whatever it holds at Save is what this file
+ * stores — that text verbatim included — and only clearing the field removes the
+ * override. A model is never copied that way: following the default selection
+ * stays "no member".
  *
  * Reads and writes are serialized through one promise chain. A Generate request
  * reads this file while the Settings dialog may be saving it, and a read that
@@ -44,7 +50,6 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import { MAX_PROMPT_LENGTH, type MessageModel } from '../shared/contract.js'
-import { DEFAULT_MESSAGE_PROMPT } from '../shared/prompt.js'
 
 /** One Workspace's stored overrides; an absent member means "use the default". */
 export interface WorkspaceMessageSettings {
@@ -115,6 +120,22 @@ function harnessHome(ctx: any): string {
  * @returns the absolute path to read and write.
  */
 export function settingsFilePath(ctx: any): string {
+  return join(harnessHome(ctx), 'cool-git', 'settings.json')
+}
+
+/**
+ * The document this plugin wrote before its directory was renamed.
+ *
+ * Read only, and only while `settingsFilePath` holds no document: a Workspace that
+ * chose a model or a prompt before the rename keeps that choice, and starting over
+ * from the defaults would be a silent reset of something the user set. Nothing
+ * writes here any more, so a file this path names is a leftover its owner may
+ * delete once the next save has moved the whole map to the current path.
+ *
+ * @param ctx - the Host plugin context.
+ * @returns the absolute path of the pre-rename document.
+ */
+function legacySettingsFilePath(ctx: any): string {
   return join(harnessHome(ctx), 'dsh-cool-git', 'settings.json')
 }
 
@@ -162,6 +183,32 @@ function parsePrompt(value: unknown): string | undefined {
 }
 
 /**
+ * The document's text, from the current path or the pre-rename one.
+ *
+ * A path that cannot be read, and one that holds nothing but whitespace, both
+ * leave the question open: a document with no bytes holds no Workspace entry, and
+ * `JSON.parse` would only read it as a malformed file. The first location with
+ * something to parse wins, so a Workspace whose only document predates the rename
+ * is read exactly as it was before it.
+ *
+ * @param ctx - the Host plugin context.
+ * @returns the text to parse, or undefined when neither location holds a document.
+ */
+async function readDocumentText(ctx: any): Promise<string | undefined> {
+  for (const file of [settingsFilePath(ctx), legacySettingsFilePath(ctx)]) {
+    let text: string
+    try {
+      text = await readFile(file, 'utf8')
+    } catch {
+      continue
+    }
+    if (text.trim() === '') continue
+    return text
+  }
+  return undefined
+}
+
+/**
  * Read the whole document, treating every unreadable state as empty.
  *
  * The per-entry sanitizing happens here rather than at each caller, so a
@@ -171,12 +218,8 @@ function parsePrompt(value: unknown): string | undefined {
  * @returns the Workspace entries, or an empty map.
  */
 async function readDocument(ctx: any): Promise<Record<string, StoredWorkspace>> {
-  let text: string
-  try {
-    text = await readFile(settingsFilePath(ctx), 'utf8')
-  } catch {
-    return {}
-  }
+  const text = await readDocumentText(ctx)
+  if (text === undefined) return {}
 
   let parsed: unknown
   try {
@@ -301,10 +344,11 @@ type PromptChoice =
 /**
  * Read one request's prompt field.
  *
- * A blank prompt, an absent one, and one identical to the built-in prompt all
- * mean "no override": the first two because an empty textarea is the dialog's
- * way of saying "use the default", and the third because saving the default
- * text verbatim would freeze this Workspace at today's wording.
+ * An empty field is the dialog's way of saying "follow the built-in prompt", so
+ * an absent field, a null, and a blank one all mean "no override". Anything else
+ * is stored as written, the built-in text included: the field opens on that text,
+ * and a reader who saved the box as it stood asked for the words they saw rather
+ * than for whatever the built-in prompt says after its next revision.
  *
  * @param value - the request body's field.
  * @returns the override, or the refusal to report.
@@ -312,7 +356,6 @@ type PromptChoice =
 export function readPromptChoice(value: unknown): PromptChoice {
   if (value === null || value === undefined) return { ok: true, value: undefined }
   if (typeof value !== 'string' || value.length > MAX_PROMPT_LENGTH) return { ok: false }
-  const trimmed = value.trim()
-  if (trimmed === '' || trimmed === DEFAULT_MESSAGE_PROMPT.trim()) return { ok: true, value: undefined }
+  if (value.trim() === '') return { ok: true, value: undefined }
   return { ok: true, value }
 }

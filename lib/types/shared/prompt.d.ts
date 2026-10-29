@@ -3,12 +3,11 @@
  * replaced it.
  *
  * It lives in `shared/` rather than in the Host half because both halves need
- * the same text: the Host sends it to the model, and the Settings dialog shows
- * it as the value of the prompt field, so that "what the default does" can be
- * read before it is changed. Keeping one copy is also what lets the dialog
- * decide that text equal to this prompt is not a customization at all — saving
- * it stores no override, and a future change to this copy still reaches a
- * Workspace that never meant to diverge from it.
+ * the same text: the Host sends it to the model whenever the Workspace's prompt
+ * field is empty, and the Settings dialog opens that field on it, so that "what
+ * the default does" can be read before it is changed. A saved field is used as
+ * written, this text included; only an empty field leaves this copy in charge,
+ * which is the state a later revision of this text reaches.
  *
  * The prompt is English copy this project owns rather than sentences the page
  * words in the active locale: it is read by a model, not by the reader of the

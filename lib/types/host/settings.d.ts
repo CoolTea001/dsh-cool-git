@@ -7,7 +7,7 @@
  * the rest of the harness's user data instead of in the working tree — a Git
  * tab must not leave a settings file behind in the repository it is showing.
  *
- * The file is one JSON document at `<dsh home>/dsh-cool-git/settings.json`:
+ * The file is one JSON document at `<dsh home>/cool-git/settings.json`:
  *
  *   {
  *     "version": 1,
@@ -19,11 +19,17 @@
  *     }
  *   }
  *
+ * The pre-rename location, `<dsh home>/dsh-cool-git/settings.json`, is still read
+ * while the current path holds no document. Nothing writes there any more: the
+ * next save lands on the current path and carries the whole map with it, so the
+ * rename moves what a Workspace had chosen instead of resetting it.
+ *
  * A missing member is the meaningful state: no `model` means "use DSH's current
- * default selection", and no `prompt` means "use the built-in prompt". Removing
- * an override is therefore a deletion rather than a copy of today's default,
- * which is what lets a later change to the built-in prompt reach a Workspace
- * that never meant to diverge from it.
+ * default selection", and no `prompt` means "use the built-in prompt". The prompt
+ * field opens on the built-in text, so whatever it holds at Save is what this file
+ * stores — that text verbatim included — and only clearing the field removes the
+ * override. A model is never copied that way: following the default selection
+ * stays "no member".
  *
  * Reads and writes are serialized through one promise chain. A Generate request
  * reads this file while the Settings dialog may be saving it, and a read that
@@ -101,10 +107,11 @@ type PromptChoice = {
 /**
  * Read one request's prompt field.
  *
- * A blank prompt, an absent one, and one identical to the built-in prompt all
- * mean "no override": the first two because an empty textarea is the dialog's
- * way of saying "use the default", and the third because saving the default
- * text verbatim would freeze this Workspace at today's wording.
+ * An empty field is the dialog's way of saying "follow the built-in prompt", so
+ * an absent field, a null, and a blank one all mean "no override". Anything else
+ * is stored as written, the built-in text included: the field opens on that text,
+ * and a reader who saved the box as it stood asked for the words they saw rather
+ * than for whatever the built-in prompt says after its next revision.
  *
  * @param value - the request body's field.
  * @returns the override, or the refusal to report.

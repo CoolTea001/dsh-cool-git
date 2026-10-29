@@ -1437,11 +1437,14 @@ function modelLabel(selection: MessageModel, groups: readonly MessageModelGroup[
  * but no row claiming to be it is the honest shape of that state.
  *
  * The prompt field opens on the effective prompt: the Workspace's own text when
- * it has one, and the built-in text otherwise. That makes the default readable
- * before it is changed, and it makes "restore default" a matter of putting the
- * same text back. The Host treats text equal to the built-in prompt as no
- * override at all, so saving the field untouched does not freeze this Workspace
- * at today's wording.
+ * it has one, and the built-in text otherwise, so the default is readable before
+ * it is changed. Whatever the field holds when Save is pressed is what the Host
+ * stores and what every later Generate is told — the built-in text included,
+ * which is the point of opening on it: the box is the answer, and a reader who
+ * left it as it stood asked for those words. Only an empty box drops the override
+ * and puts the Workspace back on the built-in prompt, so clearing it — not
+ * retyping it — is how a later revision of the default reaches this Workspace.
+ * "Restore default" fills the box back in with today's text.
  *
  * The dialog is the platform's Modal, which owns the portal, the mask, Escape,
  * focus return, and the two buttons' placement; the body is this plugin's own
