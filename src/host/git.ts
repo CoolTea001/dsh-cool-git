@@ -62,6 +62,7 @@ import {
   type StatusPayload,
   type SyncPayload,
 } from '../shared/contract.js'
+import { errorMessage } from '../shared/error.js'
 import { coded, type Refusal } from './refusal.js'
 
 /** Wall-clock bound per Git invocation; a hung command is killed, not waited on. */
@@ -114,8 +115,13 @@ export const DEFAULT_LOG_LIMIT = 60
 /** Upper bound on commits per request, so one call cannot walk a whole history. */
 const MAX_LOG_LIMIT = 300
 
-/** Upper bound on branches returned, so a huge ref list cannot flood the menu. */
-const MAX_BRANCHES = 200
+/**
+ * Upper bound on branches returned, so a huge ref list cannot flood the menu.
+ *
+ * Exported because the delete route caps a request at the same number: a
+ * selection can never name more branches than the list it was drawn from.
+ */
+export const MAX_BRANCHES = 200
 
 /**
  * What Git prints when it refuses to touch a working tree that is not clean.
@@ -256,6 +262,16 @@ const GIT_ENV: Readonly<Record<string, string>> = {
   GIT_PAGER: 'cat',
 }
 
+/**
+ * The status invocation both the sidebar and the message generator start from.
+ *
+ * `--branch` adds the `## ...` header as the first NUL-terminated record, and
+ * `--untracked-files=all` names every untracked file rather than collapsing each
+ * directory of them into one row. The digest ignores the header; it reads the
+ * same command so the two views of the tree cannot disagree.
+ */
+const STATUS_ARGS = ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all'] as const
+
 /** One Git invocation's outcome, resolved rather than thrown. */
 interface GitRun {
   /** The process exit code, or null when it was killed by a signal. */
@@ -380,10 +396,6 @@ function command(args: readonly string[], flavor: ShellFlavor): string {
   return shellCommand(['git', '--no-pager', '-c', 'core.quotePath=false', ...args], flavor)
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /** How one shell invocation is bounded and fed, beyond its command line. */
 interface InvocationOptions {
   readonly timeoutMs?: number
@@ -435,31 +447,28 @@ async function invoke(
       denied: result?.sandbox?.denied === true,
     }
   } catch (error) {
-    return failureRun(messageOf(error))
+    return failureRun(errorMessage(error))
   }
 }
 
 /**
  * Run one Git command and collect its result.
  *
+ * The outcome is returned as it came back rather than judged here: which exit
+ * codes are a normal answer differs per command, and every caller reads them
+ * itself.
+ *
  * @param target - the shell seam, the directory, and the file policy to run under.
  * @param args - subcommand and arguments, before quoting.
- * @param acceptCodes - exit codes that are a normal answer rather than a failure.
- * @param timeoutMs - wall-clock bound; the network commands raise it.
- * @param stdin - text handed to the command on its standard input, for the one
- *   argument that is free text rather than a name.
- * @param env - extra environment on top of the Git defaults.
+ * @param options - the bound, standard input, and environment for it.
  * @returns the invocation's outcome; never rejects.
  */
 async function runGit(
   target: GitTarget,
   args: readonly string[],
-  acceptCodes: readonly number[] = [0],
-  timeoutMs: number = GIT_TIMEOUT_MS,
-  stdin?: string,
-  env?: Readonly<Record<string, string>>,
+  options: InvocationOptions = {},
 ): Promise<GitRun> {
-  return invoke(target, command(args, shellFlavor(target.shell)), { timeoutMs, stdin, env })
+  return invoke(target, command(args, shellFlavor(target.shell)), options)
 }
 
 /** An outcome that never reached Git, so the caller reports it as infrastructure. */
@@ -502,6 +511,24 @@ function refusalOf(run: GitRun): Refusal {
 }
 
 /**
+ * The refusal a credential problem amounts to, when the diagnosis is one.
+ *
+ * The helper case is tested first on purpose: a helper a confined sandbox kept
+ * from starting leaves Git with nobody to ask for a credential, which reads like
+ * an authentication failure but is the sandbox's answer. Every route that can
+ * cross the network shares this, because Git words the same two failures for a
+ * fetch, a pull, a push, and a remote delete.
+ *
+ * @param text - Git's own diagnosis of the failed invocation.
+ * @returns the coded refusal, or null when the failure is not about credentials.
+ */
+function authRefusal(text: string): Refusal | null {
+  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) return coded('auth-helper')
+  if (AUTH_FAILURE.test(text)) return coded('auth')
+  return null
+}
+
+/**
  * Resolve the repository that owns `workdir` and whether it has any commit.
  *
  * `--show-toplevel` is what makes the rest of the module simple: every later
@@ -530,7 +557,7 @@ async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
 
   // `--quiet` keeps an unborn branch from writing "fatal: Needed a single
   // revision" to stderr, and exit code 1 is then a normal "no commits yet".
-  const head = await runGit(inDir(target, root), ['rev-parse', '--verify', '--quiet', 'HEAD'], [0, 1])
+  const head = await runGit(inDir(target, root), ['rev-parse', '--verify', '--quiet', 'HEAD'])
   return { root, hasHead: head.code === 0 }
 }
 
@@ -567,19 +594,15 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
-  // `--branch` adds the `## ...` header as the first NUL-terminated record, and
-  // `--untracked-files=all` names every untracked file rather than collapsing
-  // each directory of them into one row.
-  const status = await runGit(inDir(target, repo.root), [
-    'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all',
-  ])
+  const root = inDir(target, repo.root)
+  const status = await runGit(root, STATUS_ARGS)
   if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
   const parsed = parseStatus(status.stdout)
 
   let head: StatusPayload['head'] = null
   if (repo.hasHead) {
-    const log = await runGit(inDir(target, repo.root), ['log', '-1', `--pretty=format:${HEAD_FORMAT}`])
+    const log = await runGit(root, ['log', '-1', `--pretty=format:${HEAD_FORMAT}`])
     if (log.code === 0) {
       const [hash = '', short = '', date = '', subject = ''] = log.stdout.split(FIELD)
       head = { hash, short, date, subject }
@@ -765,11 +788,12 @@ export async function readLog(target: GitTarget, limit: number): Promise<LogPayl
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   if (!repo.hasHead) return { ok: true, commits: [], empty: true }
 
+  const root = inDir(target, repo.root)
   const count = clampLimit(limit)
   // `-z` separates commits with NUL instead of a newline, so a multi-line commit
   // body (and any subject holding a newline) cannot be mistaken for a record
   // boundary. The fields inside one record are split on the unit separator.
-  const log = await runGit(inDir(target, repo.root), [
+  const log = await runGit(root, [
     'log', '-z', `--max-count=${count}`, `--pretty=format:${LOG_FORMAT}`,
   ])
   if (log.code !== 0) return { ok: false, ...refusalOf(log), reason: 'error' }
@@ -802,7 +826,8 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   if (!repo.hasHead) return { ok: false, ...coded('no-commits'), reason: 'error' }
 
-  const meta = await runGit(inDir(target, repo.root), [
+  const root = inDir(target, repo.root)
+  const meta = await runGit(root, [
     'log', '-1', `--pretty=format:${DETAIL_FORMAT}`, hash,
   ])
   if (meta.code !== 0) return { ok: false, ...refusalOf(meta), reason: 'error' }
@@ -815,10 +840,10 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
 
   const merge = summary.parents.length > 1
   const patchRun = summary.parents.length === 0
-    ? await runGit(inDir(target, repo.root), [
+    ? await runGit(root, [
         'show', '--no-color', '--no-ext-diff', '-M', '--patch', '-U3', '--format=', hash,
       ])
-    : await runGit(inDir(target, repo.root), [
+    : await runGit(root, [
         'diff', '--no-color', '--no-ext-diff', '-M', '-U3', `${hash}^`, hash,
       ])
   if (patchRun.code !== 0) return { ok: false, ...refusalOf(patchRun), reason: 'error' }
@@ -862,7 +887,7 @@ export async function readDiff(
     // invocation is the normal answer rather than a failure.
     diff = await runGit(root, [
       'diff', '--no-index', ...base, '--', '/dev/null', file.path,
-    ], [0, 1])
+    ])
   } else if (!repo.hasHead) {
     diff = await runGit(root, [
       'diff', ...(file.staged ? ['--cached'] : []), ...base, '--', file.path,
@@ -1078,7 +1103,7 @@ async function readUntrackedPreviews(
     if (!file.untracked || previews.length >= MAX_PREVIEW_FILES || budget <= 0) continue
     const run = await runGit(root, [
       'diff', '--no-index', '--stat', '-p', '--no-color', '--no-ext-diff', '--', '/dev/null', file.path,
-    ], [0, 1])
+    ])
     if (run.code !== 0 && run.code !== 1) continue
     if (run.stdout.trim() === '') continue
     const cut = cutAtLine(run.stdout, Math.min(MAX_PREVIEW_CHARS, budget))
@@ -1146,9 +1171,7 @@ export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest>
   if ('refusal' in repo) return { ok: false, refusal: repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
-  const status = await runGit(root, [
-    'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all',
-  ])
+  const status = await runGit(root, STATUS_ARGS)
   if (status.code !== 0) return { ok: false, refusal: refusalOf(status), reason: 'error' }
   const files = parseStatus(status.stdout).files
   const recentMessages = await readRecentMessages(root, repo.hasHead)
@@ -1196,40 +1219,19 @@ type RefNames =
 /**
  * Read the short names under one ref namespace, newest commit date first.
  *
- * `--count` is asked for one more name than the cap, so a cut list can say that
- * it was cut. The separator question does arise here — and only here — because a
- * remote's symbolic `HEAD` is wanted out of the list: `%(symref)` is empty for a
- * real ref and names the target for that alias, and `%00` is how the two fields
- * are kept apart inside a record (`%x1f` is expanded by `log --pretty` and not
- * by `for-each-ref`; `%00` is). Ref names can hold no NUL, so a record is
- * exactly two fields.
+ * A projection over {@link readRefRecords} rather than a second walk: the switch
+ * list and the delete dialog must agree about which refs exist and which
+ * symbolic aliases are not branches, so they read the same records and only this
+ * reader narrows them to names.
  *
  * @param root - the repository root, with the session's file policy.
  * @param namespace - the ref namespace to read, e.g. `refs/heads/`.
  * @returns the short names, or why the read failed.
  */
 async function readRefNames(root: GitTarget, namespace: string): Promise<RefNames> {
-  const list = await runGit(root, [
-    'for-each-ref', '--sort=-committerdate', `--count=${MAX_BRANCHES + 1}`,
-    '--format=%(refname:short)%00%(symref)', namespace,
-  ])
-  if (list.code !== 0) return { ok: false, refusal: refusalOf(list) }
-
-  const names: string[] = []
-  let truncated = false
-  for (const record of list.stdout.split('\n')) {
-    if (record === '') continue
-    const [name = '', symref = ''] = record.split('\0')
-    // A remote's `HEAD` alias shortens to the bare remote name, which is not a
-    // branch anyone can switch to; the ref it points at is in the list itself.
-    if (symref !== '') continue
-    if (names.length === MAX_BRANCHES) {
-      truncated = true
-      break
-    }
-    names.push(name)
-  }
-  return { ok: true, names, truncated }
+  const records = await readRefRecords(root, namespace)
+  if (!records.ok) return records
+  return { ok: true, names: records.records.map(record => record.name), truncated: records.truncated }
 }
 
 /**
@@ -1387,7 +1389,7 @@ async function switchTo(
  * @returns true when the ref exists.
  */
 async function refExists(root: GitTarget, ref: string): Promise<boolean> {
-  const run = await runGit(root, ['rev-parse', '--verify', '--quiet', ref], [0, 1])
+  const run = await runGit(root, ['rev-parse', '--verify', '--quiet', ref])
   return run.code === 0
 }
 
@@ -1615,7 +1617,15 @@ type RefRecords =
   | { readonly ok: false; readonly refusal: Refusal }
 
 /**
- * Read one ref namespace as records, cut at the page's own bound.
+ * Read one ref namespace as records, newest commit date first.
+ *
+ * `--count` is asked for one more record than the cap, so a cut list can say
+ * that it was cut. `%00` is how the fields are kept apart inside a record
+ * (`%x1f` is expanded by `log --pretty` and not by `for-each-ref`; `%00` is),
+ * and a ref name can hold no NUL, so a record is exactly five fields.
+ *
+ * This is the one walk both branch readers use: the switch list takes the
+ * names, and the delete dialog takes the whole records.
  *
  * @param root - the repository root, with the session's file policy.
  * @param namespace - the ref namespace to read, e.g. `refs/heads/`.
@@ -1884,8 +1894,7 @@ async function deleteRemoteBranch(
   const run = await runGit(
     root,
     ['push', remote, '--delete', `refs/heads/${branch}`],
-    [0],
-    GIT_NETWORK_TIMEOUT_MS,
+    { timeoutMs: GIT_NETWORK_TIMEOUT_MS },
   )
   if (run.code === 0) return { name: item.name, ok: true }
   return { name: item.name, ok: false, ...remoteDeleteFailure(run, branch) }
@@ -1930,8 +1939,8 @@ function remoteDeleteFailure(run: GitRun, branch: string): Refusal {
   if (run.denied === true) return coded('delete-denied')
 
   const text = diagnosticText(run)
-  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) return coded('auth-helper')
-  if (AUTH_FAILURE.test(text)) return coded('auth')
+  const auth = authRefusal(text)
+  if (auth !== null) return auth
   if (REMOTE_REF_MISSING.test(text)) return coded('unknown-branch', { name: branch })
   return refusalOf(run)
 }
@@ -1984,15 +1993,15 @@ export async function mergeBranch(
  * Both a local branch and a remote-tracking ref can be merged in, and the answer
  * is `rev-parse` on the fully-qualified name rather than a pattern of this
  * half's own — which is also what keeps a name Git accepts from being refused by
- * a rule that does not exist.
+ * a rule that does not exist. A new branch's starting point is resolved by the
+ * same rule, so that resolution is reused here rather than restated.
  *
  * @param root - the repository root, with the session's file policy.
  * @param name - the branch to judge.
  * @returns true when a merge may name it as its source.
  */
 async function mergeableRef(root: GitTarget, name: string): Promise<boolean> {
-  if (await refExists(root, `refs/heads/${name}`)) return true
-  return refExists(root, `refs/remotes/${name}`)
+  return (await startRef(root, name)) !== null
 }
 
 /**
@@ -2083,7 +2092,7 @@ function mergeSummary(run: GitRun, source: string): string {
  * @returns the short branch name.
  */
 async function currentBranch(root: GitTarget): Promise<string | null> {
-  const head = await runGit(root, ['symbolic-ref', '--short', '-q', 'HEAD'], [0, 1])
+  const head = await runGit(root, ['symbolic-ref', '--short', '-q', 'HEAD'])
   if (head.code !== 0) return null
   const name = head.stdout.trim()
   return name === '' ? null : name
@@ -2100,9 +2109,7 @@ async function currentBranch(root: GitTarget): Promise<string | null> {
  * @returns the upstream, or undefined when the branch has none.
  */
 async function upstreamOf(root: GitTarget): Promise<string | undefined> {
-  const upstream = await runGit(
-    root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], [0, 1, 128],
-  )
+  const upstream = await runGit(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])
   if (upstream.code !== 0) return undefined
   const name = upstream.stdout.trim()
   return name === '' ? undefined : name
@@ -2213,7 +2220,7 @@ export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  const run = await runGit(root, ['fetch', '--all'], [0], GIT_NETWORK_TIMEOUT_MS)
+  const run = await runGit(root, ['fetch', '--all'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
   if (run.code !== 0) return fetchFailure(run)
   return { ok: true }
@@ -2223,11 +2230,9 @@ export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
  * Describe why a fetch was refused.
  *
  * Two cases, and the second is the one worth separating: a sandbox that forbids
- * writing at all, and credentials the remote rejected. The order matters because
- * a credential helper a confined sandbox kept from starting leaves Git with
- * nobody to ask, which reads like an auth failure but is the sandbox. Everything
- * else is Git's own first line — `Could not resolve host` and friends — which is
- * more specific than anything this half could invent.
+ * writing at all, and credentials the remote rejected. Everything else is Git's
+ * own first line — `Could not resolve host` and friends — which is more specific
+ * than anything this half could invent.
  *
  * @param run - the failed fetch invocation.
  * @returns the payload the page renders.
@@ -2235,11 +2240,8 @@ export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
 function fetchFailure(run: GitRun): FetchPayload {
   if (run.denied === true) return { ok: false, ...coded('fetch-denied'), reason: 'denied' }
 
-  const text = diagnosticText(run)
-  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) {
-    return { ok: false, ...coded('auth-helper'), reason: 'auth' }
-  }
-  if (AUTH_FAILURE.test(text)) return { ok: false, ...coded('auth'), reason: 'auth' }
+  const auth = authRefusal(diagnosticText(run))
+  if (auth !== null) return { ok: false, ...auth, reason: 'auth' }
 
   return { ok: false, ...refusalOf(run), reason: 'error' }
 }
@@ -2271,9 +2273,7 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
     }
   }
 
-  const run = await runGit(
-    handoff.root, ['pull', '--ff-only'], [0], GIT_NETWORK_TIMEOUT_MS,
-  )
+  const run = await runGit(handoff.root, ['pull', '--ff-only'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'pull' }
   if (run.code !== 0) {
     const failure = syncFailure(run, 'pull')
@@ -2328,7 +2328,7 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
     args = ['push', '--set-upstream', remote, branch]
   }
 
-  const run = await runGit(root, args, [0], GIT_NETWORK_TIMEOUT_MS)
+  const run = await runGit(root, args, { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'push' }
   if (run.code !== 0) {
     const failure = syncFailure(run, 'push')
@@ -2365,15 +2365,8 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
   // Git's own words, for every case below.
   const text = diagnosticText(run)
 
-  // Before the auth case: a helper that never started leaves Git with nobody to
-  // ask for a credential, which reads like an auth failure but is the sandbox.
-  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) {
-    return { ok: false, ...coded('auth-helper'), reason: 'auth', action }
-  }
-
-  if (AUTH_FAILURE.test(text)) {
-    return { ok: false, ...coded('auth'), reason: 'auth', action }
-  }
+  const auth = authRefusal(text)
+  if (auth !== null) return { ok: false, ...auth, reason: 'auth', action }
 
   if (DIRTY_WORKTREE.test(text)) {
     return { ok: false, ...coded(ACTION_REFUSAL[action].dirty), reason: 'dirty', action }
@@ -2638,10 +2631,13 @@ async function retryWithStoredCredential(
   if (credential === undefined) return undefined
   const pair = `${credential.username}:${credential.password}`
   const header = `Authorization: Basic ${Buffer.from(pair).toString('base64')}`
-  const run = await runGit(target, args, [0], GIT_NETWORK_TIMEOUT_MS, undefined, {
-    GIT_CONFIG_COUNT: '1',
-    GIT_CONFIG_KEY_0: `http.https://${host}/.extraHeader`,
-    GIT_CONFIG_VALUE_0: header,
+  const run = await runGit(target, args, {
+    timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+    env: {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: `http.https://${host}/.extraHeader`,
+      GIT_CONFIG_VALUE_0: header,
+    },
   })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action }
   if (run.code !== 0) return syncFailure(run, action)
@@ -2694,7 +2690,7 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
   // message is free text, and a Windows PowerShell 5.1 executor drops the
   // double quotes out of native arguments (it has no quoting layer to escape
   // them), so `-m` would silently change what the user wrote.
-  const commit = await runGit(root, ['commit', '-F', '-'], [0], GIT_TIMEOUT_MS, message)
+  const commit = await runGit(root, ['commit', '-F', '-'], { stdin: message })
   if (commit.failure !== undefined) return { ok: false, error: commit.failure, reason: 'error' }
   if (commit.code !== 0) return commitFailure(commit)
 

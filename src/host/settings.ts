@@ -59,16 +59,10 @@ export interface WorkspaceMessageSettings {
   readonly prompt?: string
 }
 
-/** One stored Workspace entry, as the document holds it. */
-interface StoredWorkspace {
-  readonly model?: MessageModel
-  readonly prompt?: string
-}
-
 /** The document's shape, read defensively because it is a file on disk. */
 interface StoredDocument {
   readonly version: number
-  readonly workspaces: Readonly<Record<string, StoredWorkspace>>
+  readonly workspaces: Readonly<Record<string, WorkspaceMessageSettings>>
 }
 
 /** Serialize this module's reads and writes; see the module note above. */
@@ -217,7 +211,7 @@ async function readDocumentText(ctx: any): Promise<string | undefined> {
  * @param ctx - the Host plugin context.
  * @returns the Workspace entries, or an empty map.
  */
-async function readDocument(ctx: any): Promise<Record<string, StoredWorkspace>> {
+async function readDocument(ctx: any): Promise<Record<string, WorkspaceMessageSettings>> {
   const text = await readDocumentText(ctx)
   if (text === undefined) return {}
 
@@ -229,7 +223,7 @@ async function readDocument(ctx: any): Promise<Record<string, StoredWorkspace>> 
   }
   if (!isRecord(parsed) || !isRecord(parsed.workspaces)) return {}
 
-  const workspaces: Record<string, StoredWorkspace> = {}
+  const workspaces: Record<string, WorkspaceMessageSettings> = {}
   for (const [key, value] of Object.entries(parsed.workspaces)) {
     if (!isRecord(value)) continue
     const model = parseModel(value.model)
@@ -249,7 +243,7 @@ async function readDocument(ctx: any): Promise<Record<string, StoredWorkspace>> 
  * @param ctx - the Host plugin context.
  * @param workspaces - the entries to persist.
  */
-async function writeDocument(ctx: any, workspaces: Readonly<Record<string, StoredWorkspace>>): Promise<void> {
+async function writeDocument(ctx: any, workspaces: Readonly<Record<string, WorkspaceMessageSettings>>): Promise<void> {
   const file = settingsFilePath(ctx)
   const document: StoredDocument = { version: 1, workspaces }
   await mkdir(dirname(file), { recursive: true })
@@ -266,12 +260,9 @@ async function writeDocument(ctx: any, workspaces: Readonly<Record<string, Store
 export function readWorkspaceSettings(ctx: any, workspacePath: string): Promise<WorkspaceMessageSettings> {
   return serialized(async () => {
     const workspaces = await readDocument(ctx)
-    const entry = workspaces[workspacePath]
-    if (entry === undefined) return {}
-    return {
-      ...(entry.model === undefined ? {} : { model: entry.model }),
-      ...(entry.prompt === undefined ? {} : { prompt: entry.prompt }),
-    }
+    // The document's entries hold exactly these two fields, so the stored entry
+    // is already the shape a reader wants.
+    return workspaces[workspacePath] ?? {}
   })
 }
 
@@ -293,7 +284,7 @@ export function saveWorkspaceSettings(
 ): Promise<void> {
   return serialized(async () => {
     const workspaces = await readDocument(ctx)
-    const entry: StoredWorkspace = {
+    const entry: WorkspaceMessageSettings = {
       ...(next.model === undefined ? {} : { model: next.model }),
       ...(next.prompt === undefined ? {} : { prompt: next.prompt }),
     }
@@ -321,19 +312,10 @@ type ModelChoice =
 export function readModelChoice(value: unknown): ModelChoice {
   if (value === null || value === undefined) return { ok: true, value: undefined }
   if (!isRecord(value)) return { ok: false }
-  const provider = value.provider
-  const model = value.model
-  if (typeof provider !== 'string' || provider === '' || provider.length > 200) return { ok: false }
-  if (typeof model !== 'string' || model === '' || model.length > 200) return { ok: false }
-  const effort = value.reasoningEffort
-  return {
-    ok: true,
-    value: {
-      provider,
-      model,
-      ...(typeof effort === 'string' && effort !== '' && effort.length <= 100 ? { reasoningEffort: effort } : {}),
-    },
-  }
+  // The stored document is read by the same validation: a route may store only
+  // what a later read could hand back, and the two cannot drift apart.
+  const model = parseModel(value)
+  return model === undefined ? { ok: false } : { ok: true, value: model }
 }
 
 /** The result of normalizing one prompt field from a request body. */

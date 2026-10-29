@@ -15,6 +15,7 @@
  */
 
 import type { MessageModel, MessageModelGroup, ModelEffortsPayload } from '../shared/contract.js'
+import { errorMessage } from '../shared/error.js'
 
 /**
  * Read DSH's current default model selection.
@@ -130,6 +131,6 @@ export async function readModelEfforts(
     }
     return { ok: true, efforts }
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    return { ok: false, error: errorMessage(error) }
   }
 }

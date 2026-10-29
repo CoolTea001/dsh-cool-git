@@ -40,9 +40,16 @@ import {
   readStatus,
   switchBranch,
   DEFAULT_LOG_LIMIT,
+  MAX_BRANCHES,
   type GitTarget,
 } from './git.js'
-import type { BranchDeleteTarget, SettingsPayload, SaveSettingsPayload } from '../shared/contract.js'
+import {
+  ROUTES,
+  type BranchDeleteTarget,
+  type SettingsPayload,
+  type SaveSettingsPayload,
+} from '../shared/contract.js'
+import { errorMessage } from '../shared/error.js'
 import { DEFAULT_MESSAGE_PROMPT } from '../shared/prompt.js'
 import { generateCommitMessage } from './message.js'
 import { defaultSelection, readModelEfforts, readModelGroups } from './model.js'
@@ -55,27 +62,9 @@ import {
 } from './settings.js'
 import { resolveWorkspace } from './workspace.js'
 
-/** Route table, kept in one place so the two halves cannot drift. */
-export const ROUTES = {
-  status: '/dsh-cool-git/api/status',
-  log: '/dsh-cool-git/api/log',
-  diff: '/dsh-cool-git/api/diff',
-  commit: '/dsh-cool-git/api/commit',
-  commitAll: '/dsh-cool-git/api/commit-all',
-  message: '/dsh-cool-git/api/message',
-  settings: '/dsh-cool-git/api/settings',
-  settingsSave: '/dsh-cool-git/api/settings-save',
-  modelEfforts: '/dsh-cool-git/api/model-efforts',
-  branches: '/dsh-cool-git/api/branches',
-  branchReport: '/dsh-cool-git/api/branch-report',
-  branchCreate: '/dsh-cool-git/api/branch-create',
-  branchDelete: '/dsh-cool-git/api/branch-delete',
-  checkout: '/dsh-cool-git/api/checkout',
-  merge: '/dsh-cool-git/api/merge',
-  fetch: '/dsh-cool-git/api/fetch',
-  pull: '/dsh-cool-git/api/pull',
-  push: '/dsh-cool-git/api/push',
-} as const
+// Re-exported so the Host entry keeps its `ROUTES` export; the table itself
+// lives in the shared contract, beside the payloads it addresses.
+export { ROUTES }
 
 /** Object names Git accepts, and all a route will pass on to the command line. */
 const OBJECT_NAME = /^[0-9a-f]{4,40}$/i
@@ -87,14 +76,6 @@ const OBJECT_NAME = /^[0-9a-f]{4,40}$/i
  * is this route's: a request body is not a place to put a file.
  */
 const MAX_MESSAGE_LENGTH = 10_000
-
-/**
- * Most branches one delete request may name.
- *
- * The bound is the branch list's own: the dialog cannot show more rows than the
- * Host lists, so a request naming more than this is not a selection anyone made.
- */
-const MAX_DELETE_TARGETS = 200
 
 function sendJson(res: any, status: number, body: unknown): void {
   res.writeHead(status, {
@@ -125,6 +106,27 @@ async function readBody(req: any): Promise<Record<string, unknown>> {
     throw new Error('body must be a JSON object')
   }
   return parsed as Record<string, unknown>
+}
+
+/**
+ * Read one route's JSON body, answering 400 when it is not one.
+ *
+ * Every route that takes a body goes through here, the one route that resolves
+ * no Git target included, so a malformed body is one answer everywhere: it is
+ * parsed before anything else is resolved, and a request that is not a JSON
+ * object never reaches Git.
+ *
+ * @param req - the incoming request.
+ * @param res - the response to write.
+ * @returns the parsed body, or undefined once the 400 has been sent.
+ */
+async function readJsonBody(req: any, res: any): Promise<Record<string, unknown> | undefined> {
+  try {
+    return await readBody(req)
+  } catch (error) {
+    sendJson(res, 400, { ok: false, error: errorMessage(error) })
+    return undefined
+  }
 }
 
 /**
@@ -343,13 +345,8 @@ async function handle(
 ): Promise<void> {
   if (!methodAllowed(req, res, ['POST'])) return
 
-  let body: Record<string, unknown>
-  try {
-    body = await readBody(req)
-  } catch (error) {
-    sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
-    return
-  }
+  const body = await readJsonBody(req, res)
+  if (body === undefined) return
 
   const resolved = await resolveTarget(ctx, body.sessionId, effect)
   if (!('workdir' in resolved)) {
@@ -372,7 +369,7 @@ async function handle(
   try {
     sendJson(res, 200, await run(body, target))
   } catch (error) {
-    sendJson(res, 200, { ok: false, error: error instanceof Error ? error.message : String(error) })
+    sendJson(res, 200, { ok: false, error: errorMessage(error) })
   }
 }
 
@@ -468,7 +465,7 @@ function readBranch(body: Record<string, unknown>): string | undefined {
  */
 function readTargets(body: Record<string, unknown>): readonly BranchDeleteTarget[] | undefined {
   const raw = body.targets
-  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_DELETE_TARGETS) return undefined
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_BRANCHES) return undefined
 
   const targets: BranchDeleteTarget[] = []
   for (const item of raw) {
@@ -634,13 +631,8 @@ export function registerRoutes(ctx: any): () => void {
     // reader opens, because effort metadata is adapter-resolved per model.
     route(ROUTES.modelEfforts, async (req, res) => {
       if (!methodAllowed(req, res, ['POST'])) return
-      let body: Record<string, unknown>
-      try {
-        body = await readBody(req)
-      } catch (error) {
-        sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
-        return
-      }
+      const body = await readJsonBody(req, res)
+      if (body === undefined) return
       const provider = readIdentifier(body.provider)
       const model = readIdentifier(body.model)
       if (provider === undefined || model === undefined) {

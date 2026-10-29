@@ -259,8 +259,6 @@ interface RouteAnswer extends RouteOutcome {
   readonly binary?: boolean
   readonly commit?: CommitSummary & { readonly body: string }
   readonly merge?: boolean
-  readonly branches?: readonly string[]
-  readonly current?: string | null
 }
 
 /**
@@ -380,6 +378,29 @@ function failureLine(
   fallback: MessageKey,
 ): string {
   return t('error.line', { label: t(label), reason: reasonOf(t, payload, fallback) })
+}
+
+/**
+ * One failed operation, as the error dialog states it.
+ *
+ * The heading names the action and the answer's own reason is the dialog's one
+ * line. The reason falls back to the same entry as the heading when the answer
+ * carried neither a code nor any text, so a request that failed silently still
+ * says what it was trying to do.
+ *
+ * @param t - the page's translate seat.
+ * @param title - the entry naming the action that failed.
+ * @param payload - the route's answer.
+ * @param params - the values that entry's placeholders take.
+ * @returns the dialog's error.
+ */
+function failureOf(
+  t: Translate,
+  title: MessageKey,
+  payload: RouteOutcome,
+  params?: Readonly<Record<string, string | number>>,
+): GitError {
+  return { title: t(title, params), lines: [reasonOf(t, payload, title, params)] }
 }
 
 /**
@@ -897,7 +918,7 @@ export function GitView(props: {
     void fetchRemotes(sessionId).then(result => {
       setFetching(false)
       if (result?.ok !== true) {
-        reportError({ title: t('title.fetch'), lines: [reasonOf(t, result, 'title.fetch')] })
+        reportError(failureOf(t, 'title.fetch', result))
         return
       }
       handleSynced()
@@ -916,8 +937,7 @@ export function GitView(props: {
     void checkoutBranch(sessionId, branch).then(result => {
       setSwitching(null)
       if (result?.ok !== true) {
-        const title = t('title.switchBranch', { branch })
-        reportError({ title, lines: [reasonOf(t, result, 'title.switchBranch', { branch })] })
+        reportError(failureOf(t, 'title.switchBranch', result, { branch }))
         return
       }
       handleSwitched()
@@ -940,10 +960,7 @@ export function GitView(props: {
     void mergeBranch(sessionId, branch).then(result => {
       setMerging(null)
       if (result?.ok !== true) {
-        reportError({
-          title: t('title.mergeFrom', { branch }),
-          lines: [reasonOf(t, result, 'title.mergeFrom', { branch })],
-        })
+        reportError(failureOf(t, 'title.mergeFrom', result, { branch }))
         return
       }
       handleSwitched()
@@ -967,10 +984,7 @@ export function GitView(props: {
     void createBranch(sessionId, name, start).then(result => {
       setCreating(false)
       if (result?.ok !== true) {
-        reportError({
-          title: t('title.branchCreate'),
-          lines: [reasonOf(t, result, 'title.branchCreate')],
-        })
+        reportError(failureOf(t, 'title.branchCreate', result))
         return
       }
       handleSwitched()
@@ -1026,7 +1040,7 @@ export function GitView(props: {
     void pushBranch(sessionId).then(result => {
       setSyncing(null)
       if (result?.ok !== true) {
-        reportError({ title: t(title), lines: [reasonOf(t, result, title)] })
+        reportError(failureOf(t, title, result))
       }
       // A push moves nothing on disk, but a refusal moves the page's idea of the
       // divergence just as surely, so the two answers are re-read either way.
@@ -1055,7 +1069,7 @@ export function GitView(props: {
     return pullBranch(sessionId).then(result => {
       setSyncing(null)
       if (result?.ok !== true) {
-        reportError({ title: t('title.pull'), lines: [reasonOf(t, result, 'title.pull')] })
+        reportError(failureOf(t, 'title.pull', result))
         handleSynced()
         return false
       }
@@ -2794,6 +2808,43 @@ const BRANCH_GROUP_KEY: Readonly<Record<BranchGroup, MessageKey>> = {
  */
 type BranchPick = 'switch' | 'merge-from' | 'create'
 
+/** The copy one branch decision puts around the shared list. */
+interface BranchPickCopy {
+  readonly title: MessageKey
+  readonly description: MessageKey
+  readonly none: MessageKey
+  readonly confirm: MessageKey
+}
+
+/**
+ * The words each decision reads.
+ *
+ * The three dialogs differ only in their copy, which is why they share one list;
+ * this table is where that difference lives, so the dialog below states the
+ * structure once. A closed dialog has no mode and reads the switch's row, which
+ * nothing draws.
+ */
+const BRANCH_PICK_COPY: Readonly<Record<BranchPick, BranchPickCopy>> = {
+  switch: {
+    title: 'branch.title',
+    description: 'branch.description',
+    none: 'branch.none',
+    confirm: 'branch.confirm',
+  },
+  'merge-from': {
+    title: 'merge.titleFrom',
+    description: 'merge.descriptionFrom',
+    none: 'merge.noneFrom',
+    confirm: 'merge.confirm',
+  },
+  create: {
+    title: 'create.title',
+    description: 'create.description',
+    none: 'create.none',
+    confirm: 'create.confirm',
+  },
+}
+
 /**
  * Drive one scrolling dialog list's two edge fades.
  *
@@ -2984,15 +3035,10 @@ function BranchDialog(props: {
   // a branch into itself — so its row goes. A create keeps it, the one time that
   // branch is a valid answer, because the list there is the point the new branch
   // starts at rather than the branch to act on.
-  const title = mode === 'merge-from'
-    ? t('merge.titleFrom')
-    : mode === 'create' ? t('create.title') : t('branch.title')
-  const description = mode === 'merge-from'
-    ? t('merge.descriptionFrom')
-    : mode === 'create' ? t('create.description') : t('branch.description')
-  const emptyText = mode === 'merge-from'
-    ? t('merge.noneFrom')
-    : mode === 'create' ? t('create.none') : t('branch.none')
+  const copy = mode === null ? BRANCH_PICK_COPY.switch : BRANCH_PICK_COPY[mode]
+  const title = t(copy.title)
+  const description = t(copy.description)
+  const emptyText = t(copy.none)
 
   // `null` is the one state that means "no answer yet": an answer that named no
   // branch is an empty list, which is a fact this dialog states rather than a
@@ -3164,16 +3210,10 @@ function BranchDialog(props: {
 
   const canConfirm = applicable(picked)
 
-  /**
-   * What the footer's button says, which is the operation and nothing else.
-   *
-   * The button carries the same word as the menu row that opened the dialog, so
-   * the click that started this and the click that finishes it name the same
-   * thing.
-   */
-  const confirmLabel = mode === 'create'
-    ? t('create.confirm')
-    : mode === 'merge-from' ? t('merge.confirm') : t('branch.confirm')
+  // What the footer's button says is the operation and nothing else: the button
+  // carries the same word as the menu row that opened the dialog, so the click
+  // that started this and the click that finishes it name the same thing.
+  const confirmLabel = t(copy.confirm)
 
   return (
     <Modal
@@ -3579,9 +3619,7 @@ function BranchDeleteDialog(props: {
 function workspaceFallback(status: StatusPayload | null): string {
   const root = status?.ok === true ? status.root : undefined
   if (root === undefined || root === '') return ''
-  const trimmed = root.replace(/\/+$/, '')
-  const cut = trimmed.lastIndexOf('/')
-  return cut < 0 ? trimmed : trimmed.slice(cut + 1)
+  return splitPath(root.replace(/\/+$/, '')).name
 }
 
 /**

@@ -6,40 +6,40 @@
  * exactly one failure shape to render no matter how the answer went wrong.
  */
 
-import type {
-  BranchDeleteTarget,
-  BranchReportPayload,
-  BranchesPayload,
-  CheckoutPayload,
-  CommitAllPayload,
-  CommitPayload,
-  CreateBranchPayload,
-  DeleteBranchesPayload,
-  DiffPayload,
-  FetchPayload,
-  LogPayload,
-  MergePayload,
-  MessageModel,
-  MessagePayload,
-  ModelEffortsPayload,
-  SaveSettingsPayload,
-  SettingsPayload,
-  StatusPayload,
-  SyncPayload,
+import {
+  ROUTES,
+  type BranchDeleteTarget,
+  type BranchReportPayload,
+  type BranchesPayload,
+  type CheckoutPayload,
+  type CommitAllPayload,
+  type CommitPayload,
+  type CreateBranchPayload,
+  type DeleteBranchesPayload,
+  type DiffPayload,
+  type FetchPayload,
+  type LogPayload,
+  type MergePayload,
+  type MessageModel,
+  type MessagePayload,
+  type ModelEffortsPayload,
+  type SaveSettingsPayload,
+  type SettingsPayload,
+  type StatusPayload,
+  type SyncPayload,
 } from '../shared/contract.js'
-
-const BASE = '/dsh-cool-git/api'
+import { errorMessage } from '../shared/error.js'
 
 /**
  * POST one JSON body and read a JSON answer.
  *
- * @param path - route path below {@link BASE}.
+ * @param path - the route to post to, as {@link ROUTES} spells it.
  * @param body - the request body.
  * @returns the parsed payload, or an `{ ok: false }` result when the transport failed.
  */
 async function postJson(path: string, body: unknown): Promise<any> {
   try {
-    const response = await fetch(`${BASE}${path}`, {
+    const response = await fetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -51,7 +51,7 @@ async function postJson(path: string, body: unknown): Promise<any> {
     }
     return payload
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    return { ok: false, error: errorMessage(error) }
   }
 }
 
@@ -62,7 +62,7 @@ async function postJson(path: string, body: unknown): Promise<any> {
  * @returns the status payload.
  */
 export function fetchStatus(sessionId: string | undefined): Promise<StatusPayload> {
-  return postJson('/status', { sessionId })
+  return postJson(ROUTES.status, { sessionId })
 }
 
 /**
@@ -73,7 +73,7 @@ export function fetchStatus(sessionId: string | undefined): Promise<StatusPayloa
  * @returns the log payload.
  */
 export function fetchLog(sessionId: string | undefined, limit?: number): Promise<LogPayload> {
-  return postJson('/log', { sessionId, limit })
+  return postJson(ROUTES.log, { sessionId, limit })
 }
 
 /**
@@ -87,7 +87,7 @@ export function fetchDiff(
   sessionId: string | undefined,
   file: { readonly path: string; readonly staged: boolean; readonly untracked: boolean },
 ): Promise<DiffPayload> {
-  return postJson('/diff', {
+  return postJson(ROUTES.diff, {
     sessionId,
     path: file.path,
     staged: file.staged,
@@ -103,7 +103,7 @@ export function fetchDiff(
  * @returns the commit payload.
  */
 export function fetchCommit(sessionId: string | undefined, hash: string): Promise<CommitPayload> {
-  return postJson('/commit', { sessionId, hash })
+  return postJson(ROUTES.commit, { sessionId, hash })
 }
 
 /**
@@ -123,7 +123,7 @@ export function commitAll(
   sessionId: string | undefined,
   message: string,
 ): Promise<CommitAllPayload> {
-  return postJson('/commit-all', { sessionId, message })
+  return postJson(ROUTES.commitAll, { sessionId, message })
 }
 
 /**
@@ -138,7 +138,7 @@ export function commitAll(
  * @returns the message payload, with the model's own findings beside it.
  */
 export function generateMessage(sessionId: string | undefined): Promise<MessagePayload> {
-  return postJson('/message', { sessionId })
+  return postJson(ROUTES.message, { sessionId })
 }
 
 /**
@@ -154,7 +154,7 @@ export function generateMessage(sessionId: string | undefined): Promise<MessageP
  * @returns the settings payload.
  */
 export function fetchSettings(sessionId: string | undefined): Promise<SettingsPayload> {
-  return postJson('/settings', { sessionId })
+  return postJson(ROUTES.settings, { sessionId })
 }
 
 /**
@@ -175,7 +175,7 @@ export function saveSettings(
   model: MessageModel | null,
   prompt: string | null,
 ): Promise<SaveSettingsPayload> {
-  return postJson('/settings-save', { sessionId, model, prompt })
+  return postJson(ROUTES.settingsSave, { sessionId, model, prompt })
 }
 
 /**
@@ -191,7 +191,7 @@ export function saveSettings(
  * @returns the efforts payload.
  */
 export function fetchModelEfforts(provider: string, model: string): Promise<ModelEffortsPayload> {
-  return postJson('/model-efforts', { provider, model })
+  return postJson(ROUTES.modelEfforts, { provider, model })
 }
 
 /**
@@ -204,7 +204,7 @@ export function fetchModelEfforts(provider: string, model: string): Promise<Mode
  * @returns the branches payload.
  */
 export function fetchBranches(sessionId: string | undefined): Promise<BranchesPayload> {
-  return postJson('/branches', { sessionId })
+  return postJson(ROUTES.branches, { sessionId })
 }
 
 /**
@@ -222,7 +222,7 @@ export function checkoutBranch(
   sessionId: string | undefined,
   branch: string,
 ): Promise<CheckoutPayload> {
-  return postJson('/checkout', { sessionId, branch })
+  return postJson(ROUTES.checkout, { sessionId, branch })
 }
 
 /**
@@ -237,7 +237,7 @@ export function checkoutBranch(
  * @returns the branch report payload.
  */
 export function fetchBranchReport(sessionId: string | undefined): Promise<BranchReportPayload> {
-  return postJson('/branch-report', { sessionId })
+  return postJson(ROUTES.branchReport, { sessionId })
 }
 
 /**
@@ -258,7 +258,7 @@ export function createBranch(
   name: string,
   start: string,
 ): Promise<CreateBranchPayload> {
-  return postJson('/branch-create', { sessionId, name, start })
+  return postJson(ROUTES.branchCreate, { sessionId, name, start })
 }
 
 /**
@@ -279,7 +279,7 @@ export function deleteBranches(
   sessionId: string | undefined,
   targets: readonly BranchDeleteTarget[],
 ): Promise<DeleteBranchesPayload> {
-  return postJson('/branch-delete', { sessionId, targets })
+  return postJson(ROUTES.branchDelete, { sessionId, targets })
 }
 
 /**
@@ -299,7 +299,7 @@ export function mergeBranch(
   sessionId: string | undefined,
   branch: string,
 ): Promise<MergePayload> {
-  return postJson('/merge', { sessionId, branch })
+  return postJson(ROUTES.merge, { sessionId, branch })
 }
 
 /**
@@ -315,7 +315,7 @@ export function mergeBranch(
  * @returns the fetch payload.
  */
 export function fetchRemotes(sessionId: string | undefined): Promise<FetchPayload> {
-  return postJson('/fetch', { sessionId })
+  return postJson(ROUTES.fetch, { sessionId })
 }
 
 /**
@@ -329,7 +329,7 @@ export function fetchRemotes(sessionId: string | undefined): Promise<FetchPayloa
  * @returns the sync payload.
  */
 export function pullBranch(sessionId: string | undefined): Promise<SyncPayload> {
-  return postJson('/pull', { sessionId })
+  return postJson(ROUTES.pull, { sessionId })
 }
 
 /**
@@ -343,5 +343,5 @@ export function pullBranch(sessionId: string | undefined): Promise<SyncPayload> 
  * @returns the sync payload.
  */
 export function pushBranch(sessionId: string | undefined): Promise<SyncPayload> {
-  return postJson('/push', { sessionId })
+  return postJson(ROUTES.push, { sessionId })
 }

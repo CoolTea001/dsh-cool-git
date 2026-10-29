@@ -40,6 +40,7 @@
  */
 
 import type { ChangedFile, MessageModel, MessagePayload } from '../shared/contract.js'
+import { errorMessage } from '../shared/error.js'
 import { DEFAULT_MESSAGE_PROMPT } from '../shared/prompt.js'
 import { readChangeDigest, type ChangeDigest, type GitTarget } from './git.js'
 import { defaultSelection } from './model.js'
@@ -246,7 +247,7 @@ async function askModel(
       }
     }
   } catch (error) {
-    return { refusal: { error: error instanceof Error ? error.message : String(error) } }
+    return { refusal: { error: errorMessage(error) } }
   } finally {
     clearTimeout(timer)
   }

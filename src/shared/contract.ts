@@ -747,3 +747,33 @@ function kindOf(code: string): ChangeKind | undefined {
     default: return undefined
   }
 }
+
+/**
+ * The routes both halves address, in one table.
+ *
+ * The browser half posts to these paths and the Host half registers them, so the
+ * table lives in the shared contract rather than in either half's module: a
+ * rename here reaches both halves at once instead of leaving one calling a route
+ * the other no longer serves. The prefix is this package's own because an
+ * out-of-tree bundle cannot claim a namespace on the shared origin any other way.
+ */
+export const ROUTES = {
+  status: '/dsh-cool-git/api/status',
+  log: '/dsh-cool-git/api/log',
+  diff: '/dsh-cool-git/api/diff',
+  commit: '/dsh-cool-git/api/commit',
+  commitAll: '/dsh-cool-git/api/commit-all',
+  message: '/dsh-cool-git/api/message',
+  settings: '/dsh-cool-git/api/settings',
+  settingsSave: '/dsh-cool-git/api/settings-save',
+  modelEfforts: '/dsh-cool-git/api/model-efforts',
+  branches: '/dsh-cool-git/api/branches',
+  branchReport: '/dsh-cool-git/api/branch-report',
+  branchCreate: '/dsh-cool-git/api/branch-create',
+  branchDelete: '/dsh-cool-git/api/branch-delete',
+  checkout: '/dsh-cool-git/api/checkout',
+  merge: '/dsh-cool-git/api/merge',
+  fetch: '/dsh-cool-git/api/fetch',
+  pull: '/dsh-cool-git/api/pull',
+  push: '/dsh-cool-git/api/push',
+} as const
