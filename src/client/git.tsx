@@ -1332,6 +1332,15 @@ const EFFORT_DEFAULT_ID = 'dsh-cg-effort-default'
 const PICKER_HEIGHT = 370
 
 /**
+ * The shortest the picker's overlay scrollbar thumb may get.
+ *
+ * The bar is a fixed 5px wide and its length follows how much of the list is in
+ * view; a very long catalog would shrink it below a grabbable size, so it stops
+ * at this length instead.
+ */
+const PICKER_THUMB_MIN = 28
+
+/**
  * The parts of the Settings picker's placement this plugin owns.
  *
  * The position itself is the platform's (`useAnchoredPosition`); this is the
@@ -1464,6 +1473,8 @@ function SettingsDialog(props: {
   const [selection, setSelection] = useState<MessageModel | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [query, setQuery] = useState('')
+  /** Where the picker's overlay scrollbar sits, or null when the list fits. */
+  const [thumb, setThumb] = useState<{ readonly top: number; readonly height: number } | null>(null)
   const [collapsed, setCollapsed] = useState<readonly string[]>([])
   const [effortOpen, setEffortOpen] = useState<string | null>(null)
   const [effortLists, setEffortLists] = useState<Readonly<Record<string, readonly string[]>>>({})
@@ -1480,6 +1491,7 @@ function SettingsDialog(props: {
   const promptId = `${id}-prompt`
   const modelField = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
   /** Model keys whose effort list has been asked for, so one row asks once. */
   const effortsAsked = useRef<Set<string>>(new Set())
 
@@ -1546,6 +1558,40 @@ function SettingsDialog(props: {
     setQuery('')
     setEffortOpen(null)
   }, [])
+
+  /**
+   * Place the list's scrollbar thumb over the rows.
+   *
+   * The list hides its native bar because the platform's scrollbars are 5px of
+   * real width: those 5px came out of the rows' right edge, so a provider band and
+   * the rows under it stopped short of the panel's edge with the thumb owning a
+   * gutter of its own. The thumb drawn here is the same bar, overlaid on the rows'
+   * own padding instead, so the layout is the same width whether the catalog
+   * overflows or not. It is measured from the scrollport itself, which is why it
+   * is re-read on every render that can change the rows (search, folding, a
+   * loaded catalog) as well as on every scroll.
+   */
+  const measureThumb = useCallback((): void => {
+    const list = listRef.current
+    if (list === null) return
+    const { scrollTop, scrollHeight, clientHeight } = list
+    if (scrollHeight <= clientHeight + 1) {
+      setThumb(current => (current === null ? current : null))
+      return
+    }
+    const height = Math.max(PICKER_THUMB_MIN, Math.round((clientHeight / scrollHeight) * clientHeight))
+    const top = Math.round((scrollTop / (scrollHeight - clientHeight)) * (clientHeight - height))
+    setThumb(current => (current !== null && current.top === top && current.height === height
+      ? current
+      : { top, height }))
+  }, [])
+
+  // The rows move without the list firing a scroll event — a fold, a search, a
+  // catalog that just arrived — so the thumb is re-placed after those renders too.
+  // It sets state only when the answer changed, which ends the loop.
+  useLayoutEffect(() => {
+    if (pickerOpen) measureThumb()
+  })
 
   // What the platform's position hook cannot know: how wide the field made the
   // panel, how much room its list may take, which side of the field has room,
@@ -1933,14 +1979,15 @@ function SettingsDialog(props: {
                           onChange={event => setQuery(event.target.value)}
                         />
                       </div>
-                      <div className="dsh-cg-settings-picker-list">
-                        {staleVisible && staleRoute !== null
-                          ? renderRouteRow(
-                            staleRoute,
-                            t('settings.modelUnavailable', { model: modelLabel(staleRoute, groups) }),
-                            true,
-                          )
-                          : null}
+                      <div className="dsh-cg-settings-picker-listwrap">
+                        <div className="dsh-cg-settings-picker-list" ref={listRef} onScroll={measureThumb}>
+                          {staleVisible && staleRoute !== null
+                            ? renderRouteRow(
+                              staleRoute,
+                              t('settings.modelUnavailable', { model: modelLabel(staleRoute, groups) }),
+                              true,
+                            )
+                            : null}
                         {staleVisible
                           ? <div className="dsh-cg-settings-picker-rule" role="presentation" />
                           : null}
@@ -1953,8 +2000,8 @@ function SettingsDialog(props: {
                               {/* The provider's name stays at the top of the list
                                   while its models scroll under it, so a row is
                                   never left without the group it belongs to. The
-                                  wrapper carries the panel's own fill (the button
-                                  keeps its hover tint on top of it). */}
+                                  button carries its own fill for that reason: the
+                                  rows passing under it must not show through. */}
                               <div className="dsh-cg-settings-picker-group-sticky">
                                 <button
                                   type="button"
@@ -1982,6 +2029,16 @@ function SettingsDialog(props: {
                         {!staleVisible && visibleGroups.length === 0
                           ? <p className="dsh-cg-settings-picker-empty">{t('settings.searchEmpty')}</p>
                           : null}
+                        </div>
+                        {thumb === null
+                          ? null
+                          : (
+                            <span
+                              className="dsh-cg-settings-picker-thumb"
+                              style={{ top: thumb.top, height: thumb.height }}
+                              aria-hidden="true"
+                            />
+                          )}
                       </div>
                     </div>,
                     document.body,

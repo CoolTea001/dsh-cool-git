@@ -517,8 +517,19 @@ const GIT_CSS = [
   '.dsh-cg-settings-picker-input::placeholder{color:var(--dsw-alias-label-tertiary)}',
   // The list takes the rest of the panel and scrolls inside it. Its height is the
   // panel's, not its rows': a search that narrows the catalog must not change the
-  // surface's shape.
-  '.dsh-cg-settings-picker-list{flex:1 1 auto;min-height:0;overflow-y:auto}',
+  // surface's shape. The native bar is hidden rather than restyled: the platform's
+  // scrollbars are 5px of real width, and those 5px came out of the rows' right
+  // edge, leaving the provider bands short of the panel's edge with the thumb in a
+  // gutter of its own. The rows now use the full width and the thumb is drawn over
+  // them (see `.dsh-cg-settings-picker-thumb`).
+  '.dsh-cg-settings-picker-listwrap{position:relative;flex:1 1 auto;min-height:0}',
+  '.dsh-cg-settings-picker-list{height:100%;overflow-y:auto;scrollbar-width:none}',
+  '.dsh-cg-settings-picker-list::-webkit-scrollbar{display:none}',
+  // It floats at the panel's edge over the rows' own padding — no text sits there
+  // — and takes no room from the list, so a narrowed catalog and a long one are
+  // laid out through the same width. `z-index` keeps it above a provider band
+  // that has stuck to the top (`z-index:1`).
+  '.dsh-cg-settings-picker-thumb{position:absolute;right:2px;z-index:2;width:5px;border-radius:999px;background:var(--dsw-alias-scrollbar-bg-l2);pointer-events:none}',
   // A row is two targets: the name selects the model, the effort control names
   // the level. The selected row is filled rather than outlined, so the eye finds
   // it without the list growing a second kind of border.
