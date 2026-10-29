@@ -528,32 +528,34 @@ const GIT_CSS = [
   '.dsh-cg-settings-row-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.dsh-cg-settings-row-check{flex:none;display:inline-flex;color:var(--dsw-alias-state-business-primary)}',
   '.dsh-cg-settings-row-check svg{display:block;width:12px;height:12px}',
-  '.dsh-cg-settings-row-effort{flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:0;border-radius:var(--dsw-radius-xs,4px);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11.5px;cursor:pointer}',
+  // The effort control runs to the row's own edge: square on the left where it
+  // meets the name, rounded on the right with the row's radius, so its hover
+  // fill reads as the row's end rather than as a pill floating inside it.
+  '.dsh-cg-settings-row-effort{align-self:stretch;flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 10px 0 8px;border:0;border-radius:0 var(--dsw-radius-md) var(--dsw-radius-md) 0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11.5px;cursor:pointer}',
   '.dsh-cg-settings-row-effort[data-static=true]{cursor:default}',
   'button.dsh-cg-settings-row-effort:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+  // The control's arrow is a fixed down chevron: the menu it opens only ever
+  // drops below the row (the platform clamps it into the viewport), so a mark
+  // that turned with the state would promise a fold it does not have. It is the
+  // same size as the provider rows' arrow and sits the same distance from the
+  // panel's edge, so the list's right gutter reads as one column.
   '.dsh-cg-settings-row-arrow{display:inline-flex;align-items:center;justify-content:center}',
-  '.dsh-cg-settings-row-arrow svg{display:block;width:11px;height:11px;transform:rotate(0);transition:transform .12s ease}',
-  '.dsh-cg-settings-row-arrow[data-open=true] svg{transform:rotate(90deg)}',
+  '.dsh-cg-settings-row-arrow svg{display:block;width:12px;height:12px;transform:rotate(90deg)}',
   // The groups are the catalog's own shape: a provider header that folds its
   // models away, so a deployment with several providers is read one group at a
   // time rather than as one long list.
   '.dsh-cg-settings-picker-group{margin-top:2px}',
-  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;font-weight:500;line-height:20px;text-align:left;cursor:pointer}',
+  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 10px 7px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;font-weight:500;line-height:20px;text-align:left;cursor:pointer}',
   '.dsh-cg-settings-picker-group-head:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-settings-picker-group-arrow{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-settings-picker-group-arrow svg{display:block;width:12px;height:12px;transform:rotate(0);transition:transform .12s ease}',
   '.dsh-cg-settings-picker-group-arrow[data-open=true] svg{transform:rotate(90deg)}',
   '.dsh-cg-settings-picker-group-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // The effort pills sit under the row they answer, inset to the row's own text
-  // so they read as that row's list. They are pills rather than rows because the
-  // levels are short names read as a set: `Default`, `high`, `medium`, `low` —
-  // not a second scrollable list inside the first.
-  '.dsh-cg-settings-efforts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 8px 8px 20px}',
-  '.dsh-cg-settings-effort{padding:1px 9px;border:.5px solid var(--dsw-alias-border-l4);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;cursor:pointer}',
-  '.dsh-cg-settings-effort:hover{border-color:var(--dsw-alias-border-l3);color:var(--dsw-alias-label-primary)}',
-  '.dsh-cg-settings-effort[aria-pressed=true]{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
-  '.dsh-cg-settings-efforts-note{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
-  '.dsh-cg-settings-row-name:focus-visible,.dsh-cg-settings-row-effort:focus-visible,.dsh-cg-settings-picker-group-head:focus-visible,.dsh-cg-settings-effort:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}',
+  // The effort control's platform menu draws its own card and rows, so the
+  // plugin only stretches the anchor the menu wraps: the wrapper is `inline-flex`
+  // with the button as its sole child, and both take the row's full height.
+  '.dsh-cg-settings-effort-control{align-self:stretch}',
+  '.dsh-cg-settings-row-name:focus-visible,.dsh-cg-settings-row-effort:focus-visible,.dsh-cg-settings-picker-group-head:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}',
   '.dsh-cg-settings-picker-rule{margin:6px 4px;border-top:.5px solid var(--dsw-alias-border-l3)}',
   '.dsh-cg-settings-picker-empty{margin:8px 8px 10px;color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:18px}',
   '.dsh-cg-settings-prompt:disabled{opacity:.6;cursor:default}',

@@ -124,8 +124,15 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     id: string
   }
 
-  /** One primary-menu entry: a row or a separator. */
-  export type MenuEntry = MenuItem | MenuSeparator
+  /** A caption inside the list, for a state the rows cannot state themselves. */
+  export interface MenuLabel {
+    type: 'label'
+    id: string
+    text: string
+  }
+
+  /** One primary-menu entry: a row, a separator, or a caption. */
+  export type MenuEntry = MenuItem | MenuSeparator | MenuLabel
 
   /** Anchored dropdown menu props (the subset this plugin uses). */
   export interface MenuProps {
@@ -137,6 +144,10 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     items?: readonly MenuEntry[]
     /** Row activation; closing the list stays the owner's decision. */
     onSelect?: (id: string) => void
+    /** The row id drawn as the current choice, marked with a check. */
+    selectedId?: string
+    /** How the current choice is drawn: a check (`check`, default) or a fill (`fill`). */
+    selection?: 'check' | 'fill'
     /** Outside click, Escape, or a blur that moved focus into an iframe. */
     onClose: () => void
     /** List alignment against the anchor (default `start`). */

@@ -57,8 +57,8 @@ import {
   Modal,
   Tooltip,
   useAnchoredPosition,
-  useDismissOnOutsidePointer,
   useModalLayer,
+  type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   checkoutBranch,
@@ -1312,6 +1312,15 @@ function modelKey(selection: MessageModel): string {
 const DEFAULT_EFFORT = 'Default'
 
 /**
+ * The effort menu's row id for `Default`.
+ *
+ * The adapter's own ids are short words (`high`, `medium`, …), so the id for "no
+ * pinned level" is prefixed to stay clear of them: the menu hands its ids back
+ * as-is, and this one must not be mistaken for a level.
+ */
+const EFFORT_DEFAULT_ID = 'dsh-cg-effort-default'
+
+/**
  * How tall the Settings picker's panel is.
  *
  * A fixed height is what keeps the panel from jumping while a search narrows the
@@ -1387,8 +1396,9 @@ function modelLabel(selection: MessageModel, groups: readonly MessageModelGroup[
  *
  * The platform has no `Popover` component to hand, but it does expose the parts
  * its own menus are built from, and the panel uses them: `useAnchoredPosition`
- * keeps it against the field while the page scrolls or resizes,
- * `useDismissOnOutsidePointer` closes it on a click elsewhere, and
+ * keeps it against the field while the page scrolls or resizes, the platform's
+ * outside-pointer rule closes it on a click elsewhere (restated below, because
+ * the effort menu's portaled rows are the panel's own business), and
  * `useModalLayer` puts it on the same layer stack as the dialog — so Escape
  * closes the list before the dialog, Tab stays inside the open list, and focus
  * returns to the field when the list closes. The panel is portaled to
@@ -1402,11 +1412,11 @@ function modelLabel(selection: MessageModel, groups: readonly MessageModelGroup[
  *
  * A row names a model, and its right-hand control names the reasoning effort the
  * route pins — `Default` when it pins none, so the adapter's own level applies.
- * The effort list is read from the adapter when the control is first opened, one
- * model at a time: it is adapter-owned metadata, and resolving every model as
- * the dialog opens would charge the reader for lists they never look at. The ids
- * are shown as the adapter spells them (`high`, `medium`, …) because that is
- * exactly what a saved route stores.
+ * That control opens the platform's `Menu` on the adapter's levels, read when the
+ * control is first opened, one model at a time: it is adapter-owned metadata, and
+ * resolving every model as the dialog opens would charge the reader for lists
+ * they never look at. The ids are shown as the adapter spells them (`high`,
+ * `medium`, …) because that is exactly what a saved route stores.
  *
  * The field speaks the effective route: the saved one, or — while this Workspace
  * has saved none — DSH's current default model, the one the user last chose in a
@@ -1589,11 +1599,11 @@ function SettingsDialog(props: {
   }, [open, pickerOpen])
 
   // The platform's own popover plumbing. Its position hook follows scrolling,
-  // resizing, and the panel's own size changes; its dismiss hook knows that both
-  // the anchor and the panel count as "inside"; and its layer hook answers
+  // resizing, and the panel's own size changes; its layer hook answers
   // Escape, keeps Tab inside the open panel, and returns focus when it closes —
   // the same layer stack the dialog under it registered in, which is why Escape
-  // closes the list first instead of the dialog.
+  // closes the list first instead of the dialog. Its outside-pointer rule is
+  // kept below, with one addition for the menu the list opens.
   const placement = useAnchoredPosition({
     open: pickerOpen,
     anchorRef: modelField,
@@ -1602,8 +1612,31 @@ function SettingsDialog(props: {
     gap: 6,
     margin: 12,
   })
-  useDismissOnOutsidePointer(modelField, pickerOpen, closePicker, panelRef)
   useModalLayer(panelRef, pickerOpen, closePicker)
+
+  /**
+   * Close the panel on a click anywhere but the field, the panel, or a menu row.
+   *
+   * The rule is the platform's `useDismissOnOutsidePointer`, restated because the
+   * effort control's menu is portaled to `document.body` — a list inside the
+   * panel's scrollport would be clipped — and that portaled list is outside both
+   * the field and the panel by the platform's test. A level's click would then
+   * close the panel before the row could record the level. Menu rows are the
+   * panel's own business, so they count as inside.
+   */
+  useEffect(() => {
+    if (!pickerOpen) return
+    const dismiss = (event: PointerEvent): void => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (modelField.current?.contains(target) === true) return
+      if (panelRef.current?.contains(target) === true) return
+      if (target instanceof Element && target.closest('[role="menu"]') !== null) return
+      closePicker()
+    }
+    document.addEventListener('pointerdown', dismiss)
+    return () => document.removeEventListener('pointerdown', dismiss)
+  }, [closePicker, pickerOpen])
 
   /** The effort one route pins, spelled as the row's control spells it. */
   const effortOf = (route: MessageModel | null): string => {
@@ -1739,14 +1772,15 @@ function SettingsDialog(props: {
   }, [loading, onClose, onError, prompt, saving, selection, sessionId, t])
 
   /**
-   * Draw one model row and, under it, the effort control that row owns.
+   * Draw one model row and the effort control that row owns.
    *
    * The two are separate controls rather than one: naming a model is not naming a
    * level, and a reader who wants `high` should not have to reopen the list after
    * choosing the model. The row shows the level its route currently pins, and the
-   * control opens the adapter's own list beneath the row — in the panel's flow
-   * rather than in a flyout, because the list itself scrolls and a flyout would be
-   * clipped by that scrollport.
+   * control opens the adapter's own levels in the platform's `Menu` — a short list
+   * of named levels is what a menu is, and its portal keeps the list from being
+   * clipped by the panel's scrollport. It hangs off the control rather than
+   * unfolding in the panel's flow, and the level in force is marked in the list.
    */
   const renderRouteRow = (route: MessageModel, label: string, chosen: boolean): ReactElement => {
     const key = modelKey(route)
@@ -1757,65 +1791,72 @@ function SettingsDialog(props: {
     // so it is kept beside the current ones instead of quietly disappearing.
     const orphan = pinned !== null && !efforts.includes(pinned) ? [pinned] : []
 
+    // `Default` first, then the adapter's levels: the order the Host resolves a
+    // route in, and the order the row's own control states its answer.
+    const items: MenuEntry[] = [{ id: EFFORT_DEFAULT_ID, label: DEFAULT_EFFORT }]
+    if (effortLoading.includes(key)) {
+      items.push({ type: 'label', id: `${key}-loading`, text: t('settings.loading') })
+    } else if (effortFailures.includes(key)) {
+      // The read is per model, so its failure is that row's alone: the list says
+      // so where the levels would be, rather than passing the model off as one
+      // that offers nothing to choose.
+      items.push({ type: 'label', id: `${key}-failure`, text: t('settings.effortReadFailed') })
+    }
+    for (const effort of [...efforts, ...orphan]) {
+      items.push({ id: effort, label: effort })
+    }
+
+    const closeEfforts = (): void => {
+      setEffortOpen(current => (current === key ? null : current))
+    }
+
     return (
-      <Fragment key={key}>
-        <div className="dsh-cg-settings-row" data-selected={chosen}>
-          <button
-            type="button"
-            className="dsh-cg-settings-row-name"
-            aria-pressed={chosen}
-            onClick={() => choose(route)}
-          >
-            <span className="dsh-cg-settings-row-text">{label}</span>
-            {chosen
-              ? <span className="dsh-cg-settings-row-check" aria-hidden="true"><IconCheck /></span>
-              : null}
-          </button>
-          <button
-            type="button"
-            className="dsh-cg-settings-row-effort"
-            aria-expanded={open}
-            aria-label={`${t('settings.effort')}: ${pinned ?? DEFAULT_EFFORT}`}
-            onClick={() => toggleEfforts(route)}
-          >
-            <span>{pinned ?? DEFAULT_EFFORT}</span>
-            <span className="dsh-cg-settings-row-arrow" data-open={open} aria-hidden="true">
-              <IconArrowRight />
-            </span>
-          </button>
-        </div>
-        {open
-          ? (
-            <div className="dsh-cg-settings-efforts" role="group" aria-label={t('settings.effort')}>
-              <button
-                type="button"
-                className="dsh-cg-settings-effort"
-                aria-pressed={pinned === null}
-                onClick={() => choose({ provider: route.provider, model: route.model })}
-              >
-                {DEFAULT_EFFORT}
-              </button>
-              {effortLoading.includes(key)
-                ? <span className="dsh-cg-settings-efforts-note">{t('settings.loading')}</span>
-                : null}
-              {[...efforts, ...orphan].map(effort => (
-                <button
-                  key={effort}
-                  type="button"
-                  className="dsh-cg-settings-effort"
-                  aria-pressed={pinned === effort}
-                  onClick={() => choose({ provider: route.provider, model: route.model, reasoningEffort: effort })}
-                >
-                  {effort}
-                </button>
-              ))}
-              {effortFailures.includes(key)
-                ? <span className="dsh-cg-settings-efforts-note">{t('settings.effortReadFailed')}</span>
-                : null}
-            </div>
-          )
-          : null}
-      </Fragment>
+      <div key={key} className="dsh-cg-settings-row" data-selected={chosen}>
+        <button
+          type="button"
+          className="dsh-cg-settings-row-name"
+          aria-pressed={chosen}
+          onClick={() => choose(route)}
+        >
+          <span className="dsh-cg-settings-row-text">{label}</span>
+          {chosen
+            ? <span className="dsh-cg-settings-row-check" aria-hidden="true"><IconCheck /></span>
+            : null}
+        </button>
+        <Menu
+          open={open}
+          className="dsh-cg-settings-effort-control"
+          anchor={(
+            <button
+              type="button"
+              className="dsh-cg-settings-row-effort"
+              aria-haspopup="menu"
+              aria-expanded={open}
+              aria-label={`${t('settings.effort')}: ${pinned ?? DEFAULT_EFFORT}`}
+              onClick={() => toggleEfforts(route)}
+            >
+              <span>{pinned ?? DEFAULT_EFFORT}</span>
+              <span className="dsh-cg-settings-row-arrow" aria-hidden="true">
+                <IconArrowRight />
+              </span>
+            </button>
+          )}
+          items={items}
+          selectedId={pinned ?? EFFORT_DEFAULT_ID}
+          onSelect={(id) => {
+            closeEfforts()
+            choose(id === EFFORT_DEFAULT_ID
+              ? { provider: route.provider, model: route.model }
+              : { provider: route.provider, model: route.model, reasoningEffort: id })
+          }}
+          onClose={closeEfforts}
+          // The control is the row's right end, so the list opens back across the
+          // model names instead of off the panel's own edge.
+          align="end"
+          side="bottom"
+          portal
+        />
+      </div>
     )
   }
 
