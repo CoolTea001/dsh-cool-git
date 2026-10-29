@@ -518,11 +518,11 @@ const GIT_CSS = [
   // The list takes the rest of the panel and scrolls inside it. Its height is the
   // panel's, not its rows': a search that narrows the catalog must not change the
   // surface's shape.
-  '.dsh-cg-settings-picker-list{flex:1 1 auto;min-height:0;padding:4px;overflow-y:auto}',
+  '.dsh-cg-settings-picker-list{flex:1 1 auto;min-height:0;overflow-y:auto}',
   // A row is two targets: the name selects the model, the effort control names
   // the level. The selected row is filled rather than outlined, so the eye finds
   // it without the list growing a second kind of border.
-  '.dsh-cg-settings-row{display:flex;align-items:center;gap:2px;min-width:0;border-radius:var(--dsw-radius-md)}',
+  '.dsh-cg-settings-row{display:flex;align-items:center;gap:2px;min-width:0;}',
   '.dsh-cg-settings-row:hover,.dsh-cg-settings-row[data-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-settings-row-name{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;padding:7px 4px 7px 8px;border:0;border-radius:var(--dsw-radius-xs,4px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:20px;text-align:left;cursor:pointer}',
   '.dsh-cg-settings-row-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -531,7 +531,7 @@ const GIT_CSS = [
   // The effort control runs to the row's own edge: square on the left where it
   // meets the name, rounded on the right with the row's radius, so its hover
   // fill reads as the row's end rather than as a pill floating inside it.
-  '.dsh-cg-settings-row-effort{align-self:stretch;flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 10px 0 8px;border:0;border-radius:0 var(--dsw-radius-md) var(--dsw-radius-md) 0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11.5px;cursor:pointer}',
+  '.dsh-cg-settings-row-effort{align-self:stretch;flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 10px 0 8px;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11.5px;cursor:pointer}',
   '.dsh-cg-settings-row-effort[data-static=true]{cursor:default}',
   'button.dsh-cg-settings-row-effort:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
   // The control's arrow is a fixed down chevron: the menu it opens only ever
@@ -543,10 +543,11 @@ const GIT_CSS = [
   '.dsh-cg-settings-row-arrow svg{display:block;width:12px;height:12px;transform:rotate(90deg)}',
   // The groups are the catalog's own shape: a provider header that folds its
   // models away, so a deployment with several providers is read one group at a
-  // time rather than as one long list.
-  '.dsh-cg-settings-picker-group{margin-top:2px}',
-  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 10px 7px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;font-weight:500;line-height:20px;text-align:left;cursor:pointer}',
-  '.dsh-cg-settings-picker-group-head:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
+  // time rather than as one long list. Each header sticks to the top of the
+  // list while its own models scroll under it, which is why it sits in a wrapper
+  // that carries the panel's fill: the button over it only adds the hover tint.
+  '.dsh-cg-settings-picker-group-sticky{position:sticky;top:0;z-index:1}',
+  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 10px 7px 8px;border:0;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;font-weight:500;line-height:20px;text-align:left;cursor:pointer}',
   '.dsh-cg-settings-picker-group-arrow{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-settings-picker-group-arrow svg{display:block;width:12px;height:12px;transform:rotate(0);transition:transform .12s ease}',
   '.dsh-cg-settings-picker-group-arrow[data-open=true] svg{transform:rotate(90deg)}',

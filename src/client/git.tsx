@@ -1408,7 +1408,9 @@ function modelLabel(selection: MessageModel, groups: readonly MessageModelGroup[
  * the search sits above a scrolling list, and narrowing the catalog to two
  * matches leaves the surface the same size as before instead of flickering
  * shorter under the pointer. The provider rows fold their models away and carry
- * that mark at the far right of the row, opposite the name.
+ * that mark at the far right of the row, opposite the name; the row itself stays
+ * at the top of the list while its own models scroll under it, so a model is
+ * never read without the provider it belongs to.
  *
  * A row names a model, and its right-hand control names the reasoning effort the
  * route pins — `Default` when it pins none, so the adapter's own level applies.
@@ -1948,17 +1950,24 @@ function SettingsDialog(props: {
                           const expanded = needle !== '' || !collapsed.includes(group.provider)
                           return (
                             <div key={group.provider} className="dsh-cg-settings-picker-group">
-                              <button
-                                type="button"
-                                className="dsh-cg-settings-picker-group-head"
-                                aria-expanded={expanded}
-                                onClick={() => toggleGroup(group.provider)}
-                              >
-                                <span className="dsh-cg-settings-picker-group-name">{group.name}</span>
-                                <span className="dsh-cg-settings-picker-group-arrow" data-open={expanded} aria-hidden="true">
-                                  <IconArrowRight />
-                                </span>
-                              </button>
+                              {/* The provider's name stays at the top of the list
+                                  while its models scroll under it, so a row is
+                                  never left without the group it belongs to. The
+                                  wrapper carries the panel's own fill (the button
+                                  keeps its hover tint on top of it). */}
+                              <div className="dsh-cg-settings-picker-group-sticky">
+                                <button
+                                  type="button"
+                                  className="dsh-cg-settings-picker-group-head"
+                                  aria-expanded={expanded}
+                                  onClick={() => toggleGroup(group.provider)}
+                                >
+                                  <span className="dsh-cg-settings-picker-group-name">{group.name}</span>
+                                  <span className="dsh-cg-settings-picker-group-arrow" data-open={expanded} aria-hidden="true">
+                                    <IconArrowRight />
+                                  </span>
+                                </button>
+                              </div>
                               {expanded
                                 ? group.models.map(option => renderRouteRow(
                                   { provider: group.provider, model: option.id },
