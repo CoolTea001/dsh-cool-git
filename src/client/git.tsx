@@ -501,6 +501,118 @@ function splitPath(path: string): { dir: string; name: string } {
 }
 
 /**
+ * One folder in the changed-path tree, with everything it holds.
+ *
+ * The folder is structure, not a total: it carries the rows below it and
+ * nothing about how many that is.
+ */
+interface FileTreeFolder {
+  /** The folder's own name, without the path above it. */
+  readonly name: string
+  /** The folder's repository-relative path, which is also its identity. */
+  readonly path: string
+  readonly folders: readonly FileTreeFolder[]
+  readonly files: readonly ChangedFile[]
+}
+
+/** A folder while the tree is being built: its children are still keyed by name. */
+interface MutableFolder {
+  readonly name: string
+  readonly path: string
+  readonly folders: Map<string, MutableFolder>
+  readonly files: ChangedFile[]
+}
+
+/**
+ * Group the changed paths into the directory tree the sidebar draws.
+ *
+ * A path's parent folders are created as the path is read, so a folder row
+ * exists for every directory holding a changed file whether or not Git reported
+ * the directory itself. Folders sort before files, both by name ignoring case:
+ * that is the order a file explorer uses, and it keeps a folder's files together
+ * however `git status` happened to list its paths.
+ *
+ * @param files - the changed paths, in any order.
+ * @returns the repository root, whose own row the sidebar does not draw.
+ */
+function buildFileTree(files: readonly ChangedFile[]): FileTreeFolder {
+  const root: MutableFolder = { name: '', path: '', folders: new Map(), files: [] }
+
+  for (const file of files) {
+    const segments = file.path.split('/')
+    let folder = root
+    let prefix = ''
+    for (const name of segments.slice(0, -1)) {
+      prefix = prefix === '' ? name : `${prefix}/${name}`
+      const child = folder.folders.get(name)
+      if (child === undefined) {
+        const created: MutableFolder = { name, path: prefix, folders: new Map(), files: [] }
+        folder.folders.set(name, created)
+        folder = created
+      } else {
+        folder = child
+      }
+    }
+    // The last segment is the file's own name, and the folder it was placed in
+    // is where the row belongs; a path with no folder at all is a root file.
+    folder.files.push(file)
+  }
+
+  return finishFolder(root)
+}
+
+/**
+ * Sort one built folder's children.
+ *
+ * @param folder - a folder built from the changed paths.
+ * @returns the folder as the sidebar renders it.
+ */
+function finishFolder(folder: MutableFolder): FileTreeFolder {
+  const folders = [...folder.folders.values()]
+    .map(finishFolder)
+    .sort((left, right) => compareTreeNames(left.name, right.name))
+  const files = [...folder.files].sort(
+    (left, right) => compareTreeNames(splitPath(left.path).name, splitPath(right.path).name),
+  )
+  return { name: folder.name, path: folder.path, folders, files }
+}
+
+/**
+ * Order two names the way the tree lists them.
+ *
+ * Case is ignored first so `README.md` and `assets` read as one alphabetical
+ * run rather than as two groups the way a byte comparison would order them; the
+ * exact spelling then breaks a tie, so two names differing only in case still
+ * have a stable order. A locale collation is deliberately not used here: it
+ * would make the tree's order depend on the browser's language rather than on
+ * the names, while these are Git paths and read as data.
+ *
+ * @param left - one folder or file name.
+ * @param right - the other.
+ * @returns a negative, zero, or positive number, as `Array#sort` expects.
+ */
+function compareTreeNames(left: string, right: string): number {
+  const a = left.toLowerCase()
+  const b = right.toLowerCase()
+  if (a !== b) return a < b ? -1 : 1
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+/**
+ * The indent a tree row sits at.
+ *
+ * The level travels to the stylesheet as one custom property rather than as a
+ * padding computed here, so the row's spacing stays beside the rest of the
+ * tree's rules in `styles.ts` and a change of step is one declaration.
+ *
+ * @param depth - how many folder rows the row sits under.
+ * @returns the row's style.
+ */
+function treeDepth(depth: number): CSSProperties {
+  return { '--dsh-cg-depth': depth } as CSSProperties
+}
+
+/**
  * Shorten one `%D` decoration for the row's tag.
  *
  * @param ref - one decoration, e.g. `HEAD -> main`.
@@ -3691,17 +3803,26 @@ function CommitBar(props: {
 }
 
 /**
- * The changed-path list, or the reason there is none to draw.
+ * The changed-path tree, or the reason there is none to draw.
  *
  * A clean working tree draws nothing at all: the header's own count already
  * says zero, so a line inside the pane would only say it a second time.
  *
+ * The paths are grouped by directory rather than listed flat, so a run of files
+ * from one directory reads as one block and the directory is named once above
+ * them instead of on every row. Folders open by default — the pane exists to
+ * show what changed, and a reader who has just opened the tab should not have to
+ * unfold every directory to find out. A folder the reader closes stays closed
+ * across status refreshes, which is why the closed set lives here rather than
+ * being derived from the answer; a folder that disappears simply stops being
+ * drawn, and a new one arrives open.
+ *
  * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
  * @param props.loaded - at least one answer has arrived.
- * @param props.files - the rows to render.
+ * @param props.files - the changed paths the tree is built from.
  * @param props.selection - the current selection, for the selected row's state.
- * @param props.onSelect - called with the row the user picked.
+ * @param props.onSelect - called with the file the user picked.
  * @returns the list body.
  */
 function ChangeList(props: {
@@ -3714,6 +3835,22 @@ function ChangeList(props: {
 }): ReactElement {
   const { t, status, loaded, files, selection, onSelect } = props
 
+  /** The folders the reader closed, keyed by their repository-relative path. */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+
+  // Built only when the answer changes: a status refresh rebuilds the tree,
+  // while a selection or an indentation change leaves it alone.
+  const tree = useMemo(() => buildFileTree(files), [files])
+
+  const toggleFolder = useCallback((path: string): void => {
+    setCollapsed(previous => {
+      const next = new Set(previous)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
   // A failed read is stated by the error dialog; the pane keeps only the fact
   // that there is nothing to list, so the two do not say the same thing twice.
   if (status !== null && status.ok !== true) {
@@ -3724,37 +3861,171 @@ function ChangeList(props: {
 
   return (
     <>
-      {files.map(file => (
-        // The bubble is the row's own statement about itself — the whole path
-        // with a rename's old path trailing it, then the state in words — because
-        // the row itself has room for a letter and an elided tail at most. It is
-        // portaled so it can sit beside the sidebar instead of inside the list's
-        // own scroll box, which would clip it; a path too long for the cap wraps
-        // inside the bubble.
-        <Tooltip
+      {tree.folders.map(folder => (
+        <FolderBranch
+          key={folder.path}
+          t={t}
+          folder={folder}
+          depth={0}
+          collapsed={collapsed}
+          onToggle={toggleFolder}
+          selection={selection}
+          onSelect={onSelect}
+        />
+      ))}
+      {tree.files.map(file => (
+        <ChangeRow
           key={file.path}
-          label={rowLabel(t, file)}
-          side="right"
-          portal
-          maxWidth={TOOLTIP_MAX_WIDTH}
-        >
-          <button
-            type="button"
-            className="dsh-cg-row"
-            aria-selected={selection?.kind === 'file' && selection.file.path === file.path}
-            onClick={() => onSelect(file)}
-          >
-            <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
-            <PathLabel path={file.path} />
-            <span
-              className="dsh-cg-stage"
-              data-staged={file.staged}
-              title={t(file.staged ? 'stage.staged' : 'stage.unstaged')}
-            />
-          </button>
-        </Tooltip>
+          t={t}
+          file={file}
+          depth={0}
+          selection={selection}
+          onSelect={onSelect}
+        />
       ))}
     </>
+  )
+}
+
+/**
+ * One folder row and, while it is open, everything under it.
+ *
+ * The whole row is the disclosure control rather than a chevron the row merely
+ * sits beside: the row is the target a reader aims at, and `aria-expanded` is
+ * the state a screen reader announces either way. The row's own path is its
+ * tooltip, because the tree names a folder by its last segment only and a deep
+ * tree can hide the rest of the path. The row draws no count, and its accessible
+ * name carries none either: the tree reads as paths, not as a column of totals.
+ *
+ * The tree is drawn as a flat run of rows indented by `depth` rather than as
+ * nested lists: the pane is a scroller whose rows are full-width buttons, so a
+ * level costs an indent and nothing needs a list's margins or markers, while a
+ * collapsed folder simply draws no descendants.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.folder - the folder to draw, with its children.
+ * @param props.depth - how many folder rows the folder sits under.
+ * @param props.collapsed - the folders the reader closed.
+ * @param props.onToggle - asks the page to flip one folder.
+ * @param props.selection - the current selection, for the selected row's state.
+ * @param props.onSelect - called with the file the user picked.
+ * @returns the folder row, and its open children.
+ */
+function FolderBranch(props: {
+  readonly t: Translate
+  readonly folder: FileTreeFolder
+  readonly depth: number
+  readonly collapsed: ReadonlySet<string>
+  readonly onToggle: (path: string) => void
+  readonly selection: Selection | null
+  readonly onSelect: (file: ChangedFile) => void
+}): ReactElement {
+  const { t, folder, depth, collapsed, onToggle, selection, onSelect } = props
+  const open = !collapsed.has(folder.path)
+
+  return (
+    <>
+      <Tooltip label={folder.path} side="right" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+        <button
+          type="button"
+          className="dsh-cg-folder"
+          style={treeDepth(depth)}
+          aria-expanded={open}
+          aria-label={t('tree.folderLabel', { name: folder.name })}
+          onClick={() => onToggle(folder.path)}
+        >
+          <span className="dsh-cg-folder-chevron"><IconArrowRight /></span>
+          <span className="dsh-cg-folder-name">{folder.name}</span>
+        </button>
+      </Tooltip>
+      {open ? (
+        <>
+          {folder.folders.map(child => (
+            <FolderBranch
+              key={child.path}
+              t={t}
+              folder={child}
+              depth={depth + 1}
+              collapsed={collapsed}
+              onToggle={onToggle}
+              selection={selection}
+              onSelect={onSelect}
+            />
+          ))}
+          {folder.files.map(file => (
+            <ChangeRow
+              key={file.path}
+              t={t}
+              file={file}
+              depth={depth + 1}
+              selection={selection}
+              onSelect={onSelect}
+            />
+          ))}
+        </>
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * One changed file in the tree: its state letter, its own name, and whether the
+ * index holds it.
+ *
+ * The row names the file alone — the folders it sits under are the rows above
+ * it — except for a rename, whose source path trails the name in the dimmed
+ * column because it is the one part of the path the tree cannot place. The
+ * tooltip still states the whole path and the state in words, since the row
+ * itself has room for a letter and an elided name at most.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.file - the changed path this row names.
+ * @param props.depth - how many folder rows the file sits under.
+ * @param props.selection - the current selection, for the selected row's state.
+ * @param props.onSelect - called with the file the user picked.
+ * @returns the row.
+ */
+function ChangeRow(props: {
+  readonly t: Translate
+  readonly file: ChangedFile
+  readonly depth: number
+  readonly selection: Selection | null
+  readonly onSelect: (file: ChangedFile) => void
+}): ReactElement {
+  const { t, file, depth, selection, onSelect } = props
+  const { name } = splitPath(file.path)
+
+  return (
+    // The bubble is portaled so it can sit beside the sidebar rather than inside
+    // the list's own scroll box, which would clip it; a path too long for the
+    // cap wraps inside the bubble.
+    <Tooltip label={rowLabel(t, file)} side="right" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+      <button
+        type="button"
+        className="dsh-cg-row"
+        style={treeDepth(depth)}
+        aria-selected={selection?.kind === 'file' && selection.file.path === file.path}
+        onClick={() => onSelect(file)}
+      >
+        <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
+        <span className="dsh-cg-path">
+          <span className="dsh-cg-name">{name}</span>
+          {file.origPath === undefined
+            ? null
+            : (
+              <>
+                <span className="dsh-cg-dot">←</span>
+                <span className="dsh-cg-dir" title={file.origPath}>{file.origPath}</span>
+              </>
+            )}
+        </span>
+        <span
+          className="dsh-cg-stage"
+          data-staged={file.staged}
+          title={t(file.staged ? 'stage.staged' : 'stage.unstaged')}
+        />
+      </button>
+    </Tooltip>
   )
 }
 
@@ -3902,30 +4173,6 @@ function RefRow(props: { readonly refs: readonly string[] }): ReactElement {
       {refs.map(ref => (
         <span key={ref} className="dsh-cg-ref">{refLabel(ref)}</span>
       ))}
-    </span>
-  )
-}
-
-/**
- * A changed path, named first and parented second: `name · parent/dir`, with the
- * parent dimmer than the name. A path at the repository root has no parent, so
- * it carries no separator.
- *
- * @param props.path - the repository-relative path.
- * @returns the path element.
- */
-function PathLabel({ path }: { readonly path: string }): ReactElement {
-  const { dir, name } = splitPath(path)
-  const parent = dir.replace(/\/$/, '')
-  return (
-    <span className="dsh-cg-path">
-      <span className="dsh-cg-name">{name}</span>
-      {parent === '' ? null : (
-        <>
-          <span className="dsh-cg-dot">·</span>
-          <span className="dsh-cg-dir">{parent}</span>
-        </>
-      )}
     </span>
   )
 }

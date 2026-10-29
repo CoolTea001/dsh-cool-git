@@ -179,6 +179,8 @@ type UiKey =
   /** Whether a row's change is in the index. */
   | 'stage.staged'
   | 'stage.unstaged'
+  /** What a folder row in the changed-path tree is called. */
+  | 'tree.folderLabel'
   /** The history pane's empty and loading states. */
   | 'history.failed'
   | 'history.loading'
@@ -364,6 +366,7 @@ export const en = {
 
   'stage.staged': 'Staged',
   'stage.unstaged': 'Not staged',
+  'tree.folderLabel': 'Changed files in {name}',
 
   'history.failed': 'Could not read the commit history',
   'history.loading': 'Reading the commit history…',
@@ -606,6 +609,7 @@ export const zh: typeof en = {
 
   'stage.staged': '已暂存',
   'stage.unstaged': '未暂存',
+  'tree.folderLabel': '{name} 中的变更文件',
 
   'history.failed': '读取提交历史失败',
   'history.loading': '正在读取提交历史…',

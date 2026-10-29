@@ -391,13 +391,14 @@ const GIT_CSS = [
   '.dsh-cg-branch-group{flex:none;margin-top:8px;padding:0 8px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
   '.dsh-cg-branch-group:first-child{margin-top:0}',
   '.dsh-cg-branch-row{flex:none;display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}',
-  // The row under the pointer and the row that is selected are painted the same
-  // way, on purpose: the fill is the dialog's one "this is the row" colour, so the
-  // selected row keeps reading as selected while the pointer is away on the
-  // footer's buttons. The selection itself is the click's, not the pointer's, so
-  // moving the mouse over a row can never change what Switch would apply.
+  // The selected row sits one step above hover on the same ramp — the platform's
+  // `active` wash is a little stronger than its `hover` one — so it keeps reading
+  // as selected while the pointer is away on the footer's buttons, and stays
+  // recognisable even when the pointer is on it. The selection itself is the
+  // click's, not the pointer's, so moving the mouse over a row can never change
+  // what Switch would apply.
   '.dsh-cg-branch-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-  '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-branch-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
   '.dsh-cg-branch-row-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
 
   // The create dialog's name field, which sits in the footer beside the two
@@ -430,7 +431,7 @@ const GIT_CSS = [
   // what carries the ticked/unticked state for the row's own painting.
   '.dsh-cg-delete-row{flex:none;display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 8px;border-radius:var(--dsw-radius-sm,6px);color:var(--dsw-alias-label-primary);font-size:12px;cursor:pointer}',
   '.dsh-cg-delete-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-  '.dsh-cg-delete-row:has(.dsh-cg-delete-check:checked){background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-delete-row:has(.dsh-cg-delete-check:checked){background:var(--dsw-alias-interactive-bg-active)}',
   // The branch HEAD is on: shown, marked, and not a choice.
   '.dsh-cg-delete-row:has(.dsh-cg-delete-check:disabled){cursor:default}',
   '.dsh-cg-delete-row:has(.dsh-cg-delete-check:disabled):hover{background:transparent}',
@@ -534,7 +535,8 @@ const GIT_CSS = [
   // the level. The selected row is filled rather than outlined, so the eye finds
   // it without the list growing a second kind of border.
   '.dsh-cg-settings-row{display:flex;align-items:center;gap:2px;min-width:0;}',
-  '.dsh-cg-settings-row:hover,.dsh-cg-settings-row[data-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-settings-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-settings-row[data-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
   '.dsh-cg-settings-row-name{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;padding:7px 4px 7px 8px;border:0;border-radius:var(--dsw-radius-xs,4px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:20px;text-align:left;cursor:pointer}',
   '.dsh-cg-settings-row-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.dsh-cg-settings-row-check{flex:none;display:inline-flex;color:var(--dsw-alias-state-business-primary)}',
@@ -690,12 +692,13 @@ const GIT_CSS = [
   // travel as one sentence separated by newlines.
   '.dsh-cg-commit-note{margin:0;white-space:pre-line;color:var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:1.45}',
 
-  // Changed-path rows. The selected row reads exactly like a hovered one, the
-  // way the branch dialog's rows already do: the fill says which row the page
-  // or the pointer is on, and a second, stronger fill would read as a different
-  // state rather than the same one.
-  '.dsh-cg-row{display:flex;align-items:center;gap:6px;width:100%;height:26px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-row:hover,.dsh-cg-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
+  // Changed-path rows. The selected row keeps the hover fill's colour family but
+  // takes the next step up the platform's ramp (`active` over `hover`), so the
+  // row the page is on stays deeper than the row the pointer merely crosses —
+  // even when the pointer is resting on the selected row itself.
+  '.dsh-cg-row{display:flex;align-items:center;gap:2px;width:100%;height:26px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+  '.dsh-cg-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
   '.dsh-cg-badge{flex:none;width:13px;text-align:center;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;font-weight:700;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-badge[data-kind=added]{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-badge[data-kind=modified]{color:var(--dsw-alias-state-warn-primary)}',
@@ -705,8 +708,9 @@ const GIT_CSS = [
   '.dsh-cg-badge[data-kind=copied]{color:var(--dsw-alias-brand-primary)}',
   '.dsh-cg-badge[data-kind=typechange]{color:var(--dsw-alias-state-warn-primary)}',
   '.dsh-cg-badge[data-kind=untracked]{color:var(--dsw-alias-state-idle-primary)}',
-  // The row's path reads `name · parent`; the name keeps its width while the
-  // parent gives way first, because the name is what the row is about.
+  // The row's path reads `name ← old/path` for a rename; the name keeps its
+  // width while the source gives way first, because the name is what the row is
+  // about.
   '.dsh-cg-path{display:flex;align-items:baseline;gap:4px;flex:1 1 auto;min-width:0;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px}',
   '.dsh-cg-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-dot{flex:none;color:var(--dsw-alias-label-tertiary)}',
@@ -717,9 +721,31 @@ const GIT_CSS = [
   '.dsh-cg-stage{flex:none;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-brand-primary)}',
   '.dsh-cg-stage[data-staged=false]{background:transparent}',
 
+  // The tree's folder rows.
+  //
+  // A folder row is a disclosure button across the whole width — the row is the
+  // target, not a chevron beside it — and it is one step quieter and a little
+  // shorter than a file row, because the folder is the structure around the
+  // change while the file row is the change itself.
+  '.dsh-cg-folder{display:flex;align-items:center;gap:2px;width:100%;height:24px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+  '.dsh-cg-folder:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  // The chevron is the same disclosure mark the diff pane's file titles use,
+  // turned a quarter once the folder is open. Its seat is the badge's own 16px,
+  // so a folder's name and the name of a file under it start in the same column.
+  '.dsh-cg-folder-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--dsw-alias-label-tertiary);transition:transform .12s ease}',
+  '.dsh-cg-folder[aria-expanded=true] .dsh-cg-folder-chevron{transform:rotate(90deg)}',
+  '.dsh-cg-folder-chevron svg{width:12px;height:12px;display:block}',
+  '.dsh-cg-folder-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
+  // The indent both kinds of row share. The level travels from `treeDepth` in
+  // `git.tsx` as one custom property per row, so the spacing stays here: fourteen
+  // pixels a level is enough for a name to step in visibly under its folder and
+  // small enough that a deep tree still leaves most of the sidebar for names.
+  '.dsh-cg-folder,.dsh-cg-row{padding-left:calc(6px + var(--dsh-cg-depth,0) * 14px)}',
+
   // Commit rows.
   '.dsh-cg-commit{display:flex;flex-direction:column;gap:2px;width:100%;padding:5px 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-commit:hover,.dsh-cg-commit[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-commit:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-commit[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
   '.dsh-cg-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-meta{display:flex;align-items:center;gap:6px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-hash{font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
