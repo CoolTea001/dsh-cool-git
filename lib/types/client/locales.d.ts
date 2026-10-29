@@ -34,11 +34,11 @@ type UiKey =
 /** The page's own refusal for a path the newest status no longer lists. */
  | 'fallback.fileGone'
 /** What each request is called, as the error dialog's line prefix. */
- | 'label.status' | 'label.log' | 'label.commit' | 'label.diff' | 'label.message'
+ | 'label.status' | 'label.log' | 'label.commit' | 'label.diff' | 'label.message' | 'label.settings' | 'label.settingsRead'
 /** What that line says when the answer gave no reason at all. */
- | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message'
+ | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message' | 'fallback.settings' | 'fallback.settingsRead'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -55,6 +55,10 @@ type UiKey =
  | 'head.mergeFrom'
 /** The menu's two branch rows, each opening a dialog of its own. */
  | 'head.branchCreate' | 'head.branchDelete'
+/** The menu's last row, and the dialog it opens. */
+ | 'head.settings'
+/** The settings dialog: the model and prompt that write commit messages. */
+ | 'settings.title' | 'settings.description' | 'settings.model' | 'settings.modelDefaultUnknown' | 'settings.modelEmpty' | 'settings.modelUnavailable' | 'settings.modelSearch' | 'settings.searchEmpty' | 'settings.effort' | 'settings.effortReadFailed' | 'settings.prompt' | 'settings.promptHint' | 'settings.promptReset' | 'settings.loading' | 'settings.cancel' | 'settings.save' | 'settings.saving'
 /** The remote control in the history pane's header. */
  | 'remote.publish' | 'remote.sync'
 /** The two pane headers, each followed by its row count. */
@@ -116,11 +120,15 @@ export declare const en: {
     'label.commit': string;
     'label.diff': string;
     'label.message': string;
+    'label.settings': string;
+    'label.settingsRead': string;
     'fallback.status': string;
     'fallback.log': string;
     'fallback.diff': string;
     'fallback.branches': string;
     'fallback.message': string;
+    'fallback.settings': string;
+    'fallback.settingsRead': string;
     'title.switchBranch': string;
     'title.refresh': string;
     'title.fetch': string;
@@ -134,6 +142,8 @@ export declare const en: {
     'title.branchCreate': string;
     'title.branchDelete': string;
     'title.message': string;
+    'title.settings': string;
+    'title.settingsRead': string;
     'dialog.close': string;
     'dialog.ok': string;
     'head.currentBranch': string;
@@ -146,6 +156,24 @@ export declare const en: {
     'head.mergeFrom': string;
     'head.branchCreate': string;
     'head.branchDelete': string;
+    'head.settings': string;
+    'settings.title': string;
+    'settings.description': string;
+    'settings.model': string;
+    'settings.modelDefaultUnknown': string;
+    'settings.modelEmpty': string;
+    'settings.modelUnavailable': string;
+    'settings.modelSearch': string;
+    'settings.searchEmpty': string;
+    'settings.effort': string;
+    'settings.effortReadFailed': string;
+    'settings.prompt': string;
+    'settings.promptHint': string;
+    'settings.promptReset': string;
+    'settings.loading': string;
+    'settings.cancel': string;
+    'settings.save': string;
+    'settings.saving': string;
     'remote.publish': string;
     'remote.sync': string;
     'pane.files': string;

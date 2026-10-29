@@ -440,15 +440,17 @@ export interface CommitAllPayload {
     readonly commit?: CommitSummary;
 }
 /**
- * `POST /message`: one commit message the default model wrote for the pending
- * changes.
+ * `POST /message`: one commit message the Workspace's model wrote for the
+ * pending changes.
  *
  * The request says only which session is asking: *what* the model is shown —
  * the changed paths, the tracked patch, and the untracked files a patch against
  * HEAD cannot reach — is the Host's own read of the repository, exactly as every
- * other route resolves its own subject. So the page cannot ask for a message
- * about changes that are not on disk, and the model only ever describes the tree
- * Git reported.
+ * other route resolves its own subject. Which model and prompt write it are the
+ * Host's reads too: the Workspace's Settings choices when it has them, and DSH's
+ * current default selection and the built-in prompt otherwise. So the page
+ * cannot aim the call at a model the Workspace did not choose, and the model only
+ * ever describes the tree Git reported.
  *
  * `message` is the model's own words and therefore carries no code, the same way
  * Git's diagnosis does not: it is another program's text, except that here it is
@@ -479,6 +481,108 @@ export interface MessagePayload {
      * inside it, because a warning is not part of a commit message.
      */
     readonly warnings?: readonly string[];
+}
+/**
+ * One model route the Settings dialog may write commit messages with.
+ *
+ * The identifiers are the ones `llm.stream` takes, and the optional effort is
+ * the adapter-owned level a saved route may carry. The dialog's picker sets the
+ * effort per model from the adapter's own list (see `ModelEffortsPayload`); a
+ * route without one leaves the level to the adapter's default.
+ */
+export interface MessageModel {
+    /** Registered provider route. */
+    readonly provider: string;
+    /** Provider-owned model id. */
+    readonly model: string;
+    /** Adapter-owned reasoning effort, when the route carries one. */
+    readonly reasoningEffort?: string;
+}
+/** One model row inside a provider group of the Settings picker. */
+export interface MessageModelOption {
+    /** Provider-owned model id, as `llm.stream` takes it. */
+    readonly id: string;
+    /** Human-readable model name for the picker. */
+    readonly name: string;
+}
+/**
+ * One provider's models, in the adapter's own catalog order.
+ *
+ * Grouping survives the wire even though the picker draws a flat list: the
+ * provider's display name is what a reader recognizes, and a provider whose
+ * catalog could not be read is left out rather than failing the whole answer.
+ */
+export interface MessageModelGroup {
+    /** Registered provider route. */
+    readonly provider: string;
+    /** Human-readable provider name. */
+    readonly name: string;
+    readonly models: readonly MessageModelOption[];
+}
+/**
+ * `POST /model-efforts`: the reasoning efforts one model route offers.
+ *
+ * Read per model rather than shipped with the catalog: an adapter resolves
+ * effort metadata one route at a time, and the picker only needs a row's list
+ * while that row's effort control is open. The ids come in the adapter's own
+ * order and are exactly what a saved route may name. An empty list is a real
+ * answer — the model offers no selectable level, so its default applies.
+ */
+export interface ModelEffortsPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: a transport or seam message. */
+    readonly error?: string;
+    /** The adapter's effort ids, in its own order. */
+    readonly efforts?: readonly string[];
+}
+/**
+ * `POST /settings`: what one Workspace has chosen for generated messages.
+ *
+ * `model` and `prompt` are the Workspace's overrides and are `null` when the
+ * deployment's defaults are in use. `defaultModel` and `defaultPrompt` are the
+ * same defaults restated for the dialog, so the picker can say which model the
+ * default currently means and the prompt field can open on the built-in text.
+ *
+ * The default model is DSH's current default selection — the model the user
+ * last chose in a session — and never a copy this plugin keeps: the Host reads
+ * it per request, exactly as every chat request does.
+ */
+export interface SettingsPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    readonly reason?: 'no-repo' | 'error';
+    /** The Workspace the choices belong to, when the Host can name it. */
+    readonly workspace?: WorkspaceInfo;
+    /** The saved model override, or null while the default model is in use. */
+    readonly model?: MessageModel | null;
+    /** The saved prompt override, or null while the built-in prompt is in use. */
+    readonly prompt?: string | null;
+    /** The deployment's current default selection, or null when it names none. */
+    readonly defaultModel?: MessageModel | null;
+    /** The built-in system prompt, always present on a successful read. */
+    readonly defaultPrompt?: string;
+    /** Every model the dialog may pick, grouped by provider. */
+    readonly groups?: readonly MessageModelGroup[];
+}
+/**
+ * Longest custom message prompt the Settings route accepts.
+ *
+ * The bound is the wire contract's rather than either half's: the page stops the
+ * field at the same value so a paste cannot turn Save into a refusal, and the
+ * Host refuses anything longer rather than writing an unbounded file.
+ */
+export declare const MAX_PROMPT_LENGTH = 20000;
+/** `POST /settings-save`: the outcome of storing one Workspace's choices. */
+export interface SaveSettingsPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    readonly reason?: 'no-repo' | 'error';
 }
 /**
  * Collapse one porcelain `XY` pair into the single label the sidebar shows.

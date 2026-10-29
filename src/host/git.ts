@@ -534,6 +534,29 @@ async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
   return { root, hasHead: head.code === 0 }
 }
 
+/** The repository root one request answers for, or why there is none. */
+export type RepositoryRoot =
+  | { readonly root: string }
+  | { readonly refusal: Refusal; readonly reason: 'no-repo' | 'error' }
+
+/**
+ * Resolve the repository root alone, without reading its status or history.
+ *
+ * The Settings routes need the repository's identity and nothing else: the
+ * Workspace key is a directory, and a settings dialog that paid for a full
+ * `git status` just to learn where it is would be slower than the request it
+ * is about to make. This is the same `rev-parse` every other route starts
+ * with, so the root it names is the same root they use.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the root, or the coded refusal and its reason.
+ */
+export async function readRepositoryRoot(target: GitTarget): Promise<RepositoryRoot> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { refusal: repo.refusal, reason: repo.reason }
+  return { root: repo.root }
+}
+
 /**
  * Read the current branch, its upstream, and every changed path.
  *
@@ -940,6 +963,15 @@ export interface UntrackedPreview {
 export type ChangeDigest =
   | {
     readonly ok: true
+    /**
+     * The repository root the read was resolved against.
+     *
+     * The commit-message writer keys a Workspace's saved choices by this path
+     * when the Workspace registry cannot name one, and the digest is already
+     * the request that resolved it — a second `rev-parse` would only repeat a
+     * question this answer already holds.
+     */
+    readonly root: string
     /** Every changed path, in the order `git status` named them. */
     readonly files: readonly ChangedFile[]
     /**
@@ -1122,7 +1154,14 @@ export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest>
   const recentMessages = await readRecentMessages(root, repo.hasHead)
   if (files.length === 0) {
     return {
-      ok: true, files, stat: '', patch: '', patchTruncated: false, untracked: [], recentMessages,
+      ok: true,
+      root: repo.root,
+      files,
+      stat: '',
+      patch: '',
+      patchTruncated: false,
+      untracked: [],
+      recentMessages,
     }
   }
 
@@ -1134,6 +1173,7 @@ export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest>
 
   return {
     ok: true,
+    root: repo.root,
     files,
     stat: stat.stdout.trim(),
     patch: patch.text,

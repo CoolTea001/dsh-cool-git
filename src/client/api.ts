@@ -19,7 +19,11 @@ import type {
   FetchPayload,
   LogPayload,
   MergePayload,
+  MessageModel,
   MessagePayload,
+  ModelEffortsPayload,
+  SaveSettingsPayload,
+  SettingsPayload,
   StatusPayload,
   SyncPayload,
 } from '../shared/contract.js'
@@ -135,6 +139,59 @@ export function commitAll(
  */
 export function generateMessage(sessionId: string | undefined): Promise<MessagePayload> {
   return postJson('/message', { sessionId })
+}
+
+/**
+ * Ask the Host what this Workspace has chosen for generated messages.
+ *
+ * Read when the Settings dialog opens rather than cached: which models exist and
+ * which one DSH currently defaults to change with the rest of the app, and a
+ * dialog opened after a model switch must say what that switch now means. The
+ * answer also carries the built-in prompt, so the field can open on the text the
+ * default actually uses.
+ *
+ * @param sessionId - the session whose Workspace these choices belong to.
+ * @returns the settings payload.
+ */
+export function fetchSettings(sessionId: string | undefined): Promise<SettingsPayload> {
+  return postJson('/settings', { sessionId })
+}
+
+/**
+ * Store this Workspace's choices for generated messages.
+ *
+ * Both fields are sent every time, because the dialog's Save is one answer to
+ * both questions: a null model or a blank prompt is how it asks for the default
+ * back. The Host keys the write by the session's own Workspace, never by
+ * anything the caller names, so one Workspace cannot write another's choices.
+ *
+ * @param sessionId - the session whose Workspace these choices belong to.
+ * @param model - the model to use, or null for DSH's current default.
+ * @param prompt - the system prompt to use, or null for the built-in one.
+ * @returns the save payload.
+ */
+export function saveSettings(
+  sessionId: string | undefined,
+  model: MessageModel | null,
+  prompt: string | null,
+): Promise<SaveSettingsPayload> {
+  return postJson('/settings-save', { sessionId, model, prompt })
+}
+
+/**
+ * Ask which reasoning efforts one model route may be saved with.
+ *
+ * Asked lazily, per model, when the picker opens that row's effort control:
+ * effort metadata is resolved by the adapter that owns the route, and a dialog
+ * that resolved every model up front would pay for lists nobody opened. The
+ * answer is the adapter's own ids, which is what a saved route names.
+ *
+ * @param provider - the registered provider route.
+ * @param model - the provider-owned model id.
+ * @returns the efforts payload.
+ */
+export function fetchModelEfforts(provider: string, model: string): Promise<ModelEffortsPayload> {
+  return postJson('/model-efforts', { provider, model })
 }
 
 /**

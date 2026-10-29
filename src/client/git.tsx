@@ -39,6 +39,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -48,7 +49,17 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { Button, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { createPortal } from 'react-dom'
+import {
+  Button,
+  Input,
+  Menu,
+  Modal,
+  Tooltip,
+  useAnchoredPosition,
+  useDismissOnOutsidePointer,
+  useModalLayer,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   checkoutBranch,
   commitAll,
@@ -59,12 +70,15 @@ import {
   fetchCommit,
   fetchDiff,
   fetchLog,
+  fetchModelEfforts,
   fetchRemotes,
+  fetchSettings,
   fetchStatus,
   generateMessage,
   mergeBranch,
   pullBranch,
   pushBranch,
+  saveSettings,
 } from './api.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
@@ -93,18 +107,21 @@ import {
 } from './layout.js'
 import type { MessageKey, Translate } from './locales.js'
 import { GIT_ROOT_CLASS } from './styles.js'
-import type {
-  BranchDeleteTarget,
-  BranchEntry,
-  BranchReportPayload,
-  BranchSafety,
-  ChangedFile,
-  ChangeKind,
-  CommitSummary,
-  DeleteBranchesPayload,
-  Failure,
-  LogPayload,
-  StatusPayload,
+import {
+  MAX_PROMPT_LENGTH,
+  type BranchDeleteTarget,
+  type BranchEntry,
+  type BranchReportPayload,
+  type BranchSafety,
+  type ChangedFile,
+  type ChangeKind,
+  type CommitSummary,
+  type DeleteBranchesPayload,
+  type Failure,
+  type LogPayload,
+  type MessageModel,
+  type MessageModelGroup,
+  type StatusPayload,
 } from '../shared/contract.js'
 
 /** How many commits the history pane asks for. */
@@ -1270,6 +1287,696 @@ function ErrorDialog(props: {
 }
 
 /**
+ * Stable key for one model route inside the Settings picker.
+ *
+ * The two identifiers are joined by NUL because neither a provider id nor a
+ * model id can carry one, so the key splits back into exactly the two values the
+ * Host stored. The effort is deliberately not part of it: a row names a model,
+ * and the level is chosen inside that row — two rows for the same model would
+ * make the search and the folded groups say the model exists twice.
+ *
+ * @param selection - the route to key.
+ * @returns the picker value.
+ */
+function modelKey(selection: MessageModel): string {
+  return `${selection.provider}\u0000${selection.model}`
+}
+
+/**
+ * What a row's effort control says when the route pins no level.
+ *
+ * Deliberately not translated: the ids the control lists beside it come from the
+ * adapter (`high`, `medium`, …), so the name for "no pinned level" belongs to
+ * that same vocabulary rather than to either dictionary.
+ */
+const DEFAULT_EFFORT = 'Default'
+
+/**
+ * How tall the Settings picker's panel is.
+ *
+ * A fixed height is what keeps the panel from jumping while a search narrows the
+ * catalog to three rows: the list scrolls inside a surface whose edges stay put,
+ * which is also how the design draws it — the rows fill the top of the panel and
+ * leave the rest empty. Only the variable parts below follow the viewport; the
+ * height itself does not.
+ */
+const PICKER_HEIGHT = 370
+
+/**
+ * The parts of the Settings picker's placement this plugin owns.
+ *
+ * The position itself is the platform's (`useAnchoredPosition`); this is the
+ * rest of the panel's geometry: how wide the trigger made it, which side of the
+ * field it opens on, and the layer that keeps it above the modal's mask and card.
+ */
+interface PickerLayout {
+  readonly width: number
+  /** Above every layer the modal put over the page (mask and card). */
+  readonly zIndex: number
+  /** Below the field when there is room, above it when there is not. */
+  readonly side: 'bottom' | 'top'
+}
+
+/**
+ * The reasoning effort a route pins.
+ *
+ * @param route - the route to read.
+ * @returns the effort id, or null when the route leaves the level to its adapter.
+ */
+function routeEffort(route: MessageModel): string | null {
+  const effort = route.reasoningEffort
+  return typeof effort === 'string' && effort !== '' ? effort : null
+}
+
+/**
+ * The name a route reads as, in the picker and in the default row's caption.
+ *
+ * A route the current catalog does not list keeps its identifiers rather than
+ * disappearing: a saved model can be temporarily unavailable — its provider is
+ * signed out, its endpoint is down, its adapter has not loaded yet — and the
+ * dialog must still show what the Workspace chose instead of silently pretending
+ * the choice was never made.
+ *
+ * @param selection - the route to name.
+ * @param groups - the catalog the dialog read.
+ * @returns `provider / model`, using the catalog's display names when it has them.
+ */
+function modelLabel(selection: MessageModel, groups: readonly MessageModelGroup[]): string {
+  const group = groups.find(entry => entry.provider === selection.provider)
+  const model = group?.models.find(entry => entry.id === selection.model)
+  return `${group?.name ?? selection.provider} / ${model?.name ?? selection.model}`
+}
+
+/**
+ * The Settings dialog: the model and prompt that write this Workspace's commit
+ * messages.
+ *
+ * The two settings are asked together because they describe one call: Generate
+ * sends the changes to this model, told to answer in this prompt's terms, and a
+ * Workspace that wants a different voice usually wants it from a different model
+ * too. Save writes both; the page reads both on every Generate, so nothing has
+ * to be refreshed or reloaded for the next generated message to use them.
+ *
+ * The model list is the deployment's catalog, read when the dialog opens rather
+ * than at mount: models appear, disappear, and become available as providers are
+ * configured, and a list cached before a sign-in would offer routes the Host
+ * cannot call. It is drawn as the plugin's own picker rather than a native
+ * `select`, because a route is three answers and a `select` can only hold one: a
+ * row per model, a search field over the whole list, provider groups that fold
+ * away, and a per-row effort control do not exist in the platform's select.
+ *
+ * The platform has no `Popover` component to hand, but it does expose the parts
+ * its own menus are built from, and the panel uses them: `useAnchoredPosition`
+ * keeps it against the field while the page scrolls or resizes,
+ * `useDismissOnOutsidePointer` closes it on a click elsewhere, and
+ * `useModalLayer` puts it on the same layer stack as the dialog — so Escape
+ * closes the list before the dialog, Tab stays inside the open list, and focus
+ * returns to the field when the list closes. The panel is portaled to
+ * `document.body` because the dialog's body is a scrollport that would clip it.
+ *
+ * The panel is a sheet of its own height rather than a box that hugs its rows:
+ * the search sits above a scrolling list, and narrowing the catalog to two
+ * matches leaves the surface the same size as before instead of flickering
+ * shorter under the pointer. The provider rows fold their models away and carry
+ * that mark at the far right of the row, opposite the name.
+ *
+ * A row names a model, and its right-hand control names the reasoning effort the
+ * route pins — `Default` when it pins none, so the adapter's own level applies.
+ * The effort list is read from the adapter when the control is first opened, one
+ * model at a time: it is adapter-owned metadata, and resolving every model as
+ * the dialog opens would charge the reader for lists they never look at. The ids
+ * are shown as the adapter spells them (`high`, `medium`, …) because that is
+ * exactly what a saved route stores.
+ *
+ * The field speaks the effective route: the saved one, or — while this Workspace
+ * has saved none — DSH's current default model, the one the user last chose in a
+ * session. The list holds only routes that can be saved, so it has no row for
+ * "the default" itself: choosing a model is what pins one, and until a reader does
+ * that the Workspace goes on following DSH. A field that shows the default route
+ * but no row claiming to be it is the honest shape of that state.
+ *
+ * The prompt field opens on the effective prompt: the Workspace's own text when
+ * it has one, and the built-in text otherwise. That makes the default readable
+ * before it is changed, and it makes "restore default" a matter of putting the
+ * same text back. The Host treats text equal to the built-in prompt as no
+ * override at all, so saving the field untouched does not freeze this Workspace
+ * at today's wording.
+ *
+ * The dialog is the platform's Modal, which owns the portal, the mask, Escape,
+ * focus return, and the two buttons' placement; the body is this plugin's own
+ * because the picker and the multi-line prompt field have no primitive here.
+ * Failures are the page's error dialog, not this card's body: the card is a
+ * form, and a request that never arrived is not one of its fields.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.open - whether the dialog is showing.
+ * @param props.sessionId - the session whose Workspace these choices belong to.
+ * @param props.onClose - called by Cancel, the close button, Escape, or the mask.
+ * @param props.onError - called with the failure to state in the error dialog.
+ * @returns the dialog element.
+ */
+function SettingsDialog(props: {
+  readonly t: Translate
+  readonly open: boolean
+  readonly sessionId: string | undefined
+  readonly onClose: () => void
+  readonly onError: (error: GitError) => void
+}): ReactElement {
+  const { t, open, sessionId, onClose, onError } = props
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [groups, setGroups] = useState<readonly MessageModelGroup[]>([])
+  const [defaultModel, setDefaultModel] = useState<MessageModel | null>(null)
+  const [defaultPrompt, setDefaultPrompt] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [selection, setSelection] = useState<MessageModel | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [collapsed, setCollapsed] = useState<readonly string[]>([])
+  const [effortOpen, setEffortOpen] = useState<string | null>(null)
+  const [effortLists, setEffortLists] = useState<Readonly<Record<string, readonly string[]>>>({})
+  const [effortFailures, setEffortFailures] = useState<readonly string[]>([])
+  const [effortLoading, setEffortLoading] = useState<readonly string[]>([])
+  const [pickerLayout, setPickerLayout] = useState<PickerLayout>({
+    width: 320,
+    zIndex: 1010,
+    side: 'bottom',
+  })
+  const id = useId()
+  const modelId = `${id}-model`
+  const pickerId = `${id}-model-picker`
+  const promptId = `${id}-prompt`
+  const modelField = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  /** Model keys whose effort list has been asked for, so one row asks once. */
+  const effortsAsked = useRef<Set<string>>(new Set())
+
+  // A fresh read on every open. The cleanup discards a late answer and a save in
+  // flight, so reopening the dialog after closing it mid-request starts from the
+  // Host's state rather than from a response the previous opening asked for. The
+  // picker's transient state — what is open, what was searched for, which effort
+  // lists were already read — starts over with it, because the catalog the next
+  // opening reads need not have the same rows.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setLoading(true)
+    setSaving(false)
+    setPickerOpen(false)
+    setQuery('')
+    setEffortOpen(null)
+    setEffortLists({})
+    setEffortFailures([])
+    setEffortLoading([])
+    effortsAsked.current.clear()
+    void fetchSettings(sessionId).then(result => {
+      if (cancelled) return
+      setLoading(false)
+      if (result?.ok !== true) {
+        onClose()
+        onError({
+          title: t('title.settingsRead'),
+          lines: [failureLine(t, 'label.settingsRead', result ?? {}, 'fallback.settingsRead')],
+        })
+        return
+      }
+      const nextGroups = Array.isArray(result.groups) ? result.groups : []
+      const builtIn = typeof result.defaultPrompt === 'string' ? result.defaultPrompt : ''
+      setGroups(nextGroups)
+      setDefaultModel(result.defaultModel ?? null)
+      setDefaultPrompt(builtIn)
+      setPrompt(typeof result.prompt === 'string' ? result.prompt : builtIn)
+      setSelection(result.model ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, sessionId, onClose, onError, t])
+
+  // The model field is the dialog's first answer and the one the reader is most
+  // likely to change, so the keyboard lands there once the read has filled it.
+  // The Modal's own autofocus runs before that answer arrives, which is why this
+  // effect exists rather than a marker on the field.
+  useEffect(() => {
+    if (!open || loading) return
+    modelField.current?.focus()
+  }, [open, loading])
+
+  /**
+   * Close the list and forget what was typed into it.
+   *
+   * Stable because the platform's dismiss and layer hooks both take it in their
+   * own effect dependencies: a fresh function per keystroke would re-register
+   * the popover's layer on every render.
+   */
+  const closePicker = useCallback((): void => {
+    setPickerOpen(false)
+    setQuery('')
+    setEffortOpen(null)
+  }, [])
+
+  // What the platform's position hook cannot know: how wide the field made the
+  // panel, how much room its list may take, which side of the field has room,
+  // and how high the page stacks its layers. The panel is portaled to
+  // `document.body` because the dialog body is a scrollport — an element inside
+  // it would be clipped by that scrollport — so its layer is read off the
+  // trigger's own ancestors rather than guessed at.
+  useLayoutEffect(() => {
+    if (!open || !pickerOpen) return
+    const measure = (): void => {
+      const trigger = modelField.current
+      if (trigger === null) return
+      const rect = trigger.getBoundingClientRect()
+      const margin = 12
+      const gap = 6
+      const width = Math.max(280, Math.min(rect.width, window.innerWidth - margin * 2))
+      const below = window.innerHeight - rect.bottom - gap - margin
+      const above = rect.top - gap - margin
+      // The panel's height is fixed, so the only question the viewport answers
+      // is which side of the field can hold it. Below is the reader's first
+      // guess, so it is preferred unless it cannot fit the panel at all.
+      const openUp = below < PICKER_HEIGHT && above > below
+      let layer = 0
+      for (let node = trigger.parentElement; node !== null && node !== document.body; node = node.parentElement) {
+        const value = Number(window.getComputedStyle(node).zIndex)
+        if (Number.isFinite(value)) layer = Math.max(layer, value)
+      }
+      const next: PickerLayout = {
+        width,
+        zIndex: Math.max(layer + 10, 1000),
+        side: openUp ? 'top' : 'bottom',
+      }
+      setPickerLayout(current => (
+        current.width === next.width
+        && current.zIndex === next.zIndex
+        && current.side === next.side
+          ? current
+          : next
+      ))
+    }
+    measure()
+    // A scroll of the panel's own list must not change the field's side or room.
+    const followScroll = (event: Event): void => {
+      if (event.target instanceof Node && panelRef.current?.contains(event.target) === true) return
+      measure()
+    }
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', followScroll, true)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', followScroll, true)
+    }
+  }, [open, pickerOpen])
+
+  // The platform's own popover plumbing. Its position hook follows scrolling,
+  // resizing, and the panel's own size changes; its dismiss hook knows that both
+  // the anchor and the panel count as "inside"; and its layer hook answers
+  // Escape, keeps Tab inside the open panel, and returns focus when it closes —
+  // the same layer stack the dialog under it registered in, which is why Escape
+  // closes the list first instead of the dialog.
+  const placement = useAnchoredPosition({
+    open: pickerOpen,
+    anchorRef: modelField,
+    panelRef,
+    side: pickerLayout.side,
+    gap: 6,
+    margin: 12,
+  })
+  useDismissOnOutsidePointer(modelField, pickerOpen, closePicker, panelRef)
+  useModalLayer(panelRef, pickerOpen, closePicker)
+
+  /** The effort one route pins, spelled as the row's control spells it. */
+  const effortOf = (route: MessageModel | null): string => {
+    const effort = route === null ? null : routeEffort(route)
+    return effort ?? DEFAULT_EFFORT
+  }
+
+  const knownRoutes = new Set(groups.flatMap(group =>
+    group.models.map(model => modelKey({ provider: group.provider, model: model.id }))))
+  // A saved route the current catalog does not know is kept as a row of its own:
+  // it is still what this Workspace stores, and hiding it would make Save
+  // silently replace it. The Host reports the failure if the route cannot be
+  // called when the next message is generated.
+  const staleRoute = selection !== null && !knownRoutes.has(modelKey(selection))
+    ? selection
+    : null
+  // The field speaks the effective route — the saved one, or DSH's default while
+  // nothing is saved — in the same `provider / model / effort` terms a row uses.
+  const effective = selection ?? defaultModel
+  const triggerLabel = effective === null
+    ? t('settings.modelDefaultUnknown')
+    : `${modelLabel(effective, groups)} / ${effortOf(effective)}`
+
+  const needle = query.trim().toLowerCase()
+  const matches = (text: string): boolean => text.toLowerCase().includes(needle)
+  // A provider whose own name matches keeps every model: the reader naming the
+  // provider is looking for the group, not for one row inside it.
+  const visibleGroups = needle === ''
+    ? groups
+    : groups
+      .map(group => {
+        const providerHit = matches(group.name) || matches(group.provider)
+        const models = providerHit
+          ? group.models
+          : group.models.filter(model => matches(model.name) || matches(model.id))
+        return { ...group, models }
+      })
+      .filter(group => group.models.length > 0)
+  const staleVisible = staleRoute !== null && (needle === '' || matches(modelLabel(staleRoute, groups)))
+
+  /**
+   * Take one route and close the list.
+   *
+   * Choosing a route is what pins it for this Workspace. The list has no row for
+   * "the default", so a Workspace that has saved nothing keeps following DSH
+   * until a model is actually chosen. Focus is the platform's: the layer this
+   * panel registered returns it to the field the list hung from when that layer
+   * closes.
+   */
+  const choose = useCallback((next: MessageModel): void => {
+    setSelection(next)
+    closePicker()
+  }, [closePicker])
+
+  /** Fold one provider's models away, or bring them back. */
+  const toggleGroup = (provider: string): void => {
+    setCollapsed(current => current.includes(provider)
+      ? current.filter(entry => entry !== provider)
+      : [...current, provider])
+  }
+
+  /**
+   * Read one row's effort list, once per model per opening.
+   *
+   * The list is adapter metadata and has to be resolved per model, so it is read
+   * when the row's control is opened rather than with the catalog. A failed read
+   * is kept beside its row and shown there: it is not the dialog's failure, and
+   * the row must not pretend the model offers no level.
+   */
+  const loadEfforts = (route: MessageModel): void => {
+    const key = modelKey(route)
+    if (effortsAsked.current.has(key)) return
+    effortsAsked.current.add(key)
+    setEffortLoading(current => [...current, key])
+    void fetchModelEfforts(route.provider, route.model).then(result => {
+      setEffortLoading(current => current.filter(entry => entry !== key))
+      if (result?.ok === true) {
+        const efforts = Array.isArray(result.efforts)
+          ? result.efforts.filter((effort): effort is string => typeof effort === 'string' && effort !== '')
+          : []
+        setEffortLists(current => ({ ...current, [key]: efforts }))
+        return
+      }
+      setEffortLists(current => ({ ...current, [key]: [] }))
+      setEffortFailures(current => (current.includes(key) ? current : [...current, key]))
+    })
+  }
+
+  /** Open one row's effort control, or close it when it is already open. */
+  const toggleEfforts = (route: MessageModel): void => {
+    const key = modelKey(route)
+    if (effortOpen === key) {
+      setEffortOpen(null)
+      return
+    }
+    setEffortOpen(key)
+    loadEfforts(route)
+  }
+
+  /**
+   * Close the dialog unless a save is in flight.
+   *
+   * The wrapper is stable because the platform's Modal takes `onClose` in its
+   * own effects: an inline function would re-register its layer on every
+   * keystroke and could pull focus back to the close button while the reader is
+   * editing the prompt.
+   */
+  const requestClose = useCallback((): void => {
+    if (!saving) onClose()
+  }, [onClose, saving])
+
+  /**
+   * Store both answers and close on success.
+   *
+   * A failed write leaves the dialog open: the reason is in the page's error
+   * dialog, and the form still holds the choice that failed to save, so the
+   * reader can retry without reconstructing it.
+   */
+  const submit = useCallback((): void => {
+    if (loading || saving) return
+    setSaving(true)
+    void saveSettings(sessionId, selection, prompt).then(result => {
+      setSaving(false)
+      if (result?.ok !== true) {
+        onError({
+          title: t('title.settings'),
+          lines: [failureLine(t, 'label.settings', result ?? {}, 'fallback.settings')],
+        })
+        return
+      }
+      onClose()
+    })
+  }, [loading, onClose, onError, prompt, saving, selection, sessionId, t])
+
+  /**
+   * Draw one model row and, under it, the effort control that row owns.
+   *
+   * The two are separate controls rather than one: naming a model is not naming a
+   * level, and a reader who wants `high` should not have to reopen the list after
+   * choosing the model. The row shows the level its route currently pins, and the
+   * control opens the adapter's own list beneath the row — in the panel's flow
+   * rather than in a flyout, because the list itself scrolls and a flyout would be
+   * clipped by that scrollport.
+   */
+  const renderRouteRow = (route: MessageModel, label: string, chosen: boolean): ReactElement => {
+    const key = modelKey(route)
+    const pinned = chosen && selection !== null ? routeEffort(selection) : null
+    const open = effortOpen === key
+    const efforts = effortLists[key] ?? []
+    // A saved level the adapter no longer lists is still what this route stores,
+    // so it is kept beside the current ones instead of quietly disappearing.
+    const orphan = pinned !== null && !efforts.includes(pinned) ? [pinned] : []
+
+    return (
+      <Fragment key={key}>
+        <div className="dsh-cg-settings-row" data-selected={chosen}>
+          <button
+            type="button"
+            className="dsh-cg-settings-row-name"
+            aria-pressed={chosen}
+            onClick={() => choose(route)}
+          >
+            <span className="dsh-cg-settings-row-text">{label}</span>
+            {chosen
+              ? <span className="dsh-cg-settings-row-check" aria-hidden="true"><IconCheck /></span>
+              : null}
+          </button>
+          <button
+            type="button"
+            className="dsh-cg-settings-row-effort"
+            aria-expanded={open}
+            aria-label={`${t('settings.effort')}: ${pinned ?? DEFAULT_EFFORT}`}
+            onClick={() => toggleEfforts(route)}
+          >
+            <span>{pinned ?? DEFAULT_EFFORT}</span>
+            <span className="dsh-cg-settings-row-arrow" data-open={open} aria-hidden="true">
+              <IconArrowRight />
+            </span>
+          </button>
+        </div>
+        {open
+          ? (
+            <div className="dsh-cg-settings-efforts" role="group" aria-label={t('settings.effort')}>
+              <button
+                type="button"
+                className="dsh-cg-settings-effort"
+                aria-pressed={pinned === null}
+                onClick={() => choose({ provider: route.provider, model: route.model })}
+              >
+                {DEFAULT_EFFORT}
+              </button>
+              {effortLoading.includes(key)
+                ? <span className="dsh-cg-settings-efforts-note">{t('settings.loading')}</span>
+                : null}
+              {[...efforts, ...orphan].map(effort => (
+                <button
+                  key={effort}
+                  type="button"
+                  className="dsh-cg-settings-effort"
+                  aria-pressed={pinned === effort}
+                  onClick={() => choose({ provider: route.provider, model: route.model, reasoningEffort: effort })}
+                >
+                  {effort}
+                </button>
+              ))}
+              {effortFailures.includes(key)
+                ? <span className="dsh-cg-settings-efforts-note">{t('settings.effortReadFailed')}</span>
+                : null}
+            </div>
+          )
+          : null}
+      </Fragment>
+    )
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={requestClose}
+      title={t('settings.title')}
+      description={t('settings.description')}
+      closeLabel={t('dialog.close')}
+      className="dsh-cg-settings-dialog"
+      footer={(
+        <>
+          <Button variant="outline" disabled={saving} onClick={requestClose}>{t('settings.cancel')}</Button>
+          <Button variant="primary" disabled={loading || saving} onClick={submit}>
+            {saving ? t('settings.saving') : t('settings.save')}
+          </Button>
+        </>
+      )}
+    >
+      {loading
+        ? <p className="dsh-cg-dialog-hint">{t('settings.loading')}</p>
+        : (
+          <div className="dsh-cg-settings-body">
+            <div className="dsh-cg-settings-field">
+              <label className="dsh-cg-settings-label" htmlFor={modelId}>{t('settings.model')}</label>
+              <div className="dsh-cg-settings-picker">
+                <button
+                  ref={modelField}
+                  id={modelId}
+                  type="button"
+                  className="dsh-cg-settings-picker-trigger"
+                  aria-expanded={pickerOpen}
+                  aria-controls={pickerId}
+                  disabled={saving}
+                  onClick={() => {
+                    setPickerOpen(current => !current)
+                    setQuery('')
+                    setEffortOpen(null)
+                  }}
+                >
+                  <span className="dsh-cg-settings-picker-value">{triggerLabel}</span>
+                  <span className="dsh-cg-settings-picker-chevron" data-open={pickerOpen} aria-hidden="true">
+                    <IconArrowRight />
+                  </span>
+                </button>
+              </div>
+              {pickerOpen
+                ? createPortal(
+                    <div
+                      id={pickerId}
+                      ref={panelRef}
+                      className="dsh-cg-settings-popover"
+                      role="group"
+                      aria-label={t('settings.model')}
+                      style={{
+                        left: placement?.left ?? 0,
+                        top: placement?.top ?? 0,
+                        width: pickerLayout.width,
+                        height: PICKER_HEIGHT,
+                        zIndex: pickerLayout.zIndex,
+                      }}
+                    >
+                      <div className="dsh-cg-settings-picker-search">
+                        <input
+                          type="text"
+                          className="dsh-cg-settings-picker-input"
+                          value={query}
+                          placeholder={t('settings.modelSearch')}
+                          aria-label={t('settings.modelSearch')}
+                          spellCheck={false}
+                          onChange={event => setQuery(event.target.value)}
+                        />
+                      </div>
+                      <div className="dsh-cg-settings-picker-list">
+                        {staleVisible && staleRoute !== null
+                          ? renderRouteRow(
+                            staleRoute,
+                            t('settings.modelUnavailable', { model: modelLabel(staleRoute, groups) }),
+                            true,
+                          )
+                          : null}
+                        {staleVisible
+                          ? <div className="dsh-cg-settings-picker-rule" role="presentation" />
+                          : null}
+                        {visibleGroups.map(group => {
+                          // A search expands every group it matched: a folded
+                          // provider would hide the very rows the query found.
+                          const expanded = needle !== '' || !collapsed.includes(group.provider)
+                          return (
+                            <div key={group.provider} className="dsh-cg-settings-picker-group">
+                              <button
+                                type="button"
+                                className="dsh-cg-settings-picker-group-head"
+                                aria-expanded={expanded}
+                                onClick={() => toggleGroup(group.provider)}
+                              >
+                                <span className="dsh-cg-settings-picker-group-name">{group.name}</span>
+                                <span className="dsh-cg-settings-picker-group-arrow" data-open={expanded} aria-hidden="true">
+                                  <IconArrowRight />
+                                </span>
+                              </button>
+                              {expanded
+                                ? group.models.map(option => renderRouteRow(
+                                  { provider: group.provider, model: option.id },
+                                  option.name,
+                                  selection !== null
+                                    && modelKey(selection) === modelKey({ provider: group.provider, model: option.id }),
+                                ))
+                                : null}
+                            </div>
+                          )
+                        })}
+                        {!staleVisible && visibleGroups.length === 0
+                          ? <p className="dsh-cg-settings-picker-empty">{t('settings.searchEmpty')}</p>
+                          : null}
+                      </div>
+                    </div>,
+                    document.body,
+                  )
+                : null}
+              {groups.length === 0
+                ? <p className="dsh-cg-settings-note">{t('settings.modelEmpty')}</p>
+                : null}
+            </div>
+
+            <div className="dsh-cg-settings-field">
+              <label className="dsh-cg-settings-label" htmlFor={promptId}>{t('settings.prompt')}</label>
+              <span className="dsh-cg-settings-prompt-frame">
+                <textarea
+                  id={promptId}
+                  className="dsh-cg-settings-prompt"
+                  value={prompt}
+                  disabled={saving}
+                  // The Host refuses a prompt beyond this bound rather than
+                  // storing a file; the field stops the typing at the same place
+                  // so a long paste cannot turn Save into a refusal.
+                  maxLength={MAX_PROMPT_LENGTH}
+                  spellCheck={false}
+                  onChange={event => setPrompt(event.target.value)}
+                />
+              </span>
+              <div className="dsh-cg-settings-prompt-foot">
+                <span className="dsh-cg-settings-note">{t('settings.promptHint')}</span>
+                <button
+                  type="button"
+                  className="dsh-cg-settings-reset"
+                  disabled={saving || defaultPrompt === '' || prompt === defaultPrompt}
+                  onClick={() => setPrompt(defaultPrompt)}
+                >
+                  {t('settings.promptReset')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+    </Modal>
+  )
+}
+
+/**
  * The sidebar's first row: the Workspace this session is in, the branch it is
  * on, and the More control every other operation hangs from. It draws no rule of
  * its own: the toolbar and the commit form under it are one block, closed
@@ -1365,6 +2072,8 @@ function SideHead(props: {
   const [pick, setPick] = useState<BranchPick | null>(null)
   /** Whether the delete dialog is showing. */
   const [deleteOpen, setDeleteOpen] = useState(false)
+  /** Whether the Settings dialog is showing. */
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const onBranch = status?.ok === true
   const detached = status?.detached === true
@@ -1388,6 +2097,11 @@ function SideHead(props: {
   /** Close the delete dialog without deleting anything. */
   const closeDelete = useCallback((): void => {
     setDeleteOpen(false)
+  }, [])
+
+  /** Close the Settings dialog without saving anything. */
+  const closeSettings = useCallback((): void => {
+    setSettingsOpen(false)
   }, [])
 
   /**
@@ -1442,6 +2156,7 @@ function SideHead(props: {
     else if (id === 'branch-create') setPick('create')
     else if (id === 'branch-delete') setDeleteOpen(true)
     else if (id === 'merge-from') setPick('merge-from')
+    else if (id === 'settings') setSettingsOpen(true)
   }, [onRefresh, onFetch, onPull, onPush])
 
   // The rows, in the order a reader meets them: the two that only re-read the
@@ -1451,6 +2166,10 @@ function SideHead(props: {
   // argued in the order alone. No row carries a glyph: the words are the whole
   // of what each row does, and icons in a 144px card would only take width from
   // them.
+  //
+  // Settings is set apart under the last rule rather than filed with the
+  // repository rows above it: every other row acts on the repository, while this
+  // one only decides how a message about it is written.
   const menuItems = [
     { id: 'refresh', label: t('head.refresh') },
     { id: 'fetch', label: t('head.fetch') },
@@ -1462,6 +2181,12 @@ function SideHead(props: {
     { id: 'branch-delete', label: t('head.branchDelete') },
     { type: 'separator' as const, id: 'merge' },
     { id: 'merge-from', label: t('head.mergeFrom') },
+    { type: 'separator' as const, id: 'settings-separator' },
+    // Settings is about the message this page generates for a repository, so
+    // there is nothing to configure until a repository has answered. A disabled
+    // row is quieter than a dialog that opens only to report that the directory
+    // is not one.
+    { id: 'settings', label: t('head.settings'), disabled: !onBranch },
   ]
 
   const label = detached
@@ -1540,6 +2265,13 @@ function SideHead(props: {
         busy={deleting}
         onClose={closeDelete}
         onConfirm={confirmDelete}
+        onError={onError}
+      />
+      <SettingsDialog
+        t={t}
+        open={settingsOpen}
+        sessionId={sessionId}
+        onClose={closeSettings}
         onError={onError}
       />
       <div className="dsh-cg-tools">

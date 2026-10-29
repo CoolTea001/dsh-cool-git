@@ -9,7 +9,7 @@
  */
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { InputHTMLAttributes, ReactElement, ReactNode } from 'react'
+  import type { InputHTMLAttributes, ReactElement, ReactNode, RefObject } from 'react'
 
   /** Button visual weight (the subset this plugin uses). */
   export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger'
@@ -153,4 +153,64 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
   /** Render an anchored dropdown menu with its own keyboard walk. */
   export function Menu(props: MenuProps): ReactElement
+
+  /** Where an anchored panel sits, as a viewport corner. */
+  export interface AnchoredPosition {
+    readonly left: number
+    readonly top: number
+  }
+
+  /** Inputs of {@link useAnchoredPosition}. */
+  export interface AnchoredPositionOptions {
+    /** Whether the panel is showing; a closed panel measures nothing. */
+    open: boolean
+    /** The control the panel hangs from. */
+    anchorRef: RefObject<HTMLElement | null>
+    /** The panel itself, measured so it can be clamped inside the viewport. */
+    panelRef: RefObject<HTMLElement | null>
+    /** Open below (`bottom`, default) or above (`top`) the anchor. */
+    side?: 'bottom' | 'top'
+    /** Align the panel's left edge with the anchor's (`start`, default) or right edge (`end`). */
+    align?: 'start' | 'end'
+    /** Anchor-to-panel distance in pixels. */
+    gap?: number
+    /** Distance the panel keeps from the viewport's edges. */
+    margin?: number
+  }
+
+  /**
+   * Track the viewport position of a panel anchored to a control.
+   *
+   * The answer moves with the page: it follows scrolling and resizing, and
+   * re-clamps whenever the panel's own size changes. It is null while closed.
+   */
+  export function useAnchoredPosition(options: AnchoredPositionOptions): AnchoredPosition | null
+
+  /**
+   * Dismiss an open panel when the pointer goes down outside it.
+   *
+   * The anchor and the panel are both "inside", so a click on the control that
+   * opened the panel is left to that control. `dismiss` is called with false
+   * when the pointer landed anywhere else.
+   */
+  export function useDismissOnOutsidePointer(
+    anchorRef: RefObject<HTMLElement | null>,
+    open: boolean,
+    dismiss: (open: boolean) => void,
+    panelRef?: RefObject<HTMLElement | null>,
+  ): void
+
+  /**
+   * Register one element as the topmost layer of the page.
+   *
+   * The platform's layer stack owns Escape, Tab cycling within the element, and
+   * returning focus where it came from when the layer closes. DSH's own dialogs
+   * register through this hook, which is why an open layer above a dialog
+   * answers Escape first instead of closing the dialog underneath it.
+   */
+  export function useModalLayer(
+    ref: RefObject<HTMLElement | null>,
+    open: boolean,
+    onClose: () => void,
+  ): void
 }

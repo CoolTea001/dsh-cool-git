@@ -36,14 +36,23 @@ import {
   readCommit,
   readDiff,
   readLog,
+  readRepositoryRoot,
   readStatus,
   switchBranch,
   DEFAULT_LOG_LIMIT,
   type GitTarget,
 } from './git.js'
-import type { BranchDeleteTarget } from '../shared/contract.js'
+import type { BranchDeleteTarget, SettingsPayload, SaveSettingsPayload } from '../shared/contract.js'
+import { DEFAULT_MESSAGE_PROMPT } from '../shared/prompt.js'
 import { generateCommitMessage } from './message.js'
+import { defaultSelection, readModelEfforts, readModelGroups } from './model.js'
 import { coded, type Refusal } from './refusal.js'
+import {
+  readModelChoice,
+  readPromptChoice,
+  readWorkspaceSettings,
+  saveWorkspaceSettings,
+} from './settings.js'
 import { resolveWorkspace } from './workspace.js'
 
 /** Route table, kept in one place so the two halves cannot drift. */
@@ -54,6 +63,9 @@ export const ROUTES = {
   commit: '/dsh-cool-git/api/commit',
   commitAll: '/dsh-cool-git/api/commit-all',
   message: '/dsh-cool-git/api/message',
+  settings: '/dsh-cool-git/api/settings',
+  settingsSave: '/dsh-cool-git/api/settings-save',
+  modelEfforts: '/dsh-cool-git/api/model-efforts',
   branches: '/dsh-cool-git/api/branches',
   branchReport: '/dsh-cool-git/api/branch-report',
   branchCreate: '/dsh-cool-git/api/branch-create',
@@ -273,6 +285,41 @@ function resolveShell(ctx: any): { shell: any } | Refusal {
   return { shell }
 }
 
+/** The Workspace key a settings request belongs to, or why there is none. */
+type SettingsTarget =
+  | { readonly ok: true; readonly key: string; readonly workspace?: SettingsPayload['workspace'] }
+  | { readonly ok: false; readonly refusal: Refusal; readonly reason: 'no-repo' | 'error' }
+
+/**
+ * Resolve the Workspace a settings request is about.
+ *
+ * The repository root is the identity of last resort: a deployment without a
+ * Workspace registry still has a directory, and the same directory must key the
+ * same choices whether the registry answered or not. When the registry can name
+ * a Workspace, its canonical path wins, because that is the path every session
+ * attached to that Workspace resolves to — including a session opened from a
+ * subdirectory of it.
+ *
+ * @param ctx - the Host plugin context.
+ * @param sessionId - the session the request named.
+ * @param target - the shell seam and the session's directory.
+ * @returns the key and the Workspace, or the refusal to report.
+ */
+async function resolveSettingsTarget(
+  ctx: any,
+  sessionId: unknown,
+  target: GitTarget,
+): Promise<SettingsTarget> {
+  const root = await readRepositoryRoot(target)
+  if ('refusal' in root) return { ok: false, refusal: root.refusal, reason: root.reason }
+  const workspace = await resolveWorkspace(ctx, sessionId, root.root)
+  return {
+    ok: true,
+    key: workspace?.path === undefined || workspace.path === '' ? root.root : workspace.path,
+    ...(workspace === undefined ? {} : { workspace }),
+  }
+}
+
 /**
  * Run one JSON route body against Git.
  *
@@ -354,6 +401,23 @@ function readHash(body: Record<string, unknown>): string | undefined {
   const hash = body.hash
   if (typeof hash !== 'string' || !OBJECT_NAME.test(hash)) return undefined
   return hash
+}
+
+/**
+ * Read one identifier naming a model route.
+ *
+ * The shape is the one a stored `MessageModel` accepts: a non-empty string under
+ * the same length ceiling settings uses, with no NUL. Whether the route exists is
+ * the `llm` service's answer, not this half's — a route this deployment no longer
+ * mounts still has to be asked about, because a saved choice may name it.
+ *
+ * @param value - the field as the body carried it.
+ * @returns the identifier, or undefined when the body does not name one.
+ */
+function readIdentifier(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value === '' || value.length > 200) return undefined
+  if (value.includes('\0')) return undefined
+  return value
 }
 
 /**
@@ -510,13 +574,81 @@ export function registerRoutes(ctx: any): () => void {
 
     // The commit form's other request, and a read: it writes a message for the
     // changes on disk, which is why the Commit button stays the only control that
-    // stages or records anything. Which model writes it is the Host's business
-    // too — the deployment's current default selection — so the page asks for a
-    // message and never names the model that writes it. The session id is passed
-    // on only as the model call's own attribution; the repository is resolved from
-    // it by `handle`, never from anything the body holds.
+    // stages or records anything. Which model writes it and what prompt it is
+    // given are the Host's business too — the Workspace's saved choices, or the
+    // deployment's defaults — so the page asks for a message and never says how
+    // to write it. The session id is passed on only as the model call's own
+    // attribution; the repository is resolved from it by `handle`, never from
+    // anything the body holds.
     route(ROUTES.message, (req, res) => handle(ctx, req, res, 'read', (body, target) =>
       generateCommitMessage(ctx, target, typeof body.sessionId === 'string' ? body.sessionId : undefined))),
+
+    // The Settings dialog's read. It answers with the Workspace's saved choices
+    // beside the defaults they fall back to — the current default model and the
+    // built-in prompt — because the dialog has to show the effective value even
+    // when the Workspace has saved nothing of its own.
+    route(ROUTES.settings, (req, res) => handle(ctx, req, res, 'read', async (body, target) => {
+      const resolved = await resolveSettingsTarget(ctx, body.sessionId, target)
+      if (resolved.ok !== true) return { ok: false, ...resolved.refusal, reason: resolved.reason }
+      const [saved, groups] = await Promise.all([
+        readWorkspaceSettings(ctx, resolved.key),
+        readModelGroups(ctx),
+      ])
+      const defaultModel = defaultSelection(ctx)
+      const payload: SettingsPayload = {
+        ok: true,
+        ...(resolved.workspace === undefined ? {} : { workspace: resolved.workspace }),
+        model: saved.model ?? null,
+        prompt: saved.prompt ?? null,
+        defaultModel: defaultModel ?? null,
+        defaultPrompt: DEFAULT_MESSAGE_PROMPT,
+        groups,
+      }
+      return payload
+    })),
+
+    // The Settings dialog's write. It changes the user's preferences, not the
+    // repository, so it is a read effect: a session the Host has not resumed yet
+    // can still store a choice for the Workspace its durable header names. Both
+    // fields are replaced by every request — the dialog sends the complete
+    // answer — and a null or blank field clears that override.
+    route(ROUTES.settingsSave, (req, res) => handle(ctx, req, res, 'read', async (body, target) => {
+      const resolved = await resolveSettingsTarget(ctx, body.sessionId, target)
+      if (resolved.ok !== true) return { ok: false, ...resolved.refusal, reason: resolved.reason }
+      const model = readModelChoice(body.model)
+      if (model.ok !== true) return { ok: false, error: 'invalid model selection' }
+      const prompt = readPromptChoice(body.prompt)
+      if (prompt.ok !== true) return { ok: false, error: 'invalid prompt' }
+      await saveWorkspaceSettings(ctx, resolved.key, {
+        ...(model.value === undefined ? {} : { model: model.value }),
+        ...(prompt.value === undefined ? {} : { prompt: prompt.value }),
+      })
+      const payload: SaveSettingsPayload = { ok: true }
+      return payload
+    })),
+
+    // The Settings picker's effort control: what one model route may be saved
+    // with. Deliberately outside `handle` — this is a question about the
+    // deployment's models, not about the session's working tree, so it resolves
+    // no Git target and needs no shell. The route is asked once per model the
+    // reader opens, because effort metadata is adapter-resolved per model.
+    route(ROUTES.modelEfforts, async (req, res) => {
+      if (!methodAllowed(req, res, ['POST'])) return
+      let body: Record<string, unknown>
+      try {
+        body = await readBody(req)
+      } catch (error) {
+        sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        return
+      }
+      const provider = readIdentifier(body.provider)
+      const model = readIdentifier(body.model)
+      if (provider === undefined || model === undefined) {
+        sendJson(res, 200, { ok: false, error: 'invalid model route' })
+        return
+      }
+      sendJson(res, 200, await readModelEfforts(ctx, provider, model))
+    }),
 
     route(ROUTES.checkout, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const branch = readBranch(body)

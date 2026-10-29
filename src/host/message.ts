@@ -2,12 +2,14 @@
  * The Host half's commit-message writer.
  *
  * The commit form's Generate control asks the Host for a message, and the Host
- * writes one with DSH's *current default model* rather than with a route of this
- * plugin's own: `agentDefaultModel` is where the deployment records which
- * provider, model, and reasoning effort a new conversation would run on, so the
- * message is written by the model the user is already paying for and switching
- * that default switches this too. Nothing here caches the selection — it is read
- * per request, exactly as the model picker reads it.
+ * writes one with the model and prompt this Workspace has chosen in Settings.
+ * When it has chosen neither, the call falls back to DSH's *current default
+ * model* — `agentDefaultModel` is where the deployment records which provider,
+ * model, and reasoning effort a new conversation would run on, so the message is
+ * written by the model the user is already paying for and switching that default
+ * switches this too — and to the built-in prompt in `shared/prompt.ts`. Nothing
+ * here caches either choice: both are read per request, exactly as the model
+ * picker and the Settings dialog read them.
  *
  * The material is the repository itself, read once through `readChangeDigest`:
  * the changed paths, the tracked patch with its `--stat`, the untracked files no
@@ -33,53 +35,17 @@
  * The prompt is two pieces of English copy this half owns rather than sentences
  * the page words in the active locale: the style the recent messages show, and the
  * project's commit rules (`AGENTS.md`) as the answer when that style cannot be
- * read.
+ * read. The system prompt itself lives in `shared/prompt.ts`, because the
+ * Settings dialog shows the same text as the built-in default.
  */
 
-import type { ChangedFile, MessagePayload } from '../shared/contract.js'
+import type { ChangedFile, MessageModel, MessagePayload } from '../shared/contract.js'
+import { DEFAULT_MESSAGE_PROMPT } from '../shared/prompt.js'
 import { readChangeDigest, type ChangeDigest, type GitTarget } from './git.js'
+import { defaultSelection } from './model.js'
 import { coded, type Refusal } from './refusal.js'
-
-/**
- * The project's commit rules, as the model is told them when no style is clear.
- *
- * These are the fallback rather than the instruction: the repository's own recent
- * messages are what the model is asked to write in the manner of, and these rules
- * are what it answers to when that sample says nothing — an unborn branch, a first
- * commit, a history with no pattern to it. They restate the commit rules of this
- * project (`AGENTS.md`), which a contributor reads before committing.
- */
-const COMMIT_RULES: readonly string[] = [
-  '1. Default to English, and keep the message concise.',
-  '2. Check for temp files, large files, and sensitive content (keys, tokens, .env) before committing.',
-  '3. Add a tag such as feat | refactor | fix | chore.',
-]
-
-/**
- * What the model is told before it is shown the changes.
- *
- * The style of the repository's own commits comes first because it is the
- * stronger signal: a project whose history is Chinese, or untagged, or writes a
- * body on every change, is a project whose next message should look like that. The
- * commit rules follow as the answer for when there is nothing to imitate, and
- * rule 2 stays an instruction in either case — the sensitive-content check is not
- * a matter of house style.
- *
- * Rule 2 is a pre-commit check rather than a shape for the message, so the model
- * needs somewhere to put what it finds: the answer is split into the message and
- * the `WARNING:` lines that follow it (see `splitAnswer`), which is what keeps a
- * finding out of the commit message and still in front of the person about to
- * commit.
- */
-const SYSTEM_PROMPT: string = [
-  'You write the Git commit message for a working tree from the changes you are shown.',
-  'Write it in the style of this repository\'s recent commits, which are shown to you: match their language, their tag prefix or lack of one, their mood, their capitalization, and whether they carry a body.',
-  'When the recent commits do not establish a style — there are none, too few, or no consistent pattern — follow the project\'s commit rules instead:',
-  ...COMMIT_RULES,
-  'Keep the subject line at most 72 characters, and add a body only when the change needs one.',
-  'Apply rule 2 before you write, whatever style you are following. When the check finds something the committer must look at first, put one line per finding after the message, each beginning with "WARNING: " and naming the path and what is wrong with it.',
-  'Answer with the commit message alone: no Markdown, no code fences, no quotation marks around the message, and no commentary of your own.',
-].join('\n')
+import { readWorkspaceSettings } from './settings.js'
+import { resolveWorkspace } from './workspace.js'
 
 /**
  * Longest answer the model may write.
@@ -117,48 +83,9 @@ const GENERATE_TIMEOUT_MS = 120_000
  */
 const WARNING_LINE = /^\s{0,4}(?:warnings?|注意|警告|⚠)\s*[:：]\s*/iu
 
-/** One model route, as `agentDefaultModel` reports and `llm.stream` takes it. */
-interface ModelSelection {
-  readonly provider: string
-  readonly model: string
-  readonly reasoningEffort?: string
-}
-
 /** What the model answered, once its stream has been assembled. */
 interface ModelAnswer {
   readonly text: string
-}
-
-/**
- * Read DSH's current default model selection.
- *
- * The service is optional because a composition can be built without it, and its
- * answer is untrusted because it is a Config-backed read: a selection naming no
- * provider or no model is the same answer as no service at all, which is what the
- * page words as "no default model".
- *
- * @param ctx - the Host plugin context.
- * @returns the route to call, or undefined when there is none to call.
- */
-function defaultSelection(ctx: any): ModelSelection | undefined {
-  const service = ctx.get('agentDefaultModel')
-  if (service === undefined || typeof service.currentSelection !== 'function') return undefined
-  try {
-    const selection = service.currentSelection()
-    const provider = selection?.provider
-    const model = selection?.model
-    if (typeof provider !== 'string' || provider === '') return undefined
-    if (typeof model !== 'string' || model === '') return undefined
-    const effort = selection?.reasoningEffort
-    return {
-      provider,
-      model,
-      ...(typeof effort === 'string' && effort !== '' ? { reasoningEffort: effort } : {}),
-    }
-  } catch {
-    /* an unreadable selection is no selection, which the page reports */
-    return undefined
-  }
 }
 
 /**
@@ -271,13 +198,16 @@ function promptText(digest: Extract<ChangeDigest, { ok: true }>): string {
  * @param selection - the route to call.
  * @param prompt - the user message's text.
  * @param sessionId - the session the request belongs to, when the route named one.
+ * @param systemPrompt - the system prompt this Workspace uses: the built-in one,
+ *   or the text the Settings dialog stored for it.
  * @returns the assembled answer, or the refusal to report.
  */
 async function askModel(
   llm: any,
-  selection: ModelSelection,
+  selection: MessageModel,
   prompt: string,
   sessionId: string | undefined,
+  systemPrompt: string,
 ): Promise<ModelAnswer | { readonly refusal: Refusal }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS)
@@ -289,7 +219,7 @@ async function askModel(
       model: selection.model,
       ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
       maxTokens: MAX_OUTPUT_TOKENS,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
       signal: controller.signal,
       ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
@@ -377,6 +307,14 @@ function splitAnswer(raw: string): { readonly message: string; readonly warnings
  * with nothing changed is refused before any model is looked for, because a
  * missing model is not what the user needs to hear about a clean tree.
  *
+ * The Workspace's own choices are read here rather than carried on the request.
+ * The page asks for a message and nothing else, so a stale tab cannot write with
+ * a model or prompt the Workspace has since changed, and a request forged from
+ * the same origin cannot point the model at text the Settings dialog never
+ * stored. Which Workspace that is, is the Host's answer: the registry's path
+ * when it can name one, and the repository root the digest just resolved
+ * otherwise.
+ *
  * @param ctx - the Host plugin context.
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param sessionId - the session the request named, for the model call's own
@@ -392,12 +330,24 @@ export async function generateCommitMessage(
   if (digest.ok !== true) return { ok: false, ...digest.refusal, reason: digest.reason }
   if (digest.files.length === 0) return { ok: false, ...coded('commit-clean'), reason: 'clean' }
 
+  const workspace = await resolveWorkspace(ctx, sessionId, digest.root)
+  const workspacePath = workspace?.path === undefined || workspace.path === ''
+    ? digest.root
+    : workspace.path
+  const settings = await readWorkspaceSettings(ctx, workspacePath)
+
   const llm = ctx.get('llm')
   if (llm === undefined || typeof llm.stream !== 'function') return { ok: false, ...coded('no-llm') }
-  const selection = defaultSelection(ctx)
+  const selection = settings.model ?? defaultSelection(ctx)
   if (selection === undefined) return { ok: false, ...coded('no-model') }
 
-  const answer = await askModel(llm, selection, promptText(digest), sessionId)
+  const answer = await askModel(
+    llm,
+    selection,
+    promptText(digest),
+    sessionId,
+    settings.prompt ?? DEFAULT_MESSAGE_PROMPT,
+  )
   if ('refusal' in answer) return { ok: false, ...answer.refusal }
 
   const { message, warnings } = splitAnswer(answer.text)

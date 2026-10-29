@@ -469,6 +469,114 @@ const GIT_CSS = [
   '.dsh-cg-dialog-body{display:flex;flex-direction:column;gap:8px}',
   '.dsh-cg-dialog-text{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary);white-space:pre-wrap;word-break:break-word}',
 
+  // The Settings dialog. Its two fields are the whole card, so the body is one
+  // column and the gap is what keeps the two from reading as one long form: the
+  // model is a one-line answer and the prompt is a page of text. The card is
+  // wider than the branch dialogs because a prompt is prose: a narrow textarea
+  // would show three words of a line and wrap the rest into a column no one
+  // could read.
+  //
+  // The model field is this plugin's own picker rather than a native `select`: a
+  // route is three answers — provider, model, effort — and the platform's select
+  // can only hold one. The list opens as a popover at the body's own level (see
+  // below): the card's body scrolls, so a panel drawn inside it would be clipped
+  // by that scrollport, while one drawn at the body's level never is. Its list is
+  // bounded, so a large catalog scrolls rather than stretching the page.
+  '.dsh-cg-settings-dialog{width:min(620px,100%)}',
+  '.dsh-cg-settings-body{display:flex;flex-direction:column;gap:16px;min-width:0}',
+  '.dsh-cg-settings-field{display:flex;flex-direction:column;gap:8px;min-width:0}',
+  '.dsh-cg-settings-label{color:var(--dsw-alias-label-primary);font-size:12px;font-weight:600;line-height:18px}',
+  // The trigger repeats the prompt frame's material — the half-pixel border, the
+  // layer fill, and the business token on focus — because the two are the
+  // dialog's two fields. The value is the part that gives ground to the chevron.
+  '.dsh-cg-settings-picker{display:flex;flex-direction:column;min-width:0}',
+  '.dsh-cg-settings-picker-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;box-sizing:border-box;width:100%;height:36px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:34px;text-align:left;cursor:pointer}',
+  '.dsh-cg-settings-picker-trigger:hover:not(:disabled){border-color:var(--dsw-alias-border-l3)}',
+  '.dsh-cg-settings-picker-trigger:focus-visible{outline:none;border-color:var(--dsw-alias-state-business-primary)}',
+  '.dsh-cg-settings-picker-trigger:disabled{opacity:.6;cursor:default}',
+  '.dsh-cg-settings-picker-value{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  // One glyph, two states: pointing down while the panel is closed and up while
+  // it is open. The group headers below use the same asset turned a quarter the
+  // other way, because there the mark names a row that opens under it.
+  '.dsh-cg-settings-picker-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-settings-picker-chevron svg{display:block;width:14px;height:14px;transform:rotate(90deg);transition:transform .12s ease}',
+  '.dsh-cg-settings-picker-chevron[data-open=true] svg{transform:rotate(-90deg)}',
+  // The panel is a popover at the body's own level rather than a child of the
+  // card: the dialog body scrolls, and a panel inside that scrollport would be
+  // clipped by it. Its `left`/`top` come from the platform's anchored-position
+  // hook, which is also what re-clamps it when the panel's own size changes.
+  // `--dsw-alias-bg-overlay` is the theme's popover surface, and the shadow is
+  // what lifts the panel off the mask behind it.
+  '.dsh-cg-settings-popover{position:fixed;box-sizing:border-box;display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-module-platform);box-shadow:var(--dsw-shadow-lv3,0 12px 32px rgba(0,0,0,.18));overflow:hidden}',
+  // The search row is the panel's fixed head: the catalog scrolls under it, so a
+  // query does not move the field the reader is typing into. It is a flat field
+  // — the row's hairline is the only chrome — because the panel is itself the
+  // surface: a second framed box inside it would read as a card in a card.
+  '.dsh-cg-settings-picker-search{flex:none;display:flex;align-items:center;height:40px;padding:0 12px;border-bottom:.5px solid var(--dsw-alias-border-l4)}',
+  '.dsh-cg-settings-picker-input{box-sizing:border-box;width:100%;height:100%;padding:0;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px}',
+  '.dsh-cg-settings-picker-input::placeholder{color:var(--dsw-alias-label-tertiary)}',
+  // The list takes the rest of the panel and scrolls inside it. Its height is the
+  // panel's, not its rows': a search that narrows the catalog must not change the
+  // surface's shape.
+  '.dsh-cg-settings-picker-list{flex:1 1 auto;min-height:0;padding:4px;overflow-y:auto}',
+  // A row is two targets: the name selects the model, the effort control names
+  // the level. The selected row is filled rather than outlined, so the eye finds
+  // it without the list growing a second kind of border.
+  '.dsh-cg-settings-row{display:flex;align-items:center;gap:2px;min-width:0;border-radius:var(--dsw-radius-md)}',
+  '.dsh-cg-settings-row:hover,.dsh-cg-settings-row[data-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-settings-row-name{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;padding:7px 4px 7px 8px;border:0;border-radius:var(--dsw-radius-xs,4px);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;line-height:20px;text-align:left;cursor:pointer}',
+  '.dsh-cg-settings-row-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.dsh-cg-settings-row-check{flex:none;display:inline-flex;color:var(--dsw-alias-state-business-primary)}',
+  '.dsh-cg-settings-row-check svg{display:block;width:12px;height:12px}',
+  '.dsh-cg-settings-row-effort{flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:0;border-radius:var(--dsw-radius-xs,4px);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11.5px;cursor:pointer}',
+  '.dsh-cg-settings-row-effort[data-static=true]{cursor:default}',
+  'button.dsh-cg-settings-row-effort:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-settings-row-arrow{display:inline-flex;align-items:center;justify-content:center}',
+  '.dsh-cg-settings-row-arrow svg{display:block;width:11px;height:11px;transform:rotate(0);transition:transform .12s ease}',
+  '.dsh-cg-settings-row-arrow[data-open=true] svg{transform:rotate(90deg)}',
+  // The groups are the catalog's own shape: a provider header that folds its
+  // models away, so a deployment with several providers is read one group at a
+  // time rather than as one long list.
+  '.dsh-cg-settings-picker-group{margin-top:2px}',
+  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 8px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;font-weight:500;line-height:20px;text-align:left;cursor:pointer}',
+  '.dsh-cg-settings-picker-group-head:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-settings-picker-group-arrow{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-settings-picker-group-arrow svg{display:block;width:12px;height:12px;transform:rotate(0);transition:transform .12s ease}',
+  '.dsh-cg-settings-picker-group-arrow[data-open=true] svg{transform:rotate(90deg)}',
+  '.dsh-cg-settings-picker-group-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  // The effort pills sit under the row they answer, inset to the row's own text
+  // so they read as that row's list. They are pills rather than rows because the
+  // levels are short names read as a set: `Default`, `high`, `medium`, `low` —
+  // not a second scrollable list inside the first.
+  '.dsh-cg-settings-efforts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 8px 8px 20px}',
+  '.dsh-cg-settings-effort{padding:1px 9px;border:.5px solid var(--dsw-alias-border-l4);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;cursor:pointer}',
+  '.dsh-cg-settings-effort:hover{border-color:var(--dsw-alias-border-l3);color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-settings-effort[aria-pressed=true]{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
+  '.dsh-cg-settings-efforts-note{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}',
+  '.dsh-cg-settings-row-name:focus-visible,.dsh-cg-settings-row-effort:focus-visible,.dsh-cg-settings-picker-group-head:focus-visible,.dsh-cg-settings-effort:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}',
+  '.dsh-cg-settings-picker-rule{margin:6px 4px;border-top:.5px solid var(--dsw-alias-border-l3)}',
+  '.dsh-cg-settings-picker-empty{margin:8px 8px 10px;color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:18px}',
+  '.dsh-cg-settings-prompt:disabled{opacity:.6;cursor:default}',
+  // The prompt's frame repeats the commit field's material — the half-pixel
+  // border, the layer fill, and the business token on focus — because the two
+  // are the same kind of control: a multi-line field this plugin draws because
+  // the platform's `Input` is single-line. The field inside is borderless so the
+  // frame is what lights up. Its height is the dialog's own, not the content's:
+  // 250px shows a prompt of a few paragraphs without pushing the rest of the card
+  // off the screen, so the field does not resize at all.
+  '.dsh-cg-settings-prompt-frame{display:block;box-sizing:border-box;width:100%;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-2)}',
+  '.dsh-cg-settings-prompt-frame:focus-within{border-color:var(--dsw-alias-state-business-primary)}',
+  '.dsh-cg-settings-prompt{display:block;box-sizing:border-box;width:100%;height:250px;padding:8px 10px;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1.6;resize:none}',
+  // The hint and the restore control share the row under the field: the hint is
+  // the part that gives ground, because it is a sentence and the control is a
+  // word. The control is a bare text button rather than the platform's Button so
+  // it does not compete with the footer's two actions.
+  '.dsh-cg-settings-prompt-foot{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}',
+  '.dsh-cg-settings-note{margin:0;flex:1 1 auto;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5}',
+  '.dsh-cg-settings-reset{flex:none;padding:0;border:0;background:transparent;color:var(--dsw-alias-state-business-primary);font:inherit;font-size:11px;line-height:1.5;cursor:pointer}',
+  '.dsh-cg-settings-reset:hover:not(:disabled){text-decoration:underline}',
+  '.dsh-cg-settings-reset:disabled{color:var(--dsw-alias-label-dimmed);cursor:default}',
+
   // The commit form: the sidebar's own row under the toolbar, closed by the one
   // hairline that separates the column's top block — toolbar and form together —
   // from the two panes below. Nothing is drawn between the toolbar and the field,

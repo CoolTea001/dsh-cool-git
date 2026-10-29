@@ -53,12 +53,16 @@ type UiKey =
   | 'label.commit'
   | 'label.diff'
   | 'label.message'
+  | 'label.settings'
+  | 'label.settingsRead'
   /** What that line says when the answer gave no reason at all. */
   | 'fallback.status'
   | 'fallback.log'
   | 'fallback.diff'
   | 'fallback.branches'
   | 'fallback.message'
+  | 'fallback.settings'
+  | 'fallback.settingsRead'
   /** The heading over each failure the page can report. */
   | 'title.switchBranch'
   | 'title.refresh'
@@ -73,6 +77,8 @@ type UiKey =
   | 'title.branchCreate'
   | 'title.branchDelete'
   | 'title.message'
+  | 'title.settings'
+  | 'title.settingsRead'
   /** The error dialog's own two controls. */
   | 'dialog.close'
   | 'dialog.ok'
@@ -93,6 +99,26 @@ type UiKey =
   /** The menu's two branch rows, each opening a dialog of its own. */
   | 'head.branchCreate'
   | 'head.branchDelete'
+  /** The menu's last row, and the dialog it opens. */
+  | 'head.settings'
+  /** The settings dialog: the model and prompt that write commit messages. */
+  | 'settings.title'
+  | 'settings.description'
+  | 'settings.model'
+  | 'settings.modelDefaultUnknown'
+  | 'settings.modelEmpty'
+  | 'settings.modelUnavailable'
+  | 'settings.modelSearch'
+  | 'settings.searchEmpty'
+  | 'settings.effort'
+  | 'settings.effortReadFailed'
+  | 'settings.prompt'
+  | 'settings.promptHint'
+  | 'settings.promptReset'
+  | 'settings.loading'
+  | 'settings.cancel'
+  | 'settings.save'
+  | 'settings.saving'
   /** The remote control in the history pane's header. */
   | 'remote.publish'
   | 'remote.sync'
@@ -220,12 +246,16 @@ export const en = {
   'label.commit': 'Reading the commit',
   'label.diff': 'Reading the file diff',
   'label.message': 'Generating the commit message',
+  'label.settings': 'Saving settings',
+  'label.settingsRead': 'Reading settings',
 
   'fallback.status': 'Could not read the repository status',
   'fallback.log': 'Could not read the commit history',
   'fallback.diff': 'Could not read the diff',
   'fallback.branches': 'Could not read the branch list',
   'fallback.message': 'Could not generate a commit message',
+  'fallback.settings': 'Could not save the settings',
+  'fallback.settingsRead': 'Could not read the settings',
 
   'title.switchBranch': 'Could not switch to {branch}',
   'title.refresh': 'Refresh failed',
@@ -240,6 +270,8 @@ export const en = {
   'title.branchCreate': 'Could not create the branch',
   'title.branchDelete': 'Could not delete every branch',
   'title.message': 'Could not generate a commit message',
+  'title.settings': 'Could not save the settings',
+  'title.settingsRead': 'Could not read the settings',
 
   'dialog.close': 'Close',
   'dialog.ok': 'Got it',
@@ -254,6 +286,25 @@ export const en = {
   'head.mergeFrom': 'Merge from…',
   'head.branchCreate': 'Branch create…',
   'head.branchDelete': 'Branch delete…',
+  'head.settings': 'Settings',
+
+  'settings.title': 'Settings',
+  'settings.description': 'Set the message generation model and prompt',
+  'settings.model': 'Message generation model',
+  'settings.modelDefaultUnknown': 'DSH default model',
+  'settings.modelEmpty': 'No models are available',
+  'settings.modelUnavailable': '{model} (unavailable)',
+  'settings.modelSearch': 'Search models',
+  'settings.searchEmpty': 'No model matches the search',
+  'settings.effort': 'Reasoning effort',
+  'settings.effortReadFailed': 'Could not read the effort list',
+  'settings.prompt': 'Message generation prompt',
+  'settings.promptHint': 'Each Workspace has its own prompt. Clear the field or restore the default to use the built-in prompt.',
+  'settings.promptReset': 'Restore default',
+  'settings.loading': 'Loading…',
+  'settings.cancel': 'Cancel',
+  'settings.save': 'Save',
+  'settings.saving': 'Saving…',
 
   'remote.publish': 'Publish branch',
   'remote.sync': 'Sync · {behind} to pull · {ahead} to push',
@@ -430,12 +481,16 @@ export const zh: typeof en = {
   'label.commit': '读取提交',
   'label.diff': '读取文件差异',
   'label.message': '生成提交信息',
+  'label.settings': '保存设置',
+  'label.settingsRead': '读取设置',
 
   'fallback.status': '读取仓库状态失败',
   'fallback.log': '读取提交历史失败',
   'fallback.diff': '读取 Diff 失败',
   'fallback.branches': '读取分支列表失败',
   'fallback.message': '生成提交信息失败',
+  'fallback.settings': '保存设置失败',
+  'fallback.settingsRead': '读取设置失败',
 
   'title.switchBranch': '切换到 {branch} 失败',
   'title.refresh': '刷新仓库失败',
@@ -450,6 +505,8 @@ export const zh: typeof en = {
   'title.branchCreate': '创建分支失败',
   'title.branchDelete': '删除分支失败',
   'title.message': '生成提交信息失败',
+  'title.settings': '保存设置失败',
+  'title.settingsRead': '读取设置失败',
 
   'dialog.close': '关闭',
   'dialog.ok': '知道了',
@@ -461,7 +518,9 @@ export const zh: typeof en = {
   // its Git command is called, and a translated row would name something the
   // reader cannot match to `git fetch`, `git pull` or `git merge`. The control
   // that opens the menu is not one of them — it is a row of the page's own, so
-  // `head.more` stays translated.
+  // `head.more` stays translated. The settings row keeps its English name for
+  // the same reason the card reads as one list; the dialog it opens still
+  // carries the translated title.
   'head.refresh': 'Refresh',
   'head.fetch': 'Fetch',
   'head.pull': 'Pull',
@@ -469,6 +528,25 @@ export const zh: typeof en = {
   'head.mergeFrom': 'Merge from…',
   'head.branchCreate': 'Branch create…',
   'head.branchDelete': 'Branch delete…',
+  'head.settings': 'Settings',
+
+  'settings.title': '设置',
+  'settings.description': '设置生成模型和提示词',
+  'settings.model': 'Message 生成模型',
+  'settings.modelDefaultUnknown': 'DSH 默认模型',
+  'settings.modelEmpty': '没有可用的模型',
+  'settings.modelUnavailable': '{model}（不可用）',
+  'settings.modelSearch': '搜索模型',
+  'settings.searchEmpty': '没有匹配的模型',
+  'settings.effort': '思考强度',
+  'settings.effortReadFailed': '读取思考强度失败',
+  'settings.prompt': 'Message 生成提示词',
+  'settings.promptHint': '每个工作区单独保存提示词；清空或恢复默认后使用内置提示词。',
+  'settings.promptReset': '恢复默认',
+  'settings.loading': '加载中…',
+  'settings.cancel': '取消',
+  'settings.save': '保存',
+  'settings.saving': '保存中…',
 
   'remote.publish': '发布分支',
   'remote.sync': '同步变更 · 待拉取 {behind} · 待推送 {ahead}',

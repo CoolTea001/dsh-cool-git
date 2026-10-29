@@ -2,12 +2,14 @@
  * The Host half's commit-message writer.
  *
  * The commit form's Generate control asks the Host for a message, and the Host
- * writes one with DSH's *current default model* rather than with a route of this
- * plugin's own: `agentDefaultModel` is where the deployment records which
- * provider, model, and reasoning effort a new conversation would run on, so the
- * message is written by the model the user is already paying for and switching
- * that default switches this too. Nothing here caches the selection — it is read
- * per request, exactly as the model picker reads it.
+ * writes one with the model and prompt this Workspace has chosen in Settings.
+ * When it has chosen neither, the call falls back to DSH's *current default
+ * model* — `agentDefaultModel` is where the deployment records which provider,
+ * model, and reasoning effort a new conversation would run on, so the message is
+ * written by the model the user is already paying for and switching that default
+ * switches this too — and to the built-in prompt in `shared/prompt.ts`. Nothing
+ * here caches either choice: both are read per request, exactly as the model
+ * picker and the Settings dialog read them.
  *
  * The material is the repository itself, read once through `readChangeDigest`:
  * the changed paths, the tracked patch with its `--stat`, the untracked files no
@@ -33,7 +35,8 @@
  * The prompt is two pieces of English copy this half owns rather than sentences
  * the page words in the active locale: the style the recent messages show, and the
  * project's commit rules (`AGENTS.md`) as the answer when that style cannot be
- * read.
+ * read. The system prompt itself lives in `shared/prompt.ts`, because the
+ * Settings dialog shows the same text as the built-in default.
  */
 import type { MessagePayload } from '../shared/contract.js';
 import { type GitTarget } from './git.js';
@@ -43,6 +46,14 @@ import { type GitTarget } from './git.js';
  * The order of the checks is the order the page can act on them: a working tree
  * with nothing changed is refused before any model is looked for, because a
  * missing model is not what the user needs to hear about a clean tree.
+ *
+ * The Workspace's own choices are read here rather than carried on the request.
+ * The page asks for a message and nothing else, so a stale tab cannot write with
+ * a model or prompt the Workspace has since changed, and a request forged from
+ * the same origin cannot point the model at text the Settings dialog never
+ * stored. Which Workspace that is, is the Host's answer: the registry's path
+ * when it can name one, and the repository root the digest just resolved
+ * otherwise.
  *
  * @param ctx - the Host plugin context.
  * @param target - the shell seam, the session's directory, and the file policy.
