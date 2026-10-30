@@ -5,7 +5,7 @@
  * `{ ok: false }` result the caller reports in the error dialog, so the page has
  * exactly one failure shape to render no matter how the answer went wrong.
  */
-import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type LogPayload, type MergePayload, type MessageModel, type MessagePayload, type ModelEffortsPayload, type SaveSettingsPayload, type SettingsPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type FetchUpstreamPayload, type LogPayload, type MergePayload, type MessageModel, type MessagePayload, type ModelEffortsPayload, type SaveSettingsPayload, type SettingsPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 /**
  * Ask the Host for the session's repository state and changed paths.
  *
@@ -197,6 +197,25 @@ export declare function mergeBranch(sessionId: string | undefined, branch: strin
  * @returns the fetch payload.
  */
 export declare function fetchRemotes(sessionId: string | undefined): Promise<FetchPayload>;
+/**
+ * Ask the Host to refresh just the current branch's upstream ref.
+ *
+ * The branch switch's follow-up rather than a reader's request: the counts the
+ * sync control draws compare the branch with its upstream, and only a fetch moves
+ * that ref. A switch re-reads the working tree but leaves the remote-tracking ref
+ * where the last fetch put it, so the page asks for this after a switch to find
+ * out whether the remote has anything new for the branch it just landed on.
+ *
+ * Every answer is quiet. `skipped` means there was nothing to refresh — no
+ * upstream, a detached HEAD — and an `ok: false` means the fetch could not reach
+ * the remote (offline, no credentials, a session that may not write `.git`); the
+ * caller keeps the counts it has and opens no dialog, because the switch itself
+ * already succeeded and was reported.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the fetch payload, with `skipped` when there was nothing to refresh.
+ */
+export declare function fetchBranchUpstream(sessionId: string | undefined): Promise<FetchUpstreamPayload>;
 /**
  * Ask the Host to fast-forward the current branch from its upstream.
  *

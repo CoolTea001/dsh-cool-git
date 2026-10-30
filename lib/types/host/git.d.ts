@@ -35,7 +35,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type FetchUpstreamPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
@@ -371,6 +371,32 @@ export declare function mergeBranch(target: GitTarget, name: string): Promise<Me
  * @returns the outcome, including the reason a fetch was refused.
  */
 export declare function fetchRemotes(target: GitTarget): Promise<FetchPayload>;
+/**
+ * Refresh just the current branch's upstream ref.
+ *
+ * The branch switch's own follow-up. A switch re-reads the working tree, but the
+ * ahead/behind counts the page draws are read from the local remote-tracking
+ * refs, and a checkout does not move those: a branch the remote has moved past
+ * would read as level with it until someone fetched. That is the one answer the
+ * sync control must not give, because it is what tells the reader whether the
+ * remote has changes for this branch at all.
+ *
+ * The fetch names the branch's own remote rather than every remote (`--all`) or
+ * a hand-built refspec: the upstream's short name is already known, but writing
+ * it as a refspec would mean re-deriving the remote's own fetch mapping, while
+ * naming the remote runs the configured refspecs and refreshes exactly the ref
+ * `@{upstream}` resolves to. Every other ref of that remote comes along, which is
+ * the same trade `fetchRemotes` makes for the whole repository.
+ *
+ * A repository with nothing to refresh — no commit, a detached HEAD, or a branch
+ * that tracks nothing — answers `skipped` rather than an error: this runs after a
+ * switch that has already been reported, and none of the three leaves the reader
+ * anything to act on.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the outcome, including `skipped` when there was nothing to fetch.
+ */
+export declare function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPayload>;
 /**
  * Pull the current branch from its upstream.
  *

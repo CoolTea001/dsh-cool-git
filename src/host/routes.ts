@@ -28,6 +28,7 @@ import {
   createBranch,
   deleteBranches,
   fetchRemotes,
+  fetchUpstream,
   mergeBranch,
   pullFromRemote,
   pushToRemote,
@@ -692,6 +693,16 @@ export function registerRoutes(ctx: any): () => void {
     // than by Git.
     route(ROUTES.fetch, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
       fetchRemotes(target))),
+
+    // The switch's own follow-up fetch. It is asked after a checkout, never by a
+    // row of the menu, so it names nothing: which branch and which remote to
+    // refresh are read from the repository the switch just left HEAD on. It is a
+    // write effect for the same reason `fetch` is — its refs live in `.git` — and
+    // a session that may not write there is refused by this route rather than by
+    // Git. A repository with nothing to refresh answers `skipped`, which the page
+    // treats as the quiet success it is.
+    route(ROUTES.fetchUpstream, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      fetchUpstream(target))),
 
     // The two remote operations name no arguments of their own: which branch,
     // which upstream, and which remote are all read from the repository by the

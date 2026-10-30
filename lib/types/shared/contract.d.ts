@@ -329,6 +329,24 @@ export interface FetchPayload {
      */
     readonly reason?: 'no-repo' | 'error' | 'denied' | 'auth';
 }
+/**
+ * `POST /fetch-upstream`: refreshing just the current branch's upstream ref.
+ *
+ * A fetch of its own rather than `POST /fetch`, because of where it runs: a
+ * branch switch already knows which branch it landed on, and the one ref the
+ * sync control's counts compare against is that branch's upstream. Naming the
+ * branch's own remote fetches every ref of that remote through the remote's
+ * configured refspecs, which is what makes the refreshed upstream identical to
+ * the one a plain `git fetch` would have written.
+ *
+ * Nothing to refresh is not a failure: no commit, a detached HEAD, and a branch
+ * that tracks nothing all answer `skipped`, because the caller is the switch's
+ * own follow-up and has no question to put to the reader in any of the three.
+ */
+export interface FetchUpstreamPayload extends FetchPayload {
+    /** There was nothing to refresh, so no remote was contacted. */
+    readonly skipped?: boolean;
+}
 /** `POST /pull` and `POST /push`: the outcome of one hand-off with the remote. */
 export interface SyncPayload {
     readonly ok: boolean;
@@ -622,6 +640,7 @@ export declare const ROUTES: {
     readonly checkout: "/dsh-cool-git/api/checkout";
     readonly merge: "/dsh-cool-git/api/merge";
     readonly fetch: "/dsh-cool-git/api/fetch";
+    readonly fetchUpstream: "/dsh-cool-git/api/fetch-upstream";
     readonly pull: "/dsh-cool-git/api/pull";
     readonly push: "/dsh-cool-git/api/push";
 };

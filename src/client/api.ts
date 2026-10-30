@@ -18,6 +18,7 @@ import {
   type DeleteBranchesPayload,
   type DiffPayload,
   type FetchPayload,
+  type FetchUpstreamPayload,
   type LogPayload,
   type MergePayload,
   type MessageModel,
@@ -316,6 +317,28 @@ export function mergeBranch(
  */
 export function fetchRemotes(sessionId: string | undefined): Promise<FetchPayload> {
   return postJson(ROUTES.fetch, { sessionId })
+}
+
+/**
+ * Ask the Host to refresh just the current branch's upstream ref.
+ *
+ * The branch switch's follow-up rather than a reader's request: the counts the
+ * sync control draws compare the branch with its upstream, and only a fetch moves
+ * that ref. A switch re-reads the working tree but leaves the remote-tracking ref
+ * where the last fetch put it, so the page asks for this after a switch to find
+ * out whether the remote has anything new for the branch it just landed on.
+ *
+ * Every answer is quiet. `skipped` means there was nothing to refresh — no
+ * upstream, a detached HEAD — and an `ok: false` means the fetch could not reach
+ * the remote (offline, no credentials, a session that may not write `.git`); the
+ * caller keeps the counts it has and opens no dialog, because the switch itself
+ * already succeeded and was reported.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the fetch payload, with `skipped` when there was nothing to refresh.
+ */
+export function fetchBranchUpstream(sessionId: string | undefined): Promise<FetchUpstreamPayload> {
+  return postJson(ROUTES.fetchUpstream, { sessionId })
 }
 
 /**

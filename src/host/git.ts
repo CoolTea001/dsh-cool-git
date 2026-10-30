@@ -57,6 +57,7 @@ import {
   type DiffPayload,
   type FailureCode,
   type FetchPayload,
+  type FetchUpstreamPayload,
   type LogPayload,
   type MergePayload,
   type StatusPayload,
@@ -2244,6 +2245,50 @@ function fetchFailure(run: GitRun): FetchPayload {
   if (auth !== null) return { ok: false, ...auth, reason: 'auth' }
 
   return { ok: false, ...refusalOf(run), reason: 'error' }
+}
+
+/**
+ * Refresh just the current branch's upstream ref.
+ *
+ * The branch switch's own follow-up. A switch re-reads the working tree, but the
+ * ahead/behind counts the page draws are read from the local remote-tracking
+ * refs, and a checkout does not move those: a branch the remote has moved past
+ * would read as level with it until someone fetched. That is the one answer the
+ * sync control must not give, because it is what tells the reader whether the
+ * remote has changes for this branch at all.
+ *
+ * The fetch names the branch's own remote rather than every remote (`--all`) or
+ * a hand-built refspec: the upstream's short name is already known, but writing
+ * it as a refspec would mean re-deriving the remote's own fetch mapping, while
+ * naming the remote runs the configured refspecs and refreshes exactly the ref
+ * `@{upstream}` resolves to. Every other ref of that remote comes along, which is
+ * the same trade `fetchRemotes` makes for the whole repository.
+ *
+ * A repository with nothing to refresh — no commit, a detached HEAD, or a branch
+ * that tracks nothing — answers `skipped` rather than an error: this runs after a
+ * switch that has already been reported, and none of the three leaves the reader
+ * anything to act on.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the outcome, including `skipped` when there was nothing to fetch.
+ */
+export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  if (!repo.hasHead) return { ok: true, skipped: true }
+
+  const root = inDir(target, repo.root)
+  if (await currentBranch(root) === null) return { ok: true, skipped: true }
+  const upstream = await upstreamOf(root)
+  if (upstream === undefined) return { ok: true, skipped: true }
+
+  const split = splitRemote(await remotesOf(root), upstream)
+  if (split === null) return { ok: true, skipped: true }
+
+  const run = await runGit(root, ['fetch', split.remote], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+  if (run.code !== 0) return fetchFailure(run)
+  return { ok: true }
 }
 
 /**

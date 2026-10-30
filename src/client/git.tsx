@@ -74,6 +74,7 @@ import {
   deleteBranches,
   fetchBranches,
   fetchBranchReport,
+  fetchBranchUpstream,
   fetchCommit,
   fetchDiff,
   fetchLog,
@@ -1031,6 +1032,30 @@ export function GitView(props: {
     void refresh()
   }, [refresh])
 
+  /**
+   * Refresh the upstream ref of the branch a switch just landed on.
+   *
+   * The re-read a switch starts paints the new branch at once, but its counts are
+   * read from the local remote-tracking refs, and a checkout does not move those:
+   * a branch the remote has moved past reads as level with it until someone
+   * fetches. So the switch follows its own re-read with one background fetch of
+   * that branch's upstream remote, and re-reads again once that fetch actually
+   * refreshed something — the counts the sync control draws are then about the
+   * remote as it is now, not as it was at the last manual Fetch.
+   *
+   * Every answer is quiet, refusals included: the switch itself already succeeded
+   * and is on screen, and a fetch that could not reach the network — offline, a
+   * credential the remote rejected, a session that may not write `.git` — is not
+   * a failure of the action the reader took, so it must not replace the page with
+   * a dialog. `skipped` means there was nothing to refresh at all.
+   */
+  const refreshUpstream = useCallback((): void => {
+    void fetchBranchUpstream(sessionId).then(result => {
+      if (result?.ok !== true || result.skipped === true) return
+      void refresh()
+    })
+  }, [sessionId, refresh])
+
   // A push moves nothing on disk: the branch, the changed paths and the patch on
   // screen are all still true. Only the divergence changed, so the selection is
   // kept and just the two answers are re-read.
@@ -1062,7 +1087,10 @@ export function GitView(props: {
   /**
    * Check out the branch the dialog confirmed.
    *
-   * A refusal is the error dialog's, like every other failure.
+   * A refusal is the error dialog's, like every other failure. A success takes
+   * the switch's own path and then asks the Host to refresh that branch's
+   * upstream, so the counts the page shows describe the remote rather than the
+   * last time someone fetched it.
    *
    * @param branch - the branch the user picked and confirmed.
    */
@@ -1075,8 +1103,9 @@ export function GitView(props: {
         return
       }
       handleSwitched()
+      refreshUpstream()
     })
-  }, [sessionId, handleSwitched, reportError, t])
+  }, [sessionId, handleSwitched, refreshUpstream, reportError, t])
 
   /**
    * Merge the branch the dialog confirmed into the branch HEAD is on.
@@ -1108,7 +1137,10 @@ export function GitView(props: {
    * the Host creates the ref and checks it out in one call, so the page's whole
    * part is the two names the dialog collected. It takes the checkout's path
    * afterwards for the checkout's reason — HEAD moved, so every answer on screen
-   * is stale. A refusal is the error dialog's.
+   * is stale — and then the same upstream refresh, because a branch started at a
+   * remote-tracking ref made that ref its upstream. A branch started at a local
+   * one has none, and the refresh then answers `skipped` without a network call.
+   * A refusal is the error dialog's.
    *
    * @param name - the branch to create.
    * @param start - the branch it starts at.
@@ -1122,8 +1154,9 @@ export function GitView(props: {
         return
       }
       handleSwitched()
+      refreshUpstream()
     })
-  }, [sessionId, handleSwitched, reportError, t])
+  }, [sessionId, handleSwitched, refreshUpstream, reportError, t])
 
   /**
    * Delete the branches the dialog confirmed, and report what became of each.
