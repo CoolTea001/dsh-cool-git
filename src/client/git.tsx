@@ -21,6 +21,13 @@
  * honest — it re-reads `status` and `log`, and the diff pane re-reads whatever
  * it is showing.
  *
+ * One consequence of that ownership is `cache.ts`'s business: the shell renders
+ * one View at a time, so switching tabs unmounts this page and its answers with
+ * it. The last repository answer is therefore cached per Workspace, and the
+ * reading position the reader left is kept per session below, so a return to
+ * this tab paints what they left and re-reads the repository behind it instead
+ * of starting again from its loading rows.
+ *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
  * could not answer, and a transport that never reached the Host all open that
@@ -80,6 +87,7 @@ import {
   pushBranch,
   saveSettings,
 } from './api.js'
+import { isSnapshotFresh, readRepositorySnapshot, writeRepositorySnapshot } from './cache.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
 import {
@@ -202,6 +210,67 @@ interface DocState {
   readonly binary?: boolean
   readonly commit?: CommitSummary & { readonly body: string }
   readonly merge?: boolean
+}
+
+/**
+ * What one session's page remembers between mounts.
+ *
+ * Only the page's own reading position: the row it had selected and the patch
+ * that row had loaded. The repository answers are `cache.ts`'s business; this is
+ * what makes a return to the tab feel like a return rather than a reload — the
+ * reader lands on the diff they were reading, drawn from the parsed patch they
+ * already had, while the page re-reads the repository around it.
+ */
+interface PageMemory {
+  readonly selection: Selection | null
+  readonly doc: DocState | null
+}
+
+/** The memory of a session whose page has not been open in this browser yet. */
+const EMPTY_PAGE_MEMORY: PageMemory = { selection: null, doc: null }
+
+/** How many sessions' reading positions the page keeps in memory. */
+const PAGE_MEMORY_LIMIT = 8
+
+/**
+ * The reading positions alive in this page, keyed by session.
+ *
+ * A tab switch is a remount, so a reader who leaves the tab mid-diff would
+ * otherwise find the pane empty on return. Keyed by session because a selection
+ * names rows of that session's repository answer, and bounded because a
+ * long-lived page visits sessions without ever unmounting the plugin.
+ */
+const pageMemories = new Map<string, PageMemory>()
+
+/**
+ * What one session's page last had selected, or the empty memory.
+ *
+ * @param sessionId - the session the page belongs to, when it named one.
+ * @returns the selection and patch to draw before anything is fetched.
+ */
+function readPageMemory(sessionId: string | undefined): PageMemory {
+  return pageMemories.get(sessionId ?? '') ?? EMPTY_PAGE_MEMORY
+}
+
+/**
+ * Record what one session's page is showing.
+ *
+ * Written from an effect on every selection and patch change rather than on
+ * unmount: a write here is one map assignment, and it must have happened by the
+ * time the View goes away — which an unmount cleanup cannot know is coming.
+ *
+ * @param sessionId - the session the page belongs to, when it named one.
+ * @param memory - the selection and patch to keep.
+ */
+function writePageMemory(sessionId: string | undefined, memory: PageMemory): void {
+  const key = sessionId ?? ''
+  // Re-inserted so the map's own order is least-recently-written first, which is
+  // what the bound below drops from.
+  pageMemories.delete(key)
+  pageMemories.set(key, memory)
+  if (pageMemories.size <= PAGE_MEMORY_LIMIT) return
+  const oldest = pageMemories.keys().next().value
+  if (oldest !== undefined) pageMemories.delete(oldest)
 }
 
 /** One line of the flattened diff the pane renders. */
@@ -703,11 +772,34 @@ export function GitView(props: {
   /** The sidebar itself, and the changed-path pane at the top of it. */
   const side = useRef<HTMLElement | null>(null)
   const filesPane = useRef<HTMLElement | null>(null)
+  /**
+   * Which repository read owns the page.
+   *
+   * Reads can overlap — a mount's background revalidation can be in flight when
+   * a checkout, a pull, or the Refresh button starts another — and the older one
+   * must not paint its answers over the newer one's, nor cache them: a snapshot
+   * written by a read that started first but finished last would be served as
+   * the newest answer on the next mount. Every read takes a number here and
+   * checks it when the answers arrive.
+   */
+  const readRun = useRef(0)
   const sessionId = typeof props?.sessionId === 'string' ? props.sessionId : undefined
 
-  const [status, setStatus] = useState<StatusPayload | null>(null)
-  const [log, setLog] = useState<LogPayload | null>(null)
-  const [loaded, setLoaded] = useState(false)
+  // Read during the first render, not from an effect: this is what lets a return
+  // to this tab draw its answer before anything runs. The snapshot is the
+  // repository state `cache.ts` saved for this session's Workspace the last time
+  // the page read it — from an earlier mount in this page, or from before a
+  // reload. The memory is the row and patch this session's page was showing.
+  //
+  // Reading storage here is the same trade `layout.tsx` makes for its saved
+  // boundaries: the alternative is one frame of the default, which for a diff
+  // pane is a flash of an empty page the reader did not ask for.
+  const cached = useMemo(() => readRepositorySnapshot(sessionId), [sessionId])
+  const remembered = useMemo(() => readPageMemory(sessionId), [sessionId])
+
+  const [status, setStatus] = useState<StatusPayload | null>(() => cached?.status ?? null)
+  const [log, setLog] = useState<LogPayload | null>(() => cached?.log ?? null)
+  const [loaded, setLoaded] = useState(() => cached !== null)
   const [refreshing, setRefreshing] = useState(false)
   /** Whether a fetch of the remote-tracking refs is in flight. */
   const [fetching, setFetching] = useState(false)
@@ -723,8 +815,8 @@ export function GitView(props: {
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   /** Whether the changed-path pane's commit is in flight. */
   const [committing, setCommitting] = useState(false)
-  const [selection, setSelection] = useState<Selection | null>(null)
-  const [doc, setDoc] = useState<DocState | null>(null)
+  const [selection, setSelection] = useState<Selection | null>(() => remembered.selection)
+  const [doc, setDoc] = useState<DocState | null>(() => remembered.doc)
   /** The failure the dialog is stating, or null while none is open. */
   const [error, setError] = useState<GitError | null>(null)
   /** The two boundaries' sizes, read from storage before the first paint. */
@@ -851,16 +943,44 @@ export function GitView(props: {
     setError(next)
   }, [])
 
-  /** Re-read the repository state and the history. */
+  /**
+   * Drop a file selection the newest status no longer lists.
+   *
+   * The selected row can leave the working tree while the tab is away — a
+   * commit, a revert, or the agent cleaning up after itself — and a path the
+   * repository no longer lists has no diff to show, so the selection goes with
+   * it rather than leaving the pane over a patch for a row that is gone. A
+   * commit selection is left alone: the history is bounded, and an older commit
+   * falling off the list is no evidence that it disappeared.
+   *
+   * @param status - the status answer to judge the selection against.
+   */
+  const pruneSelection = useCallback((status: StatusPayload | null): void => {
+    if (status?.ok !== true) return
+    const paths = new Set((status.files ?? []).map(file => file.path))
+    setSelection(current => current?.kind === 'file' && !paths.has(current.file.path) ? null : current)
+  }, [])
+
+  /** Re-read the repository state and the history, and cache both answers. */
   const refresh = useCallback(async (): Promise<void> => {
+    const run = ++readRun.current
     setRefreshing(true)
     try {
       const [nextStatus, nextLog] = await Promise.all([
         fetchStatus(sessionId),
         fetchLog(sessionId, LOG_LIMIT),
       ])
+      // A newer read took the page over while these answers were in flight, so
+      // this one paints and caches nothing: its answers describe a moment the
+      // page has already left.
+      if (run !== readRun.current) return
       setStatus(nextStatus)
       setLog(nextLog)
+      // The next mount of this tab — or a reload — reads these back instead of
+      // paying for the two calls again (see `cache.ts`). Written here, after the
+      // answers arrive, so what is saved is always an answer this page drew.
+      writeRepositorySnapshot(sessionId, nextStatus, nextLog)
+      pruneSelection(nextStatus)
       // Both reads can fail at once, and they usually fail for the same reason,
       // so the dialog states them together instead of one hiding the other.
       const lines: string[] = []
@@ -872,17 +992,31 @@ export function GitView(props: {
       }
       if (lines.length > 0) reportError({ title: t('title.refresh'), lines })
     } finally {
-      setRefreshing(false)
-      setLoaded(true)
+      // Only the read that still owns the page clears the wait: an overtaken
+      // read finishing later must not release a spinner the newer one is using.
+      if (run === readRun.current) {
+        setRefreshing(false)
+        setLoaded(true)
+      }
     }
-  }, [sessionId, reportError, t])
+  }, [pruneSelection, sessionId, reportError, t])
 
   // Mounting is the refresh trigger: the shell renders exactly one View at a
-  // time, so switching to this tab is what re-reads the repository. A session
-  // change (a new conversation) re-runs this through `refresh`'s identity.
+  // time, so switching to this tab is what re-reads the repository. A cached
+  // answer from a moment ago is the state the reader just left, so it serves the
+  // mount exactly as it was; anything older — or nothing at all — is re-read,
+  // which for a cached mount happens behind the answer already on screen rather
+  // than over the loading rows. A session change (a new conversation) re-runs
+  // this through `refresh`'s identity.
   useEffect(() => {
+    // A selection restored from memory belongs to an answer someone wrote for
+    // this Workspace — possibly another reader of the same repository — so it is
+    // judged against that answer before the diff effect asks the Host about a
+    // row this session's list may no longer hold.
+    if (cached !== null) pruneSelection(cached.status)
+    if (cached !== null && isSnapshotFresh(cached)) return
     void refresh()
-  }, [refresh])
+  }, [cached, pruneSelection, refresh])
 
   // A checkout replaces the working tree, so everything this page is showing is
   // stale at once: the branch, the changed paths, the history, and any patch the
@@ -1212,8 +1346,13 @@ export function GitView(props: {
       return
     }
     const key = selectionKey(selection)
+    const rememberedDoc = readPageMemory(sessionId).doc
     let cancelled = false
-    setDoc({ key, loading: true })
+    // A patch this session already had for this row stays on screen while it is
+    // re-read: the reader left the tab looking at it, and replacing it with a
+    // spinner would be this page forgetting something it still knows. Any other
+    // row starts loading, exactly as a click on it always has.
+    setDoc(rememberedDoc !== null && rememberedDoc.key === key ? rememberedDoc : { key, loading: true })
 
     const request = selection.kind === 'commit'
       ? fetchCommit(sessionId, selection.commit.hash)
@@ -1238,6 +1377,13 @@ export function GitView(props: {
       cancelled = true
     }
   }, [selection, activeFile, sessionId, reportError, t])
+
+  // Keep this session's reading position for the next mount. Written after the
+  // patch effect, so what is remembered is the patch that effect last left —
+  // including the cached one it restored rather than a spinner.
+  useEffect(() => {
+    writePageMemory(sessionId, { selection, doc })
+  }, [sessionId, selection, doc])
 
   const current = doc !== null && doc.key === selectionKey(selection) ? doc : null
 

@@ -18,7 +18,11 @@ const ICON_DIR = fileURLToPath(new URL('./src/client/assets', import.meta.url))
 const ICONS: Record<string, string> = {}
 for (const file of readdirSync(ICON_DIR)) {
   if (file.endsWith('.svg')) {
-    ICONS[file.replace(/\.svg$/, '')] = readFileSync(join(ICON_DIR, file), 'utf8')
+    // Newlines are normalized to LF here. The SVGs are checked in with LF and
+    // Git's autocrlf can hand this build CRLF; `JSON.stringify` would then embed
+    // those as `\r\n` escapes, and since `lib/client.js` is committed, the
+    // bundle's bytes would depend on the platform that rebuilt it.
+    ICONS[file.replace(/\.svg$/, '')] = readFileSync(join(ICON_DIR, file), 'utf8').replace(/\r\n/g, '\n')
   }
 }
 if (Object.keys(ICONS).length === 0) {
