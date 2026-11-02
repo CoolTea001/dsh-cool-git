@@ -1462,10 +1462,9 @@ export function GitView(props: {
             above both panes: what it commits is the changed-path pane's list, but
             what it acts on is the whole working tree, so it belongs to the column
             rather than to either pane. The form is `flex:none` so it keeps its rows
-            whatever height the panes are dragged to, and its own bottom hairline
-            is the one line above the Changed files header — nothing is drawn
-            between it and the toolbar, so the rows above that line read as one
-            block. */}
+            whatever height the panes are dragged to, and it draws no rule under
+            itself: the toolbar, the form, and the Changed files header beneath it
+            read as one block, with nothing cutting the column between them. */}
         <CommitBar
           t={t}
           disabled={status?.ok !== true || files.length === 0 || busy || refreshing}
@@ -2394,8 +2393,8 @@ function SettingsDialog(props: {
 /**
  * The sidebar's first row: the Workspace this session is in, the branch it is
  * on, and the More control every other operation hangs from. It draws no rule of
- * its own: the toolbar and the commit form under it are one block, closed
- * together by that form's own hairline.
+ * its own: the toolbar, the commit form under it, and the Changed files header
+ * under that are one block, with no hairline drawn anywhere between them.
  *
  * More is one control rather than a button per operation because the row has to
  * fit the sidebar's own floor: Refresh used to be the row's single icon, and the

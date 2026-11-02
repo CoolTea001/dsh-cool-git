@@ -195,15 +195,15 @@ const GIT_CSS = [
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
   // beside it, and then the one control the row keeps — More. It draws no rule of
-  // its own: the toolbar and the commit form below it are one block of the column,
-  // closed together by the form's own hairline (see `.dsh-cg-commit-bar`). Each
-  // name carries its own glyph (a directory for the Workspace, a forked commit for
-  // the branch), so the row states which is which without either label having to
-  // say it; the control is an icon rather than a word because it has to fit the row
-  // at its narrowest, which is the sidebar's own floor — the operations behind it
-  // are named in the menu, which can afford to be as wide as its words. The remote
-  // control is not here: it lives in Commit history's header, beside the commits it
-  // moves.
+  // its own: the toolbar, the commit form below it, and the Changed files header
+  // under that are one block of the column, with no hairline anywhere between them
+  // (see `.dsh-cg-commit-bar`). Each name carries its own glyph (a directory for
+  // the Workspace, a forked commit for the branch), so the row states which is
+  // which without either label having to say it; the control is an icon rather than
+  // a word because it has to fit the row at its narrowest, which is the sidebar's
+  // own floor — the operations behind it are named in the menu, which can afford to
+  // be as wide as its words. The remote control is not here: it lives in Commit
+  // history's header, beside the commits it moves.
   //
   // Two of the row's parts may give ground, and the branch's name goes first: the
   // pill is the row's own item rather than a member of the group beside it, because
@@ -593,10 +593,11 @@ const GIT_CSS = [
   '.dsh-cg-settings-reset:hover:not(:disabled){text-decoration:underline}',
   '.dsh-cg-settings-reset:disabled{color:var(--dsw-alias-label-dimmed);cursor:default}',
 
-  // The commit form: the sidebar's own row under the toolbar, closed by the one
-  // hairline that separates the column's top block — toolbar and form together —
-  // from the two panes below. Nothing is drawn between the toolbar and the field,
-  // so the three of them read as one block.
+  // The commit form: the sidebar's own row under the toolbar, ending where its own
+  // padding does. Neither the form nor the toolbar above it draws a rule, so the
+  // column reads as one block down to the Changed files header — that header names
+  // the pane under it, which is boundary enough; a hairline there only cut the
+  // column in two.
   //
   // Two stacked full-width rows rather than one line, because the sidebar is
   // narrow: a field sharing a line with the button would be a field too small to
@@ -631,7 +632,7 @@ const GIT_CSS = [
   // sized against, so neither the square nor the button can make the form taller
   // than the field it belongs to. Four of those lines is the 86px past which the
   // field scrolls instead of pushing the Changed files pane down the column.
-  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px 8px;border-bottom:.5px solid var(--dsw-alias-border-l3)}',
+  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px}',
   // The frame draws the field and holds the Generate glyph, and the two are laid
   // out independently: the field is the frame's only box in flow and spans it
   // whole, and the glyph is positioned against the frame's own corner. That is
