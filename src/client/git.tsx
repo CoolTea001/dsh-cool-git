@@ -6,9 +6,9 @@
  * Changed paths come from `git status`, the history from `git log`, and the
  * diff pane shows one side of one path's change — the index against HEAD, or the
  * worktree against the index — or one commit's whole patch (see `api.ts` for the
- * routes and `diff.ts` for the patch parser). The list draws one tree at a time —
- * the worktree's changes by default or the index's — chosen from its header. The
- * conflict list is withheld until the page can resolve one (see `VisibleSide`).
+ * routes and `diff.ts` for the patch parser). The pane stacks the index's half
+ * above the worktree's, each a disclosure of its own, and the conflict list is
+ * withheld until the page can resolve one (see `VisibleSide`).
  * A row's trailing `+` or `−` moves its path between the two lists. The
  * sidebar's second row is the commit form — a message field, a button
  * whose scope is the index or the whole tree, and the caret that switches between
@@ -281,7 +281,7 @@ type DiscardRequest =
  * untracked path is in neither porcelain column but is a worktree change, so it
  * belongs to the unstaged list. A conflicted path is neither side: `git add`
  * would mark it resolved, so it is classified as the conflict list — which the
- * header withholds until the page can resolve one (see `VisibleSide`).
+ * pane withholds until the page can resolve one (see `VisibleSide`).
  *
  * @param file - one changed path.
  * @returns the groups that list it, in sidebar order.
@@ -295,18 +295,16 @@ function sidesOf(file: ChangedFile): readonly DiffSide[] {
 }
 
 /**
- * Whether one path is drawn in the changed-path list on screen.
+ * Whether one path belongs in one of the pane's lists.
  *
- * The pane draws one list at a time — the worktree's changes by default — and this
- * decides which paths belong in it. A path that holds both halves is in both
- * lists: the index holds one version of it and the worktree another, and each
- * list states one of them.
+ * A path that holds both halves is in both lists: the index holds one version of
+ * it and the worktree another, and each list states one of them.
  *
  * @param file - one changed path.
- * @param side - the list the pane is showing.
+ * @param side - the list to test.
  * @returns true when the path has that half.
  */
-function inFilter(file: ChangedFile, side: DiffSide): boolean {
+function inList(file: ChangedFile, side: DiffSide): boolean {
   return sidesOf(file).includes(side)
 }
 
@@ -324,31 +322,34 @@ interface DocState {
 }
 
 /**
- * The changed-path lists the header offers.
+ * The two changed-path lists the pane draws.
  *
- * The conflict list is deliberately absent. The page can show an unmerged path's
- * combined diff, but it has no way to resolve one: `git merge` aborts a
+ * Both are drawn together — the index's half above the worktree's — and each is
+ * a disclosure of its own, so the reader can fold one away while reading the
+ * other. The conflict list is deliberately absent. The page can show an unmerged
+ * path's combined diff, but it has no way to resolve one: `git merge` aborts a
  * conflicting merge (see `mergeBranch` in the Host), and a conflicted row
- * therefore carries no action. Offering a list whose rows only restate Git's
+ * therefore carries no action. Drawing a list whose rows only restate Git's
  * state, and whose count is always zero for a merge this page started, promises
- * a resolver that does not exist yet. The list is one entry in `filterItems`
- * away from returning once one does; `DiffSide`, the Host's `conflict` diff, and
- * the sidebar's classification all stay in place for it.
+ * a resolver that does not exist yet. The list is one entry in `SIDES` away from
+ * returning once one does; `DiffSide`, the Host's `conflict` diff, and the
+ * sidebar's classification all stay in place for it.
  */
 type VisibleSide = Exclude<DiffSide, 'conflict'>
+
+/** The lists the pane draws, in the order it draws them: the index first. */
+const SIDES: readonly VisibleSide[] = ['staged', 'unstaged']
 
 /**
  * What one session's page remembers between mounts.
  *
- * Only the page's own reading position: the list it had open, the row it had
- * selected and the patch that row had loaded. The repository answers are
- * `cache.ts`'s business; this is what makes a return to the tab feel like a
- * return rather than a reload — the reader lands on the list and diff they were
- * reading, drawn from the parsed patch they already had, while the page re-reads
- * the repository around it.
+ * Only the page's own reading position: the row it had selected and the patch
+ * that row had loaded. The repository answers are `cache.ts`'s business; this is
+ * what makes a return to the tab feel like a return rather than a reload — the
+ * reader lands on the diff they were reading, drawn from the parsed patch they
+ * already had, while the page re-reads the repository around it.
  */
 interface PageMemory {
-  readonly filter: VisibleSide
   readonly selection: Selection | null
   readonly doc: DocState | null
 }
@@ -356,11 +357,10 @@ interface PageMemory {
 /**
  * The memory of a session whose page has not been open in this browser yet.
  *
- * The worktree's list is the one it opens on: the page exists to stage and
- * commit, and the changes still waiting in the worktree are what that starts
- * from — the index is one choice away in the header.
+ * Nothing is selected: both lists are drawn from the start, and the reader
+ * starts from the changes rather than from a patch they did not pick.
  */
-const EMPTY_PAGE_MEMORY: PageMemory = { filter: 'unstaged', selection: null, doc: null }
+const EMPTY_PAGE_MEMORY: PageMemory = { selection: null, doc: null }
 
 /** How many sessions' reading positions the page keeps in memory. */
 const PAGE_MEMORY_LIMIT = 8
@@ -863,7 +863,8 @@ function compareTreeNames(left: string, right: string): number {
  * padding computed here, so the row's spacing stays beside the rest of the
  * tree's rules in `styles.ts` and a change of step is one declaration.
  *
- * @param depth - how many folder rows the row sits under.
+ * @param depth - the row's level in the tree; a group header is 0 and its
+ *   children start at 1.
  * @returns the row's style.
  */
 function treeDepth(depth: number): CSSProperties {
@@ -881,16 +882,16 @@ function refLabel(ref: string): string {
 }
 
 /**
- * One pane header's text: its label, and how many rows it is showing.
+ * One header's text: its label, and how many rows it is showing.
  *
  * The count is part of the line rather than a badge of its own, so the header
  * reads as one sentence and stays one line however narrow the sidebar gets —
  * the whole thing truncates as a unit instead of the count leaving first. It is
- * written even at zero, because an empty pane and a pane the page never filled
- * are two different states and only the count tells them apart.
+ * written even at zero, because a pane or group that is empty and one the page
+ * never filled are two different states and only the count tells them apart.
  *
- * @param label - the pane's name, already worded by the page's dictionary.
- * @param count - the rows the pane drew.
+ * @param label - the header's name, already worded by the page's dictionary.
+ * @param count - the rows under it.
  * @returns the header's text.
  */
 function headText(label: string, count: number): string {
@@ -1015,10 +1016,6 @@ export function GitView(props: {
   const [discarding, setDiscarding] = useState<string | null>(null)
   /** The row or folder the discard dialog is asking about, or null while none is open. */
   const [discardTarget, setDiscardTarget] = useState<DiscardRequest | null>(null)
-  /** Which list the changed-path pane is showing. */
-  const [changeFilter, setChangeFilter] = useState<VisibleSide>(() => remembered.filter)
-  /** Whether the header's list menu is showing. */
-  const [filterOpen, setFilterOpen] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(() => remembered.selection)
   const [doc, setDoc] = useState<DocState | null>(() => remembered.doc)
   /** The failure the dialog is stating, or null while none is open. */
@@ -1617,9 +1614,9 @@ export function GitView(props: {
       if (result.status === undefined) return
       setStatus(result.status)
       writeRepositorySnapshot(sessionId, result.status, log)
-      // The selection is not moved here: the list filter decides which half is
-      // drawn, and the effect above follows the path to it — or closes the pane
-      // when the new half is not in the list that is showing.
+      // The selection is not moved here: both halves are drawn, and the effect
+      // above follows the path to the half it still has — or closes the pane
+      // when it is no longer in either list.
     })
   }, [sessionId, staging, discarding, log, refresh, reportError, t])
 
@@ -1656,16 +1653,18 @@ export function GitView(props: {
   }, [sessionId, staging, discarding, log, refresh, reportError, t])
 
   /**
-   * Move the whole list on screen between the index and the worktree.
+   * Move one whole half of the changed-path pane between the index and the
+   * worktree.
    *
    * The request names no path: the Host resolves the side it acts on from the
-   * status it reads inside its write queue, so the header action covers every
-   * row the list holds without sending a tree of paths across the body.
+   * status it reads inside its write queue, so the group header covers every row
+   * that half holds without sending a tree of paths across the body. The half is
+   * the whole side, so the Host's routes for it match the group exactly.
    *
-   * @param side - the list the header is showing: staged unstages, unstaged stages.
+   * @param side - the half the group names: staged unstages, unstaged stages.
    */
-  const handleStageAll = useCallback((side: DiffSide): void => {
-    if (side === 'conflict' || staging !== null || discarding !== null) return
+  const handleStageAll = useCallback((side: VisibleSide): void => {
+    if (staging !== null || discarding !== null) return
     setStaging(`${side}:`)
     const request = side === 'staged' ? unstageAll(sessionId) : stageAll(sessionId)
     void request.then(result => {
@@ -1714,7 +1713,7 @@ export function GitView(props: {
   /**
    * Ask before discarding every unstaged change in the repository.
    *
-   * @param count - how many changed files the list on screen held.
+   * @param count - how many changed files the unstaged group held.
    * @param untracked - whether any of them will be deleted rather than restored.
    */
   const handleDiscardAll = useCallback((count: number, untracked: boolean): void => {
@@ -1812,42 +1811,26 @@ export function GitView(props: {
   // committed until it is resolved — and the list that would hold it is withheld.
   const stagedCount = files.filter(file => file.staged && !file.conflicted).length
   const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
-  /** How many rows the list on screen holds, for its header. */
-  const filterCount = changeFilter === 'staged' ? stagedCount : unstagedCount
-  /** Whether the list on screen holds an untracked path, for the discard warning. */
-  const filterUntracked = files.some(file => inFilter(file, changeFilter) && file.untracked)
-  /** The header's own label: the list it is showing and how many rows it holds. */
-  const filterLabel = headText(t(GROUP_KEY[changeFilter]), filterCount)
-  // Each row carries its own list's count, including the list a reader is not in:
-  // the numbers are how the choice is made. A list with nothing in it is disabled
-  // rather than hidden, so the menu always states the same two things. The
-  // conflict list is not one of them while the page cannot resolve a conflict
-  // (see `VisibleSide`).
-  const filterItems: readonly MenuEntry[] = [
-    { id: 'staged', label: headText(t('stage.staged'), stagedCount), disabled: stagedCount === 0 },
-    { id: 'unstaged', label: headText(t('stage.unstaged'), unstagedCount), disabled: unstagedCount === 0 },
-  ]
 
-  // Keep the selected row meaningful in the list that is showing: a filter names
-  // the halves it draws, so a selection whose half is no longer drawn — because
-  // the list was switched, or because the path moved between halves — follows the
-  // path to the half the filter does draw, or closes when the list no longer
-  // holds it. A filtered-out path is not a failure, so the diff pane simply goes
-  // back to its empty state.
+  // Keep the selected row meaningful while both lists are drawn. A stage or
+  // unstage moves the path from one half to the other rather than out of the
+  // pane, so the selection follows it to the half that still holds it; a path
+  // that left every list — discarded, committed, or now conflicted — closes the
+  // diff, which is not a failure: the pane simply goes back to its empty state.
   useEffect(() => {
     if (status?.ok !== true) return
     setSelection(current => {
       if (current?.kind !== 'file') return current
       const file = files.find(candidate => candidate.path === current.file.path)
       if (file === undefined) return null
-      const side = inFilter(file, changeFilter) ? changeFilter : undefined
-      if (side === undefined) return null
-      // The side is what the pane is showing; a refresh that leaves it the same
-      // must not restate the selection, or every re-read would reload the patch
-      // under a reader who did not ask for it.
-      return side === current.side ? current : { kind: 'file', file, side }
+      // A refresh that leaves the half the same must not restate the selection,
+      // or every re-read would reload the patch under a reader who did not ask
+      // for it.
+      if (current.side !== 'conflict' && inList(file, current.side)) return current
+      const side = SIDES.find(candidate => inList(file, candidate))
+      return side === undefined ? null : { kind: 'file', file, side }
     })
-  }, [files, changeFilter, status])
+  }, [files, status])
 
   // Re-resolve a selected path against the newest `status`, so a refresh picks
   // up its stage flags while the selection itself survives the round trip.
@@ -1901,8 +1884,8 @@ export function GitView(props: {
   // patch effect, so what is remembered is the patch that effect last left —
   // including the cached one it restored rather than a spinner.
   useEffect(() => {
-    writePageMemory(sessionId, { filter: changeFilter, selection, doc })
-  }, [sessionId, changeFilter, selection, doc])
+    writePageMemory(sessionId, { selection, doc })
+  }, [sessionId, selection, doc])
 
   const current = doc !== null && doc.key === selectionKey(selection) ? doc : null
 
@@ -1949,9 +1932,8 @@ export function GitView(props: {
             its scope belongs to the form as a whole, so it belongs to the column
             rather than to either pane. The form is `flex:none` so it keeps its
             rows whatever height the panes are dragged to, and it draws no rule
-            under itself: the toolbar, the form, and the Changed files header
-            beneath it read as one block, with nothing cutting the column between
-            them. */}
+            under itself: the toolbar, the form, and the changed-path rows beneath
+            it read as one block, with nothing cutting the column between them. */}
         <CommitBar
           t={t}
           disabled={status?.ok !== true || busy || refreshing}
@@ -1968,96 +1950,17 @@ export function GitView(props: {
             edge rather than between the panes, so the split takes no layout of its
             own and the panes stay the only flow children of the column. */}
         <section ref={filesPane} className="dsh-cg-pane dsh-cg-files">
-          <header className="dsh-cg-head">
-            {/* The header is the list's switch, not a caption: the pane draws one
-                tree at a time, and this is where a reader moves between the
-                worktree's changes and the index's. The label carries the current
-                list's count, so the count and the tree below it always describe
-                the same thing. The conflict list is withheld (see `VisibleSide`). */}
-            <Menu
-              open={filterOpen}
-              anchor={(
-                <button
-                  type="button"
-                  className="dsh-cg-filter"
-                  aria-haspopup="menu"
-                  aria-expanded={filterOpen}
-                  aria-label={filterLabel}
-                  onClick={() => setFilterOpen(value => !value)}
-                >
-                  <span className="dsh-cg-filter-label">{filterLabel}</span>
-                  <span className="dsh-cg-filter-chevron" aria-hidden="true"><IconChevronDown /></span>
-                </button>
-              )}
-              items={filterItems}
-              selectedId={changeFilter}
-              onSelect={id => {
-                setFilterOpen(false)
-                if (id === 'staged' || id === 'unstaged') {
-                  setChangeFilter(id)
-                }
-              }}
-              onClose={() => setFilterOpen(false)}
-              align="start"
-              side="bottom"
-              className="dsh-cg-filter-anchor"
-            />
-            {/* The header's bulk actions are the row actions' own glyphs, doing
-                what the rows below do to every row the list holds. They share the
-                row controls' reveal: absent at rest, present when the header is
-                hovered or holds focus. */}
-            <span className="dsh-cg-head-actions">
-              {changeFilter === 'unstaged'
-                ? (
-                  <Tooltip
-                    label={t('stage.discardAll')}
-                    side="top"
-                    delayMs={TOOLTIP_DELAY_MS}
-                    portal
-                    maxWidth={TOOLTIP_MAX_WIDTH}
-                  >
-                    <button
-                      type="button"
-                      className="dsh-cg-row-action"
-                      aria-label={t('stage.discardAll')}
-                      data-busy={discarding === 'unstaged:'}
-                      disabled={filterCount === 0 || staging !== null || discarding !== null}
-                      onClick={() => handleDiscardAll(filterCount, filterUntracked)}
-                    >
-                      {discarding === 'unstaged:' ? SPINNER_ICON : <IconDiscard />}
-                    </button>
-                  </Tooltip>
-                )
-                : null}
-              <Tooltip
-                label={t(changeFilter === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
-                side="top"
-                delayMs={TOOLTIP_DELAY_MS}
-                portal
-                maxWidth={TOOLTIP_MAX_WIDTH}
-              >
-                <button
-                  type="button"
-                  className="dsh-cg-row-action"
-                  aria-label={t(changeFilter === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
-                  data-busy={staging === `${changeFilter}:`}
-                  disabled={filterCount === 0 || staging !== null || discarding !== null}
-                  onClick={() => handleStageAll(changeFilter)}
-                >
-                  {staging === `${changeFilter}:`
-                    ? SPINNER_ICON
-                    : changeFilter === 'staged' ? <IconMinus /> : <IconPlus />}
-                </button>
-              </Tooltip>
-            </span>
-          </header>
+          {/* The pane draws both halves at once, each under its own disclosure
+              (see `ChangeList`): the index's rows above the worktree's, so a
+              reader can stage from the same screen they commit from. There is no
+              pane-level title and no switch; the two group headers are the
+              pane's structure, and each carries its own count and bulk actions. */}
           <div className="dsh-cg-list">
             <ChangeList
               t={t}
               status={status}
               loaded={loaded}
               files={files}
-              side={changeFilter}
               selection={selection}
               staging={staging}
               discarding={discarding}
@@ -2066,6 +1969,8 @@ export function GitView(props: {
               onDiscard={handleDiscard}
               onToggleFolderStage={handleStageFolder}
               onDiscardFolder={handleDiscardFolder}
+              onStageAll={handleStageAll}
+              onDiscardAll={handleDiscardAll}
             />
           </div>
           <ResizeHandle
@@ -3035,7 +2940,7 @@ function SettingsDialog(props: {
 /**
  * The sidebar's first row: the Workspace this session is in, the branch it is
  * on, and the More control every other operation hangs from. It draws no rule of
- * its own: the toolbar, the commit form under it, and the Changed files header
+ * its own: the toolbar, the commit form under it, and the changed-path groups
  * under that are one block, with no hairline drawn anywhere between them.
  *
  * More is one control rather than a button per operation because the row has to
@@ -4762,31 +4667,34 @@ function CommitBar(props: {
 }
 
 /**
- * The changed-path tree for the list the header is showing.
+ * The changed-path pane: both halves, stacked.
  *
- * One tree at a time: the header's menu picks the list, and this component draws
- * exactly that. A path staged and edited again is one row in each list — the
- * worktree's row offers `+`, which stages what the reader is looking at, and the
- * index's offers `−` — so switching lists is how a reader moves between the
- * halves, rather than reading two stacked trees that scroll and collapse
- * independently.
+ * The index's rows come first, under `Staged changes`, then the worktree's under
+ * `Changes` — the order a commit reads in, and the order the old list switch
+ * cycled through. Drawing both at once means a reader can see what is already
+ * staged while staging the rest, and a path that is both staged and edited again
+ * is one row under each header: the worktree's row offers `+`, the index's `−`.
  *
- * Within the list the paths are grouped by directory rather than listed flat, so
- * a run of files from one directory reads as one block and the directory is
- * named once above them instead of on every row. A directory that only holds the
- * next directory is folded into it (`buildFileTree` explains the rule), so the
- * tree spends its rows on the directories a reader can actually stop at. Folders
- * open by default — the pane exists to show what changed, and a reader who has
- * just opened the tab should not have to unfold every directory to find out. A
- * folder the reader closes stays closed across status refreshes, which is why the
- * closed set lives here rather than being derived from the answer; one that
- * disappears simply stops being drawn, and a new one arrives open.
+ * Each half is a disclosure of its own (`ChangeGroup`): folding one away is how
+ * the reader makes room for the other without the pane forgetting that it is
+ * there. Within a half the paths are grouped by directory rather than listed
+ * flat, so a run of files from one directory reads as one block and the
+ * directory is named once above them instead of on every row. A directory that
+ * only holds the next directory is folded into it (`buildFileTree` explains the
+ * rule), so the tree spends its rows on the directories a reader can actually
+ * stop at.
+ *
+ * Groups and folders open by default — the pane exists to show what changed,
+ * and a reader who has just opened the tab should not have to unfold every
+ * directory to find out. A group or folder the reader closes stays closed across
+ * status refreshes, which is why the closed sets live here rather than being
+ * derived from the answer; one that disappears simply stops being drawn, and a
+ * new one arrives open.
  *
  * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
  * @param props.loaded - at least one answer has arrived.
- * @param props.files - every changed path; the list picks the rows to draw.
- * @param props.side - which list the header is showing.
+ * @param props.files - every changed path; each half picks its own rows.
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
@@ -4795,6 +4703,8 @@ function CommitBar(props: {
  * @param props.onDiscard - opens the confirmation for one row's worktree change.
  * @param props.onToggleFolderStage - moves every path under one folder in or out of the index.
  * @param props.onDiscardFolder - opens the confirmation for one folder's worktree changes.
+ * @param props.onStageAll - moves one whole half in or out of the index.
+ * @param props.onDiscardAll - opens the confirmation for every worktree change.
  * @returns the list body.
  */
 function ChangeList(props: {
@@ -4802,7 +4712,6 @@ function ChangeList(props: {
   readonly status: StatusPayload | null
   readonly loaded: boolean
   readonly files: readonly ChangedFile[]
-  readonly side: VisibleSide
   readonly selection: Selection | null
   readonly staging: string | null
   readonly discarding: string | null
@@ -4811,25 +4720,46 @@ function ChangeList(props: {
   readonly onDiscard: (file: ChangedFile) => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
+  readonly onStageAll: (side: VisibleSide) => void
+  readonly onDiscardAll: (count: number, untracked: boolean) => void
 }): ReactElement {
   const {
-    t, status, loaded, files, side, selection, staging, discarding, onSelect, onToggleStage, onDiscard,
-    onToggleFolderStage, onDiscardFolder,
+    t, status, loaded, files, selection, staging, discarding, onSelect, onToggleStage, onDiscard,
+    onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
   } = props
 
-  /** The folders the reader closed, keyed by their repository-relative path. */
+  /** The groups the reader closed. */
+  const [closedSides, setClosedSides] = useState<ReadonlySet<VisibleSide>>(() => new Set())
+  /**
+   * The folders the reader closed, keyed by `side:path`.
+   *
+   * The side is part of the key because both halves are on screen at once: the
+   * same directory can hold an index row and a worktree row, and closing one
+   * tree must not close the other.
+   */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
-  // Built only when the answer or the list changes: a status refresh rebuilds the
-  // tree, while a selection or an indentation change leaves it alone.
-  const visible = useMemo(() => files.filter(file => inFilter(file, side)), [files, side])
-  const tree = useMemo(() => buildFileTree(visible), [visible])
+  // Split once per status answer: a refresh rebuilds both trees, while a
+  // selection or an indentation change leaves them alone.
+  const visible = useMemo(() => ({
+    staged: files.filter(file => inList(file, 'staged')),
+    unstaged: files.filter(file => inList(file, 'unstaged')),
+  }), [files])
 
-  const toggleFolder = useCallback((path: string): void => {
+  const toggleSide = useCallback((side: VisibleSide): void => {
+    setClosedSides(previous => {
+      const next = new Set(previous)
+      if (next.has(side)) next.delete(side)
+      else next.add(side)
+      return next
+    })
+  }, [])
+
+  const toggleFolder = useCallback((key: string): void => {
     setCollapsed(previous => {
       const next = new Set(previous)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }, [])
@@ -4840,7 +4770,9 @@ function ChangeList(props: {
     return <Note text={t(status.reason === 'no-repo' ? 'list.notRepo' : 'list.statusFailed')} />
   }
   if (!loaded && status === null) return <Note text={t('list.loading')} />
-  if (files.length === 0) return <></>
+  // A clean tree still draws both groups, each at zero: the two headings are the
+  // pane's structure, and a blank panel would leave the reader unable to tell a
+  // clean tree from a list that has not arrived.
 
   // The conflict list is withheld until the page can resolve one (see
   // `VisibleSide`). An unmerged path would otherwise simply vanish from every
@@ -4850,15 +4782,16 @@ function ChangeList(props: {
   return (
     <>
       {conflicted ? <Note text={t('list.conflictsHidden')} /> : null}
-      {tree.folders.map(folder => (
-        <FolderBranch
-          key={folder.path}
+      {SIDES.map(side => (
+        <ChangeGroup
+          key={side}
           t={t}
-          folder={folder}
           side={side}
-          depth={0}
+          files={visible[side]}
+          open={!closedSides.has(side)}
+          onToggle={() => toggleSide(side)}
           collapsed={collapsed}
-          onToggle={toggleFolder}
+          onToggleFolder={toggleFolder}
           selection={selection}
           staging={staging}
           discarding={discarding}
@@ -4867,24 +4800,182 @@ function ChangeList(props: {
           onDiscard={onDiscard}
           onToggleFolderStage={onToggleFolderStage}
           onDiscardFolder={onDiscardFolder}
-        />
-      ))}
-      {tree.files.map(file => (
-        <ChangeRow
-          key={file.path}
-          t={t}
-          file={file}
-          side={side}
-          depth={0}
-          selection={selection}
-          staging={staging}
-          discarding={discarding}
-          onSelect={onSelect}
-          onToggleStage={onToggleStage}
-          onDiscard={onDiscard}
+          onStageAll={() => onStageAll(side)}
+          onDiscardAll={onDiscardAll}
         />
       ))}
     </>
+  )
+}
+
+/**
+ * The header is the tree's root, styled and behaving like a folder row: the same
+ * height, type, chevron, hover fill and trailing actions. Its children — the root
+ * folders and the files that sit at the repository root — start one indentation
+ * step in (`depth` 1), so the two groups and the trees under them read as one
+ * tree rather than as two headings above two separate trees.
+ *
+ * The header is a disclosure button across the whole width — the row is the
+ * target, not a chevron beside it — and it carries the half's count, so the
+ * header and the rows under it always describe the same thing. Its trailing
+ * actions are the row actions' own glyphs, standing for the whole half: the
+ * index's offers `−` (unstage), the worktree's offers discard and `+`. They
+ * share the rows' reveal and are siblings of the disclosure button, never
+ * children of it: a button inside a button is invalid markup, and its clicks
+ * would bubble as a fold.
+ *
+ * A group action covers paths the reader cannot see as well as the ones on
+ * screen — a closed folder or a folded group is still part of what `+` and `−`
+ * mean. The Host re-reads the status inside its write queue, so the request
+ * names no paths at all and the counts here are context rather than a list.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.side - the half this group draws.
+ * @param props.files - the paths in that half.
+ * @param props.open - whether the group is unfolded.
+ * @param props.onToggle - asks the page to fold or unfold the group.
+ * @param props.collapsed - the folders the reader closed, keyed by `side:path`.
+ * @param props.onToggleFolder - asks the page to flip one folder.
+ * @param props.selection - the current selection, for the selected row's state.
+ * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.discarding - the row whose discard is in flight, as `side:path`.
+ * @param props.onSelect - called with the file and the half the reader picked.
+ * @param props.onToggleStage - moves one row's path in or out of the index.
+ * @param props.onDiscard - opens the confirmation for one row's worktree change.
+ * @param props.onToggleFolderStage - moves every path under one folder in or out of the index.
+ * @param props.onDiscardFolder - opens the confirmation for one folder's worktree changes.
+ * @param props.onStageAll - moves the whole half in or out of the index.
+ * @param props.onDiscardAll - opens the confirmation for the half's worktree changes.
+ * @returns the group.
+ */
+function ChangeGroup(props: {
+  readonly t: Translate
+  readonly side: VisibleSide
+  readonly files: readonly ChangedFile[]
+  readonly open: boolean
+  readonly onToggle: () => void
+  readonly collapsed: ReadonlySet<string>
+  readonly onToggleFolder: (key: string) => void
+  readonly selection: Selection | null
+  readonly staging: string | null
+  readonly discarding: string | null
+  readonly onSelect: (file: ChangedFile, side: DiffSide) => void
+  readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
+  readonly onDiscard: (file: ChangedFile) => void
+  readonly onToggleFolderStage: (path: string, side: DiffSide) => void
+  readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
+  readonly onStageAll: () => void
+  readonly onDiscardAll: (count: number, untracked: boolean) => void
+}): ReactElement {
+  const {
+    t, side, files, open, onToggle, collapsed, onToggleFolder, selection, staging, discarding,
+    onSelect, onToggleStage, onDiscard, onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
+  } = props
+
+  const tree = useMemo(() => buildFileTree(files), [files])
+  const count = files.length
+  const untracked = files.some(file => file.untracked)
+  const actionsBusy = staging !== null || discarding !== null
+  const stageBusy = staging === `${side}:`
+  const discardBusy = discarding === 'unstaged:'
+  const actions = side === 'staged' ? 'stage' : 'both'
+
+  return (
+    <section className="dsh-cg-group">
+      <div className="dsh-cg-group-head" data-actions={actions}>
+        <button
+          type="button"
+          className="dsh-cg-group-toggle"
+          aria-expanded={open}
+          onClick={onToggle}
+        >
+          <span className="dsh-cg-group-chevron" aria-hidden="true"><IconArrowRight /></span>
+          <span className="dsh-cg-group-label">{headText(t(GROUP_KEY[side]), count)}</span>
+        </button>
+        <span className="dsh-cg-row-actions">
+          {side === 'unstaged'
+            ? (
+              <Tooltip
+                label={t('stage.discardAll')}
+                side="top"
+                delayMs={TOOLTIP_DELAY_MS}
+                portal
+                maxWidth={TOOLTIP_MAX_WIDTH}
+              >
+                <button
+                  type="button"
+                  className="dsh-cg-row-action"
+                  aria-label={t('stage.discardAll')}
+                  data-busy={discardBusy}
+                  disabled={count === 0 || actionsBusy}
+                  onClick={() => onDiscardAll(count, untracked)}
+                >
+                  {discardBusy ? SPINNER_ICON : <IconDiscard />}
+                </button>
+              </Tooltip>
+            )
+            : null}
+          <Tooltip
+            label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
+            side="top"
+            delayMs={TOOLTIP_DELAY_MS}
+            portal
+            maxWidth={TOOLTIP_MAX_WIDTH}
+          >
+            <button
+              type="button"
+              className="dsh-cg-row-action"
+              aria-label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
+              data-busy={stageBusy}
+              disabled={count === 0 || actionsBusy}
+              onClick={onStageAll}
+            >
+              {stageBusy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
+            </button>
+          </Tooltip>
+        </span>
+      </div>
+      {open
+        ? (
+          <>
+            {tree.folders.map(folder => (
+              <FolderBranch
+                key={folder.path}
+                t={t}
+                folder={folder}
+                side={side}
+                depth={1}
+                collapsed={collapsed}
+                onToggle={onToggleFolder}
+                selection={selection}
+                staging={staging}
+                discarding={discarding}
+                onSelect={onSelect}
+                onToggleStage={onToggleStage}
+                onDiscard={onDiscard}
+                onToggleFolderStage={onToggleFolderStage}
+                onDiscardFolder={onDiscardFolder}
+              />
+            ))}
+            {tree.files.map(file => (
+              <ChangeRow
+                key={file.path}
+                t={t}
+                file={file}
+                side={side}
+                depth={1}
+                selection={selection}
+                staging={staging}
+                discarding={discarding}
+                onSelect={onSelect}
+                onToggleStage={onToggleStage}
+                onDiscard={onDiscard}
+              />
+            ))}
+          </>
+        )
+        : null}
+    </section>
   )
 }
 
@@ -4940,9 +5031,10 @@ function filesUnderFolder(folder: FileTreeFolder): readonly ChangedFile[] {
  * @param props.folder - the folder to draw, with its children.
  * @param props.side - the list this folder is drawn under, which decides each
  *   file's side.
- * @param props.depth - how many folder rows the folder sits under.
- * @param props.collapsed - the folders the reader closed.
- * @param props.onToggle - asks the page to flip one folder.
+ * @param props.depth - the folder's level in the tree; a group's children start
+ *   at 1.
+ * @param props.collapsed - the folders the reader closed, keyed by `side:path`.
+ * @param props.onToggle - asks the page to flip the folder named by that key.
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
@@ -4973,7 +5065,8 @@ function FolderBranch(props: {
     t, folder, side, depth, collapsed, onToggle, selection, staging, discarding, onSelect,
     onToggleStage, onDiscard, onToggleFolderStage, onDiscardFolder,
   } = props
-  const open = !collapsed.has(folder.path)
+  const key = `${side}:${folder.path}`
+  const open = !collapsed.has(key)
   const files = filesUnderFolder(folder)
   const stageBusy = staging === `${side}:${folder.path}`
   const discardBusy = discarding === `unstaged:${folder.path}`
@@ -4996,7 +5089,7 @@ function FolderBranch(props: {
             className="dsh-cg-folder"
             aria-expanded={open}
             aria-label={t('tree.folderLabel', { name: folder.name })}
-            onClick={() => onToggle(folder.path)}
+            onClick={() => onToggle(key)}
           >
             <span className="dsh-cg-folder-chevron"><IconArrowRight /></span>
             <span className="dsh-cg-folder-name">
@@ -5134,7 +5227,8 @@ function FolderBranch(props: {
  * @param props.t - the page's translate seat.
  * @param props.file - the changed path this row names.
  * @param props.side - the list this row is drawn in, which is the side it stands for.
- * @param props.depth - how many folder rows the file sits under.
+ * @param props.depth - the file's level in the tree; a group's children start at
+ *   1.
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
@@ -5271,9 +5365,9 @@ function ChangeRow(props: {
  * rename's old path trailing it — then its state, spelled out rather than
  * lettered, the same `· ` separator the pane headers use.
  *
- * The half the row stands for is deliberately absent: the pane's header already
- * names the list, so repeating it in every bubble would only add a word the row
- * cannot be mistaken about.
+ * The half the row stands for is deliberately absent: the group header above it
+ * already names the list, so repeating it in every bubble would only add a word
+ * the row cannot be mistaken about.
  *
  * @param t - the page's translate seat.
  * @param file - the row's changed path.

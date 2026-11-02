@@ -116,8 +116,9 @@ const GIT_CSS = [
   `.${GIT_ROOT_CLASS}[data-resizing=col],.${GIT_ROOT_CLASS}[data-resizing=col] *{cursor:col-resize}`,
   `.${GIT_ROOT_CLASS}[data-resizing=row],.${GIT_ROOT_CLASS}[data-resizing=row] *{cursor:row-resize}`,
   // A pane's header: the pane's name and its row count, separated by a middle
-  // dot, on the left, and whatever that pane's own control is on the right —
-  // Commit history carries the remote control there, and Changed files nothing. The
+  // dot, on the left, and whatever that pane's own control is on the right.
+  // Commit history draws one, carrying the remote control there; the changed-path
+  // pane does not, because its structure is the two group headers under it. The
   // name is the one part that gives ground, so the count leaves with it as a unit;
   // the control is `flex:none` through `.dsh-cg-tools`, which is what keeps the two
   // ends from ever trading widths.
@@ -128,12 +129,6 @@ const GIT_CSS = [
   // out a weight and a tracking heavier than the same button draws in the sidebar.
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
-  // The changed-path header's bulk actions are the row controls' own glyphs: the
-  // same reveal on hover or focus, the same hover ink, and the same spinner, only
-  // sized to the header. They stand for every row the list holds.
-  '.dsh-cg-head-actions{flex:none;display:flex;align-items:center;gap:4px}',
-  '.dsh-cg-head-actions .dsh-cg-row-action{height:24px}',
-  '.dsh-cg-head:hover .dsh-cg-head-actions .dsh-cg-row-action,.dsh-cg-head:focus-within .dsh-cg-head-actions .dsh-cg-row-action{opacity:1;pointer-events:auto}',
   '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 6px 8px}',
   // Every scrollport the tab owns — the sidebar's two panes here, the branch
   // dialog's list below, and the diff pane's own scrollers, which state the same
@@ -201,7 +196,7 @@ const GIT_CSS = [
 
   // The sidebar's first row: the Workspace's name on the left, the branch pill
   // beside it, and then the one control the row keeps — More. It draws no rule of
-  // its own: the toolbar, the commit form below it, and the Changed files header
+  // its own: the toolbar, the commit form below it, and the changed-path groups
   // under that are one block of the column, with no hairline anywhere between them
   // (see `.dsh-cg-commit-bar`). Each name carries its own glyph (a directory for
   // the Workspace, a forked commit for the branch), so the row states which is
@@ -607,8 +602,8 @@ const GIT_CSS = [
 
   // The commit form: the sidebar's own row under the toolbar, ending where its own
   // padding does. Neither the form nor the toolbar above it draws a rule, so the
-  // column reads as one block down to the Changed files header — that header names
-  // the pane under it, which is boundary enough; a hairline there only cut the
+  // column reads as one block down to the first group heading — that heading names
+  // the half under it, which is boundary enough; a hairline there only cut the
   // column in two.
   //
   // Two stacked full-width rows rather than one line, because the sidebar is
@@ -727,24 +722,35 @@ const GIT_CSS = [
   // travel as one sentence separated by newlines.
   '.dsh-cg-commit-note{margin:0;white-space:pre-line;color:var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:1.45}',
 
-  // The changed-path pane's header is the list's switch. The trigger reads like
-  // the header title it replaces — same size and weight — with a disclosure mark
-  // at its end; the platform's Menu draws the list underneath, always below it,
-  // so the mark points down and stays pointing down while the list is open. The
-  // anchor wrapper takes the width so the whole header title is the target, not
-  // just the words.
-  '.dsh-cg-filter-anchor{flex:1 1 auto;min-width:0;display:flex}',
-  '.dsh-cg-filter{display:flex;align-items:center;gap:4px;width:100%;min-width:0;height:24px;padding:0 4px 0 0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-filter-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em;transition:color .12s ease}',
-  '.dsh-cg-filter-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);transition:color .12s ease}',
-  '.dsh-cg-filter-chevron svg{width:12px;height:12px;display:block}',
-  // The pointer deepens the words rather than washing a fill under them: the label
-  // steps from secondary to primary and the disclosure mark from tertiary to
-  // secondary, which says the control is live without drawing a box around a line
-  // that already reads as the pane's title. The same emphasis holds while the list
-  // is open, since by then the pointer has usually left the trigger.
-  '.dsh-cg-filter:hover .dsh-cg-filter-label,.dsh-cg-filter[aria-expanded=true] .dsh-cg-filter-label{color:var(--dsw-alias-label-primary)}',
-  '.dsh-cg-filter:hover .dsh-cg-filter-chevron,.dsh-cg-filter[aria-expanded=true] .dsh-cg-filter-chevron{color:var(--dsw-alias-label-secondary)}',
+  // The changed-path pane is one tree: the two halves are its roots, and the
+  // folders and files under them are its branches. A group header is a row of
+  // that tree rather than a heading above it — same height, type, chevron, hover
+  // fill and trailing actions as a folder row — so the only things separating a
+  // root from a folder are one indentation step and the count it carries. That is
+  // what keeps the pane from reading as two headings above two separate trees.
+  '.dsh-cg-group{display:flex;flex-direction:column}',
+  '.dsh-cg-group+.dsh-cg-group{margin-top:6px}',
+  '.dsh-cg-group-head{position:relative;display:flex;align-items:center;height:24px;border-radius:var(--dsw-radius-sm,6px)}',
+  '.dsh-cg-group-head:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-group-toggle{display:flex;align-items:center;gap:2px;width:100%;height:24px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+  // The chevron is the folder rows' own: one 16px seat with a 12px mark, turned a
+  // quarter once the group is open. The group sits at depth 0 (see `treeDepth`),
+  // so its children's rows begin one indent step further in.
+  '.dsh-cg-group-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--dsw-alias-label-tertiary);transition:transform .12s ease}',
+  '.dsh-cg-group-toggle[aria-expanded=true] .dsh-cg-group-chevron{transform:rotate(90deg)}',
+  '.dsh-cg-group-chevron svg{width:12px;height:12px;display:block}',
+  // The group's name is the folder name's type, not a pane title's: both are
+  // paths in the same tree, and the count is part of the name rather than a
+  // badge of its own.
+  '.dsh-cg-group-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
+  // The group's trailing actions are the row controls' own glyphs, revealed the
+  // same way: absent at rest, present when the header is hovered or holds focus.
+  // A staged group reserves one action's width, an unstaged group two, so
+  // revealing them never moves the count.
+  '.dsh-cg-group-head[data-actions=stage] .dsh-cg-group-toggle{padding-right:26px}',
+  '.dsh-cg-group-head[data-actions=both] .dsh-cg-group-toggle{padding-right:46px}',
+  '.dsh-cg-group-head .dsh-cg-row-action{height:24px}',
+  '.dsh-cg-group-head:hover .dsh-cg-row-action,.dsh-cg-group-head:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
 
   // Changed-path rows. The selected row keeps the hover fill's colour family but
   // takes the next step up the platform's ramp (`active` over `hover`), so the
