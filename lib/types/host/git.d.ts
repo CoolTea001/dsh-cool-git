@@ -476,6 +476,64 @@ export declare function stagePath(target: GitTarget, path: string): Promise<Inde
  */
 export declare function unstagePath(target: GitTarget, path: string, origPath?: string): Promise<IndexPayload>;
 /**
+ * Discard one path's unstaged change.
+ *
+ * A tracked path is restored from the index — `git restore --worktree` — so a
+ * file that is staged and then edited again keeps the staged half and loses only
+ * the worktree half; the index is never touched. An untracked path has no index
+ * entry to restore, so `git clean -f` deletes the file itself instead. Both are
+ * destructive in the worktree, which is why the page asks before calling this.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param path - the repository-relative path to discard.
+ * @param untracked - whether the path is untracked, which is deleted rather than restored.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function discardPath(target: GitTarget, path: string, untracked: boolean): Promise<IndexPayload>;
+/**
+ * Stage every change under one folder.
+ *
+ * The paths come from the status the queue reads, not from the request: the page
+ * names a folder, and the Host resolves which paths under it are still waiting
+ * in the worktree. Conflicted paths are left out on purpose — `git add` on one
+ * means "resolved", and a folder action cannot know that the reader finished
+ * editing every conflict it contains.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param folder - the repository-relative folder to stage.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function stageFolder(target: GitTarget, folder: string): Promise<IndexPayload>;
+/**
+ * Move every staged change under one folder out of the index.
+ *
+ * A staged rename is two index entries, so both halves of every rename are named
+ * together, exactly as the single-path unstage does. An unborn branch has no HEAD
+ * to restore from, so its index entries are removed instead and the files become
+ * untracked again.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param folder - the repository-relative folder to unstage.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function unstageFolder(target: GitTarget, folder: string): Promise<IndexPayload>;
+/**
+ * Discard every unstaged change under one folder.
+ *
+ * A tracked path is restored from the index, so a folder holding a partly staged
+ * file loses only that file's worktree half and keeps what the index holds. An
+ * untracked path is deleted, and because `git clean` takes no pathspec-from-file
+ * the folder itself is the pathspec: it removes exactly the untracked paths under
+ * the folder the list was drawn from, while ignored files stay untouched unless
+ * they were asked for (they never are). Conflicted paths are left alone — their
+ * worktree state is the reader's resolution in progress.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param folder - the repository-relative folder to discard.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function discardFolder(target: GitTarget, folder: string): Promise<IndexPayload>;
+/**
  * Stage every change and commit it under one message.
  *
  * The tree is read before it is touched, and both refusals that matter come out

@@ -102,6 +102,15 @@ export declare const IconPlus: () => ReactElement;
 /** Move a path out of the index (assets/minus.svg). */
 export declare const IconMinus: () => ReactElement;
 /**
+ * Discard a path's unstaged change (assets/discard.svg).
+ *
+ * The changed-path row's leading action on its unstaged half: the arrow turns
+ * back on itself, which is what "undo this edit" looks like without borrowing
+ * the trash can's promise of deletion — a tracked path is restored from the
+ * index rather than removed.
+ */
+export declare const IconDiscard: () => ReactElement;
+/**
  * The commit capsule's scope mark (assets/chevron-down.svg).
  *
  * A chevron that always points down, at the end of the button it belongs to. The

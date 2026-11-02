@@ -84,9 +84,11 @@ export type FailureCode =
   | 'push-behind'
   | 'push-no-remote'
   | 'push-ambiguous-remote'
-  // Moving one path between the worktree and the index.
+  // Moving one path between the worktree and the index, or discarding its
+  // worktree half.
   | 'stage-denied'
   | 'unstage-denied'
+  | 'discard-denied'
   // Committing.
   | 'commit-clean'
   | 'commit-nothing-staged'
@@ -591,12 +593,16 @@ export interface CommitAllPayload {
 }
 
 /**
- * `POST /stage` and `POST /unstage`: the index after one path moved.
+ * `POST /stage`, `/unstage`, `/discard` and their `-folder` siblings: the
+ * repository after one path write.
  *
- * The answer carries the re-read status, so the page can repaint both lists and
- * the counts in one step instead of asking for a second read that could race a
- * third writer. A failure says why like every other route, and the page's
- * actions stay where they were: an index write that did not happen changed
+ * A folder route names a directory rather than one file: the Host reads the
+ * status inside the write queue and applies the same move to every changed path
+ * under that directory, so the page never has to enumerate a tree that may be
+ * large or stale. The answer carries the re-read status, so the page can repaint
+ * both lists and the counts in one step instead of asking for a second read that
+ * could race a third writer. A failure says why like every other route, and the
+ * page's actions stay where they were: a write that did not happen changed
  * nothing on disk.
  */
 export interface IndexPayload {
@@ -836,6 +842,10 @@ export const ROUTES = {
   commitStaged: '/dsh-cool-git/api/commit-staged',
   stage: '/dsh-cool-git/api/stage',
   unstage: '/dsh-cool-git/api/unstage',
+  discard: '/dsh-cool-git/api/discard',
+  stageFolder: '/dsh-cool-git/api/stage-folder',
+  unstageFolder: '/dsh-cool-git/api/unstage-folder',
+  discardFolder: '/dsh-cool-git/api/discard-folder',
   message: '/dsh-cool-git/api/message',
   settings: '/dsh-cool-git/api/settings',
   settingsSave: '/dsh-cool-git/api/settings-save',

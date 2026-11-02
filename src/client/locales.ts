@@ -74,6 +74,9 @@ type UiKey =
   | 'title.commit'
   | 'title.stage'
   | 'title.unstage'
+  | 'title.stageFolder'
+  | 'title.unstageFolder'
+  | 'title.discard'
   | 'title.diff'
   | 'title.branches'
   | 'title.branchCreate'
@@ -185,12 +188,30 @@ type UiKey =
   | 'list.statusFailed'
   | 'list.loading'
   /** The three changed-path lists: what each holds, and the actions that move
-   *  one path between the first two. */
+   *  one path between the first two or discard its worktree half. */
   | 'stage.staged'
   | 'stage.unstaged'
   | 'stage.conflict'
+  | 'stage.stage'
+  | 'stage.unstage'
   | 'stage.stageFile'
   | 'stage.unstageFile'
+  /** The unstaged action that throws the worktree half away, and the dialog it
+   *  opens before doing so. */
+  | 'stage.discard'
+  | 'stage.discardFile'
+  | 'stage.stageFolder'
+  | 'stage.unstageFolder'
+  | 'stage.discardFolder'
+  | 'discard.title'
+  | 'discard.description'
+  | 'discard.tracked'
+  | 'discard.untracked'
+  | 'discard.folder'
+  | 'discard.folderUntracked'
+  | 'discard.confirm'
+  | 'discard.delete'
+  | 'discard.cancel'
   /** What a folder row in the changed-path tree is called. */
   | 'tree.folderLabel'
   /** The history pane's empty and loading states. */
@@ -281,6 +302,9 @@ export const en = {
   'title.commit': 'Commit failed',
   'title.stage': 'Could not stage the file',
   'title.unstage': 'Could not unstage the file',
+  'title.stageFolder': 'Could not stage the folder',
+  'title.unstageFolder': 'Could not unstage the folder',
+  'title.discard': 'Could not discard the changes',
   'title.diff': 'Could not read the diff',
   'title.branches': 'Could not read the branch list',
   'title.branchCreate': 'Could not create the branch',
@@ -390,8 +414,24 @@ export const en = {
   'stage.staged': 'Staged changes',
   'stage.unstaged': 'Changes',
   'stage.conflict': 'Conflicts',
+  'stage.stage': 'Stage changes',
+  'stage.unstage': 'Unstage',
   'stage.stageFile': 'Stage {path}',
   'stage.unstageFile': 'Unstage {path}',
+  'stage.discard': 'Discard changes',
+  'stage.discardFile': 'Discard changes in {path}',
+  'stage.stageFolder': 'Stage changes under {path}',
+  'stage.unstageFolder': 'Unstage changes under {path}',
+  'stage.discardFolder': 'Discard changes under {path}',
+  'discard.title': 'Discard changes',
+  'discard.description': 'This cannot be undone.',
+  'discard.tracked': 'Discard the unstaged changes in {path}?',
+  'discard.untracked': 'Delete the untracked file {path}?',
+  'discard.folder': 'Discard the unstaged changes under {path}? Files affected: {count}.',
+  'discard.folderUntracked': 'Discard the unstaged changes under {path}? Files affected: {count}. Untracked files will be deleted.',
+  'discard.confirm': 'Discard changes',
+  'discard.delete': 'Delete file',
+  'discard.cancel': 'Cancel',
   'tree.folderLabel': 'Changed files in {name}',
 
   'history.failed': 'Could not read the commit history',
@@ -472,6 +512,7 @@ export const en = {
 
   'error.stage-denied': 'The current permission mode does not allow staging: it needs to write the workspace',
   'error.unstage-denied': 'The current permission mode does not allow unstaging: it needs to write the workspace',
+  'error.discard-denied': 'The current permission mode does not allow discarding changes: it needs to write the workspace',
 
   'error.commit-clean': 'There is nothing to commit',
   'error.commit-nothing-staged': 'Nothing is staged to commit',
@@ -535,6 +576,9 @@ export const zh: typeof en = {
   'title.commit': '提交失败',
   'title.stage': '暂存文件失败',
   'title.unstage': '取消暂存失败',
+  'title.stageFolder': '暂存文件夹失败',
+  'title.unstageFolder': '取消暂存文件夹失败',
+  'title.discard': '放弃变更失败',
   'title.diff': '读取 Diff 失败',
   'title.branches': '读取分支列表失败',
   'title.branchCreate': '创建分支失败',
@@ -660,8 +704,24 @@ export const zh: typeof en = {
   'stage.staged': '已暂存的变更',
   'stage.unstaged': '变更',
   'stage.conflict': '冲突',
+  'stage.stage': '暂存变更',
+  'stage.unstage': '取消暂存',
   'stage.stageFile': '暂存 {path}',
   'stage.unstageFile': '取消暂存 {path}',
+  'stage.discard': '放弃变更',
+  'stage.discardFile': '放弃 {path} 的变更',
+  'stage.stageFolder': '暂存 {path} 下的变更',
+  'stage.unstageFolder': '取消暂存 {path} 下的变更',
+  'stage.discardFolder': '放弃 {path} 下的变更',
+  'discard.title': '放弃变更',
+  'discard.description': '此操作无法撤销。',
+  'discard.tracked': '放弃 {path} 的未暂存更改？',
+  'discard.untracked': '删除未跟踪文件 {path}？',
+  'discard.folder': '放弃 {path} 下的未暂存更改？涉及 {count} 个文件。',
+  'discard.folderUntracked': '放弃 {path} 下的未暂存更改？涉及 {count} 个文件。未跟踪文件会被删除。',
+  'discard.confirm': '放弃变更',
+  'discard.delete': '删除文件',
+  'discard.cancel': '取消',
   'tree.folderLabel': '{name} 中的变更文件',
 
   'history.failed': '读取提交历史失败',
@@ -742,6 +802,7 @@ export const zh: typeof en = {
 
   'error.stage-denied': '当前权限模式不允许暂存：该操作需要写入工作区',
   'error.unstage-denied': '当前权限模式不允许取消暂存：该操作需要写入工作区',
+  'error.discard-denied': '当前权限模式不允许放弃变更：该操作需要写入工作区',
 
   'error.commit-clean': '工作区没有需要提交的改动',
   'error.commit-nothing-staged': '暂存区没有需要提交的改动',

@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'create-denied' | 'delete-denied' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'fetch-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'stage-denied' | 'unstage-denied' | 'commit-clean' | 'commit-nothing-staged' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-denied' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'create-denied' | 'delete-denied' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'fetch-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'stage-denied' | 'unstage-denied' | 'discard-denied' | 'commit-clean' | 'commit-nothing-staged' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
@@ -471,12 +471,16 @@ export interface CommitAllPayload {
     readonly commit?: CommitSummary;
 }
 /**
- * `POST /stage` and `POST /unstage`: the index after one path moved.
+ * `POST /stage`, `/unstage`, `/discard` and their `-folder` siblings: the
+ * repository after one path write.
  *
- * The answer carries the re-read status, so the page can repaint both lists and
- * the counts in one step instead of asking for a second read that could race a
- * third writer. A failure says why like every other route, and the page's
- * actions stay where they were: an index write that did not happen changed
+ * A folder route names a directory rather than one file: the Host reads the
+ * status inside the write queue and applies the same move to every changed path
+ * under that directory, so the page never has to enumerate a tree that may be
+ * large or stale. The answer carries the re-read status, so the page can repaint
+ * both lists and the counts in one step instead of asking for a second read that
+ * could race a third writer. A failure says why like every other route, and the
+ * page's actions stay where they were: a write that did not happen changed
  * nothing on disk.
  */
 export interface IndexPayload {
@@ -676,6 +680,10 @@ export declare const ROUTES: {
     readonly commitStaged: "/dsh-cool-git/api/commit-staged";
     readonly stage: "/dsh-cool-git/api/stage";
     readonly unstage: "/dsh-cool-git/api/unstage";
+    readonly discard: "/dsh-cool-git/api/discard";
+    readonly stageFolder: "/dsh-cool-git/api/stage-folder";
+    readonly unstageFolder: "/dsh-cool-git/api/unstage-folder";
+    readonly discardFolder: "/dsh-cool-git/api/discard-folder";
     readonly message: "/dsh-cool-git/api/message";
     readonly settings: "/dsh-cool-git/api/settings";
     readonly settingsSave: "/dsh-cool-git/api/settings-save";

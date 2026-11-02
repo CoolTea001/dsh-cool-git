@@ -76,6 +76,8 @@ import {
   commitStaged,
   createBranch,
   deleteBranches,
+  discardFolder,
+  discardPath,
   fetchBranches,
   fetchBranchReport,
   fetchBranchUpstream,
@@ -91,7 +93,9 @@ import {
   pullBranch,
   pushBranch,
   saveSettings,
+  stageFolder,
   stagePath,
+  unstageFolder,
   unstagePath,
 } from './api.js'
 import { isSnapshotFresh, readRepositorySnapshot, writeRepositorySnapshot } from './cache.js'
@@ -104,6 +108,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconCopy,
+  IconDiscard,
   IconFolder,
   IconGenerate,
   IconMinus,
@@ -216,6 +221,24 @@ type RemoteRun = 'pull' | 'push'
 type Selection =
   | { readonly kind: 'file'; readonly file: ChangedFile; readonly side: DiffSide }
   | { readonly kind: 'commit'; readonly commit: CommitSummary }
+
+/**
+ * What one discard confirmation is about.
+ *
+ * A folder target names the directory and the number of files the row stood for
+ * when the dialog opened. The count is the reader's context rather than a list
+ * the Host trusts: the folder route re-reads the status inside the write queue,
+ * so a folder that changed while the dialog was up still acts on what is there
+ * now.
+ */
+type DiscardRequest =
+  | { readonly kind: 'file'; readonly file: ChangedFile }
+  | {
+    readonly kind: 'folder'
+    readonly path: string
+    readonly count: number
+    readonly untracked: boolean
+  }
 
 /**
  * The halves of one path that the sidebar lists.
@@ -923,6 +946,10 @@ export function GitView(props: {
    * disabled for the wait.
    */
   const [staging, setStaging] = useState<string | null>(null)
+  /** The row whose worktree discard is in flight, as `unstaged:path`, or null. */
+  const [discarding, setDiscarding] = useState<string | null>(null)
+  /** The row or folder the discard dialog is asking about, or null while none is open. */
+  const [discardTarget, setDiscardTarget] = useState<DiscardRequest | null>(null)
   /** Which list the changed-path pane is showing. */
   const [changeFilter, setChangeFilter] = useState<DiffSide>(() => remembered.filter)
   /** Whether the header's list menu is showing. */
@@ -1464,7 +1491,7 @@ export function GitView(props: {
    *   direction: a staged row unstages, an unstaged row stages.
    */
   const handleStageToggle = useCallback((file: ChangedFile, side: DiffSide): void => {
-    if (side === 'conflict' || staging !== null) return
+    if (side === 'conflict' || staging !== null || discarding !== null) return
     const key = `${side}:${file.path}`
     setStaging(key)
     const request = side === 'staged'
@@ -1484,7 +1511,100 @@ export function GitView(props: {
       // drawn, and the effect above follows the path to it — or closes the pane
       // when the new half is not in the list that is showing.
     })
-  }, [sessionId, staging, log, refresh, reportError, t])
+  }, [sessionId, staging, discarding, log, refresh, reportError, t])
+
+  /**
+   * Move every changed path under one folder between the index and the worktree.
+   *
+   * The request names the directory alone; the Host reads the status inside its
+   * write queue and applies the move to the paths under it, so a folder row can
+   * stand for a tree the page never has to enumerate. The answer carries the
+   * fresh status, exactly as the single-path actions do.
+   *
+   * @param path - the repository-relative folder the row names.
+   * @param side - the list the folder is drawn in: staged unstages, unstaged stages.
+   */
+  const handleStageFolder = useCallback((path: string, side: DiffSide): void => {
+    if (side === 'conflict' || staging !== null || discarding !== null) return
+    setStaging(`${side}:${path}`)
+    const request = side === 'staged' ? unstageFolder(sessionId, path) : stageFolder(sessionId, path)
+    void request.then(result => {
+      setStaging(null)
+      if (result?.ok !== true) {
+        reportError(failureOf(
+          t,
+          side === 'staged' ? 'title.unstageFolder' : 'title.stageFolder',
+          result,
+        ))
+        void refresh()
+        return
+      }
+      if (result.status === undefined) return
+      setStatus(result.status)
+      writeRepositorySnapshot(sessionId, result.status, log)
+    })
+  }, [sessionId, staging, discarding, log, refresh, reportError, t])
+
+  /**
+   * Ask before discarding one row's worktree change.
+   *
+   * A discard cannot be undone — an edited file goes back to the index, and an
+   * untracked one is deleted — so the row's button only names the path and opens
+   * the dialog; the request itself waits for the dialog's own confirmation.
+   *
+   * @param file - the changed path the row names.
+   */
+  const handleDiscard = useCallback((file: ChangedFile): void => {
+    if (staging !== null || discarding !== null) return
+    setDiscardTarget({ kind: 'file', file })
+  }, [staging, discarding])
+
+  /**
+   * Ask before discarding every unstaged change under one folder.
+   *
+   * @param path - the repository-relative folder the row names.
+   * @param count - how many changed files under it the row stood for.
+   * @param untracked - whether any of them will be deleted rather than restored.
+   */
+  const handleDiscardFolder = useCallback((
+    path: string,
+    count: number,
+    untracked: boolean,
+  ): void => {
+    if (staging !== null || discarding !== null) return
+    setDiscardTarget({ kind: 'folder', path, count, untracked })
+  }, [staging, discarding])
+
+  /**
+   * Discard what the dialog confirmed, and repaint from the answer.
+   *
+   * The request answers with the fresh status, so the page paints the state the
+   * write produced rather than asking for a second read another writer could
+   * race. A refusal is the error dialog's, and the page re-reads anyway: a
+   * failed discard can still have touched the worktree, and a stale row is worse
+   * than a slow one.
+   */
+  const confirmDiscard = useCallback((): void => {
+    const target = discardTarget
+    if (target === null || staging !== null || discarding !== null) return
+    setDiscardTarget(null)
+    const path = target.kind === 'file' ? target.file.path : target.path
+    setDiscarding(`unstaged:${path}`)
+    const request = target.kind === 'file'
+      ? discardPath(sessionId, target.file.path, target.file.untracked)
+      : discardFolder(sessionId, target.path)
+    void request.then(result => {
+      setDiscarding(null)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, 'title.discard', result))
+        void refresh()
+        return
+      }
+      if (result.status === undefined) return
+      setStatus(result.status)
+      writeRepositorySnapshot(sessionId, result.status, log)
+    })
+  }, [discardTarget, staging, discarding, sessionId, log, refresh, reportError, t])
 
   /**
    * Ask the Host for a commit message written for the changes on disk.
@@ -1743,8 +1863,12 @@ export function GitView(props: {
               side={changeFilter}
               selection={selection}
               staging={staging}
+              discarding={discarding}
               onSelect={(file, side) => setSelection({ kind: 'file', file, side })}
               onToggleStage={handleStageToggle}
+              onDiscard={handleDiscard}
+              onToggleFolderStage={handleStageFolder}
+              onDiscardFolder={handleDiscardFolder}
             />
           </div>
           <ResizeHandle
@@ -1800,6 +1924,12 @@ export function GitView(props: {
         <DiffPane t={t} status={status} selection={selection} current={current} />
       </main>
 
+      <DiscardDialog
+        t={t}
+        target={discardTarget}
+        onCancel={() => setDiscardTarget(null)}
+        onConfirm={confirmDiscard}
+      />
       <ErrorDialog t={t} error={error} onClose={() => setError(null)} />
     </div>
   )
@@ -1843,6 +1973,59 @@ function ErrorDialog(props: {
           <p className="dsh-cg-dialog-text" key={index}>{line}</p>
         ))}
       </div>
+    </Modal>
+  )
+}
+
+/**
+ * The confirmation that stands between a row's discard button and the worktree.
+ *
+ * A discard cannot be undone: a tracked path goes back to its index entry, and
+ * an untracked one is deleted. A file row names the path it would throw away; a
+ * folder row names the directory and how many files it stood for. This card is
+ * where that becomes a decision, and it words an untracked target as the
+ * deletion it is, down to the confirm button's label.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.target - the row or folder asking to discard, or null while none is open.
+ * @param props.onCancel - called by Escape, the mask, or the cancel button.
+ * @param props.onConfirm - called when the reader confirms the discard.
+ * @returns the dialog element.
+ */
+function DiscardDialog(props: {
+  readonly t: Translate
+  readonly target: DiscardRequest | null
+  readonly onCancel: () => void
+  readonly onConfirm: () => void
+}): ReactElement {
+  const { t, target, onCancel, onConfirm } = props
+  const text = target === null
+    ? ''
+    : target.kind === 'file'
+      ? t(target.file.untracked ? 'discard.untracked' : 'discard.tracked', { path: target.file.path })
+      : t(
+        target.untracked ? 'discard.folderUntracked' : 'discard.folder',
+        { path: target.path, count: target.count },
+      )
+  const deleting = target?.kind === 'file' && target.file.untracked
+  return (
+    <Modal
+      open={target !== null}
+      onClose={onCancel}
+      title={t('discard.title')}
+      description={t('discard.description')}
+      closeLabel={t('dialog.close')}
+      className="dsh-cg-discard-dialog"
+      footer={(
+        <>
+          <Button variant="outline" onClick={onCancel}>{t('discard.cancel')}</Button>
+          <Button variant="primary" className="dsh-cg-discard-confirm" onClick={onConfirm}>
+            {t(deleting ? 'discard.delete' : 'discard.confirm')}
+          </Button>
+        </>
+      )}
+    >
+      <p className="dsh-cg-dialog-text">{text}</p>
     </Modal>
   )
 }
@@ -4403,8 +4586,12 @@ function CommitBar(props: {
  * @param props.side - which list the header is showing.
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.discarding - the row whose discard is in flight, as `side:path`.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves one row's path in or out of the index.
+ * @param props.onDiscard - opens the confirmation for one row's worktree change.
+ * @param props.onToggleFolderStage - moves every path under one folder in or out of the index.
+ * @param props.onDiscardFolder - opens the confirmation for one folder's worktree changes.
  * @returns the list body.
  */
 function ChangeList(props: {
@@ -4415,10 +4602,17 @@ function ChangeList(props: {
   readonly side: DiffSide
   readonly selection: Selection | null
   readonly staging: string | null
+  readonly discarding: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
+  readonly onDiscard: (file: ChangedFile) => void
+  readonly onToggleFolderStage: (path: string, side: DiffSide) => void
+  readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
 }): ReactElement {
-  const { t, status, loaded, files, side, selection, staging, onSelect, onToggleStage } = props
+  const {
+    t, status, loaded, files, side, selection, staging, discarding, onSelect, onToggleStage, onDiscard,
+    onToggleFolderStage, onDiscardFolder,
+  } = props
 
   /** The folders the reader closed, keyed by their repository-relative path. */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
@@ -4458,8 +4652,12 @@ function ChangeList(props: {
           onToggle={toggleFolder}
           selection={selection}
           staging={staging}
+          discarding={discarding}
           onSelect={onSelect}
           onToggleStage={onToggleStage}
+          onDiscard={onDiscard}
+          onToggleFolderStage={onToggleFolderStage}
+          onDiscardFolder={onDiscardFolder}
         />
       ))}
       {tree.files.map(file => (
@@ -4471,8 +4669,10 @@ function ChangeList(props: {
           depth={0}
           selection={selection}
           staging={staging}
+          discarding={discarding}
           onSelect={onSelect}
           onToggleStage={onToggleStage}
+          onDiscard={onDiscard}
         />
       ))}
     </>
@@ -4484,6 +4684,22 @@ const GROUP_KEY: Readonly<Record<DiffSide, MessageKey>> = {
   staged: 'stage.staged',
   unstaged: 'stage.unstaged',
   conflict: 'stage.conflict',
+}
+
+/**
+ * Every changed file under one folder row: its own files and every descendant's.
+ *
+ * The tree folds chains and collapses subtrees, but a folder action stands for
+ * the folder itself, not for the rows currently visible: a closed folder's
+ * files are still under it, and the confirmation's count has to say so.
+ *
+ * @param folder - the folder row whose subtree is collected.
+ * @returns the changed files in that subtree, in tree order.
+ */
+function filesUnderFolder(folder: FileTreeFolder): readonly ChangedFile[] {
+  const files: ChangedFile[] = [...folder.files]
+  for (const child of folder.folders) files.push(...filesUnderFolder(child))
+  return files
 }
 
 /**
@@ -4506,6 +4722,11 @@ const GROUP_KEY: Readonly<Record<DiffSide, MessageKey>> = {
  * level costs an indent and nothing needs a list's margins or markers, while a
  * collapsed folder simply draws no descendants.
  *
+ * The folder row carries the same trailing actions as a file row, but they stand
+ * for every changed path under it, closed children included. The page sends the
+ * directory alone; the Host re-reads the status inside its write queue, so a
+ * folder with thousands of files never has to be enumerated across a request.
+ *
  * @param props.t - the page's translate seat.
  * @param props.folder - the folder to draw, with its children.
  * @param props.side - the list this folder is drawn under, which decides each
@@ -4515,8 +4736,12 @@ const GROUP_KEY: Readonly<Record<DiffSide, MessageKey>> = {
  * @param props.onToggle - asks the page to flip one folder.
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.discarding - the row whose discard is in flight, as `side:path`.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves one row's path in or out of the index.
+ * @param props.onDiscard - opens the confirmation for one row's worktree change.
+ * @param props.onToggleFolderStage - moves every path under this folder in or out of the index.
+ * @param props.onDiscardFolder - opens the confirmation for every worktree change under this folder.
  * @returns the folder row, and its open children.
  */
 function FolderBranch(props: {
@@ -4528,36 +4753,90 @@ function FolderBranch(props: {
   readonly onToggle: (path: string) => void
   readonly selection: Selection | null
   readonly staging: string | null
+  readonly discarding: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
+  readonly onDiscard: (file: ChangedFile) => void
+  readonly onToggleFolderStage: (path: string, side: DiffSide) => void
+  readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
 }): ReactElement {
   const {
-    t, folder, side, depth, collapsed, onToggle, selection, staging, onSelect, onToggleStage,
+    t, folder, side, depth, collapsed, onToggle, selection, staging, discarding, onSelect,
+    onToggleStage, onDiscard, onToggleFolderStage, onDiscardFolder,
   } = props
   const open = !collapsed.has(folder.path)
+  const files = filesUnderFolder(folder)
+  const stageBusy = staging === `${side}:${folder.path}`
+  const discardBusy = discarding === `unstaged:${folder.path}`
+  const actionsBusy = staging !== null || discarding !== null
+  const untracked = files.some(file => file.untracked)
+  const actions = side === 'conflict' ? 'none' : side === 'unstaged' ? 'both' : 'stage'
 
   return (
     <>
-      <Tooltip label={folder.path} side="right" portal maxWidth={TOOLTIP_MAX_WIDTH}>
-        <button
-          type="button"
-          className="dsh-cg-folder"
-          style={treeDepth(depth)}
-          aria-expanded={open}
-          aria-label={t('tree.folderLabel', { name: folder.name })}
-          onClick={() => onToggle(folder.path)}
-        >
-          <span className="dsh-cg-folder-chevron"><IconArrowRight /></span>
-          <span className="dsh-cg-folder-name">
-            {folder.segments.map((segment, index) => (
-              <Fragment key={`${index}:${segment}`}>
-                {index === 0 ? null : <span className="dsh-cg-folder-sep">/</span>}
-                {segment}
-              </Fragment>
-            ))}
-          </span>
-        </button>
-      </Tooltip>
+      <div className="dsh-cg-folder-wrap" data-actions={actions} style={treeDepth(depth)}>
+        <Tooltip label={folder.path} side="right" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+          <button
+            type="button"
+            className="dsh-cg-folder"
+            aria-expanded={open}
+            aria-label={t('tree.folderLabel', { name: folder.name })}
+            onClick={() => onToggle(folder.path)}
+          >
+            <span className="dsh-cg-folder-chevron"><IconArrowRight /></span>
+            <span className="dsh-cg-folder-name">
+              {folder.segments.map((segment, index) => (
+                <Fragment key={`${index}:${segment}`}>
+                  {index === 0 ? null : <span className="dsh-cg-folder-sep">/</span>}
+                  {segment}
+                </Fragment>
+              ))}
+            </span>
+          </button>
+        </Tooltip>
+        {side === 'conflict'
+          ? null
+          : (
+            <span className="dsh-cg-row-actions">
+              {side === 'unstaged'
+                ? (
+                  <Tooltip label={t('stage.discard')} side="top" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+                    <button
+                      type="button"
+                      className="dsh-cg-row-action"
+                      aria-label={t('stage.discardFolder', { path: folder.path })}
+                      data-busy={discardBusy}
+                      disabled={actionsBusy}
+                      onClick={() => onDiscardFolder(folder.path, files.length, untracked)}
+                    >
+                      {discardBusy ? SPINNER_ICON : <IconDiscard />}
+                    </button>
+                  </Tooltip>
+                )
+                : null}
+              <Tooltip
+                label={t(side === 'staged' ? 'stage.unstage' : 'stage.stage')}
+                side="top"
+                portal
+                maxWidth={TOOLTIP_MAX_WIDTH}
+              >
+                <button
+                  type="button"
+                  className="dsh-cg-row-action"
+                  aria-label={t(
+                    side === 'staged' ? 'stage.unstageFolder' : 'stage.stageFolder',
+                    { path: folder.path },
+                  )}
+                  data-busy={stageBusy}
+                  disabled={actionsBusy}
+                  onClick={() => onToggleFolderStage(folder.path, side)}
+                >
+                  {stageBusy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
+                </button>
+              </Tooltip>
+            </span>
+          )}
+      </div>
       {open ? (
         <>
           {folder.folders.map(child => (
@@ -4571,8 +4850,12 @@ function FolderBranch(props: {
               onToggle={onToggle}
               selection={selection}
               staging={staging}
+              discarding={discarding}
               onSelect={onSelect}
               onToggleStage={onToggleStage}
+              onDiscard={onDiscard}
+              onToggleFolderStage={onToggleFolderStage}
+              onDiscardFolder={onDiscardFolder}
             />
           ))}
           {folder.files.map(file => (
@@ -4584,8 +4867,10 @@ function FolderBranch(props: {
               depth={depth + 1}
               selection={selection}
               staging={staging}
+              discarding={discarding}
               onSelect={onSelect}
               onToggleStage={onToggleStage}
+              onDiscard={onDiscard}
             />
           ))}
         </>
@@ -4601,23 +4886,28 @@ function FolderBranch(props: {
  * The row names the file alone — the folders it sits under are the rows above
  * it — except for a rename, whose source path trails the name in the dimmed
  * column because it is the one part of the path the tree cannot place. The
- * tooltip still states the whole path, the state, and the half this row stands
- * for, since the row itself has room for a letter and an elided name at most.
+ * tooltip still states the whole path and the state, since the row itself has
+ * room for a letter and an elided name at most; the list it is drawn under is
+ * already the pane's header, so repeating it there would say nothing new.
  *
- * The stage control is a sibling of the selection button rather than a child:
- * a button inside a button is invalid markup, its clicks bubble as a selection,
- * and a reader cannot tab to it. The row is therefore a wrapper that owns the
- * hover, the indent and the selected fill, with the selection button taking the
- * width and the action sitting in its own trailing slot. The action is shown on
- * hover and on focus-within, so the keyboard can reach it too, and Space on the
- * selected row does the same thing without moving focus — the shortcut a list of
- * paths invites.
+ * The stage and discard controls are siblings of the selection button rather
+ * than children: a button inside a button is invalid markup, its clicks bubble
+ * as a selection, and a reader cannot tab to it. The row is therefore a wrapper
+ * that owns the hover, the indent and the selected fill, with the selection
+ * button taking the width and the actions sitting in their own trailing slot.
+ * The actions are shown on hover and on focus-within, so the keyboard can reach
+ * them too, and Space on the selected row stages without moving focus — the
+ * shortcut a list of paths invites. Their own bubbles name the moves — `Stage
+ * changes`, `Discard changes` or `Unstage` — because a glyph alone does not say
+ * which half it writes to.
  *
  * Only the opposite half's action is offered: a staged row shows `−` (unstage),
- * an unstaged row `+` (stage). A conflicted row shows neither, because `git add`
- * on it means "resolved" and the page cannot know that the reader finished
- * editing. A path that holds both halves is one row in each list: the worktree
- * side's row offers `+`, the index side's `−`.
+ * an unstaged row `+` (stage). The unstaged row also offers the discard action
+ * to its left, which throws the worktree half away after a confirmation. A
+ * conflicted row shows neither, because `git add` on it means "resolved" and the
+ * page cannot know that the reader finished editing. A path that holds both
+ * halves is one row in each list: the worktree side's row offers `+` and the
+ * discard, the index side's `−`.
  *
  * @param props.t - the page's translate seat.
  * @param props.file - the changed path this row names.
@@ -4625,8 +4915,10 @@ function FolderBranch(props: {
  * @param props.depth - how many folder rows the file sits under.
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.discarding - the row whose discard is in flight, as `side:path`.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves this row's path in or out of the index.
+ * @param props.onDiscard - opens the confirmation for this row's worktree change.
  * @returns the row.
  */
 function ChangeRow(props: {
@@ -4636,28 +4928,42 @@ function ChangeRow(props: {
   readonly depth: number
   readonly selection: Selection | null
   readonly staging: string | null
+  readonly discarding: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
+  readonly onDiscard: (file: ChangedFile) => void
 }): ReactElement {
-  const { t, file, side, depth, selection, staging, onSelect, onToggleStage } = props
+  const {
+    t, file, side, depth, selection, staging, discarding, onSelect, onToggleStage, onDiscard,
+  } = props
   const { name } = splitPath(file.path)
   const key = `${side}:${file.path}`
   const selected = selection?.kind === 'file'
     && selection.file.path === file.path
     && selection.side === side
   const busy = staging === key
+  const discardBusy = discarding === key
+  const actionsBusy = staging !== null || discarding !== null
   const actionLabel = t(side === 'staged' ? 'stage.unstageFile' : 'stage.stageFile', { path: name })
+  const actionTip = t(side === 'staged' ? 'stage.unstage' : 'stage.stage')
+  const discardLabel = t('stage.discardFile', { path: name })
+  const actions = side === 'conflict' ? 'none' : side === 'unstaged' ? 'both' : 'stage'
 
   return (
-    <div className="dsh-cg-row-wrap" data-selected={selected} style={treeDepth(depth)}>
+    <div
+      className="dsh-cg-row-wrap"
+      data-selected={selected}
+      data-actions={actions}
+      style={treeDepth(depth)}
+    >
       {/* The bubble is portaled so it can sit beside the sidebar rather than
           inside the list's own scroll box, which would clip it; a path too long
           for the cap wraps inside the bubble. It hangs from the selection button
           and the button reaches the row's own end, so the bubble starts outside
-          the row instead of over the stage control drawn there — the two never
-          cover each other, and hovering the control still says what it does. */}
+          the row instead of over the controls drawn there — the two never cover
+          each other, and each control's own bubble says what it does. */}
       <Tooltip
-        label={rowLabel(t, file, side)}
+        label={rowLabel(t, file)}
         side="right"
         portal
         maxWidth={TOOLTIP_MAX_WIDTH}
@@ -4690,17 +4996,41 @@ function ChangeRow(props: {
       {side === 'conflict'
         ? null
         : (
-          <button
-            type="button"
-            className="dsh-cg-row-action"
-            aria-label={actionLabel}
-            title={actionLabel}
-            data-busy={busy}
-            disabled={staging !== null}
-            onClick={() => onToggleStage(file, side)}
-          >
-            {busy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
-          </button>
+          <span className="dsh-cg-row-actions">
+            {side === 'unstaged'
+              ? (
+                <Tooltip
+                  label={t('stage.discard')}
+                  side="top"
+                  portal
+                  maxWidth={TOOLTIP_MAX_WIDTH}
+                >
+                  <button
+                    type="button"
+                    className="dsh-cg-row-action"
+                    aria-label={discardLabel}
+                    data-busy={discardBusy}
+                    disabled={actionsBusy}
+                    onClick={() => onDiscard(file)}
+                  >
+                    {discardBusy ? SPINNER_ICON : <IconDiscard />}
+                  </button>
+                </Tooltip>
+              )
+              : null}
+            <Tooltip label={actionTip} side="top" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+              <button
+                type="button"
+                className="dsh-cg-row-action"
+                aria-label={actionLabel}
+                data-busy={busy}
+                disabled={actionsBusy}
+                onClick={() => onToggleStage(file, side)}
+              >
+                {busy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
+              </button>
+            </Tooltip>
+          </span>
         )}
     </div>
   )
@@ -4708,18 +5038,20 @@ function ChangeRow(props: {
 
 /**
  * What a changed-path row says about itself when hovered: its path first — a
- * rename's old path trailing it — then its state and the half it stands for,
- * spelled out rather than lettered, the same `· ` separator the pane headers
- * use.
+ * rename's old path trailing it — then its state, spelled out rather than
+ * lettered, the same `· ` separator the pane headers use.
+ *
+ * The half the row stands for is deliberately absent: the pane's header already
+ * names the list, so repeating it in every bubble would only add a word the row
+ * cannot be mistaken about.
  *
  * @param t - the page's translate seat.
  * @param file - the row's changed path.
- * @param side - the half of the path the row stands for.
  * @returns the tooltip's text.
  */
-function rowLabel(t: Translate, file: ChangedFile, side: DiffSide): string {
+function rowLabel(t: Translate, file: ChangedFile): string {
   const renamed = file.origPath === undefined ? '' : ` ← ${file.origPath}`
-  return `${file.path}${renamed} · ${t(KIND_KEY[file.kind])} · ${t(GROUP_KEY[side])}`
+  return `${file.path}${renamed} · ${t(KIND_KEY[file.kind])}`
 }
 
 /**

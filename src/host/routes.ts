@@ -28,6 +28,8 @@ import {
   commitStaged,
   createBranch,
   deleteBranches,
+  discardFolder,
+  discardPath,
   fetchRemotes,
   fetchUpstream,
   mergeBranch,
@@ -40,8 +42,10 @@ import {
   readLog,
   readRepositoryRoot,
   readStatus,
+  stageFolder,
   stagePath,
   switchBranch,
+  unstageFolder,
   unstagePath,
   DEFAULT_LOG_LIMIT,
   MAX_BRANCHES,
@@ -626,6 +630,35 @@ export function registerRoutes(ctx: any): () => void {
       const path = readPath(body)
       if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
       return unstagePath(target, path, readOrigPath(body))
+    })),
+
+    // One path's unstaged change discarded. The `untracked` flag is the row's
+    // own answer to whether there is an index entry to restore: an untracked
+    // path has none, so the Host deletes the file itself instead.
+    route(ROUTES.discard, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return discardPath(target, path, body.untracked === true)
+    })),
+
+    // The folder siblings: one directory, and every changed path under it that
+    // the Host reads inside the write queue. Conflicted paths are left alone.
+    route(ROUTES.stageFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return stageFolder(target, path)
+    })),
+
+    route(ROUTES.unstageFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return unstageFolder(target, path)
+    })),
+
+    route(ROUTES.discardFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return discardFolder(target, path)
     })),
 
     // The one route that writes both the index and the history: it stages every

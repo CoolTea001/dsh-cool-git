@@ -95,6 +95,49 @@ export declare function stagePath(sessionId: string | undefined, path: string): 
  */
 export declare function unstagePath(sessionId: string | undefined, path: string, origPath?: string): Promise<IndexPayload>;
 /**
+ * Discard one path's unstaged change.
+ *
+ * The Host restores a tracked path from the index, or deletes an untracked one;
+ * either way the answer carries the fresh status, so the page repaints the lists
+ * without a second read that another writer could race. This is destructive and
+ * the page asks before calling it.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative path to discard.
+ * @param untracked - whether the path is untracked, which is deleted rather than restored.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function discardPath(sessionId: string | undefined, path: string, untracked: boolean): Promise<IndexPayload>;
+/**
+ * Stage every change under one folder.
+ *
+ * The request names the directory alone: the Host reads the status inside its
+ * write queue and stages the paths under it that still sit in the worktree, so a
+ * large folder never has to be enumerated across the request body or in a run of
+ * one-file requests.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative folder to stage.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function stageFolder(sessionId: string | undefined, path: string): Promise<IndexPayload>;
+/**
+ * Move every staged change under one folder out of the index.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative folder to unstage.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function unstageFolder(sessionId: string | undefined, path: string): Promise<IndexPayload>;
+/**
+ * Discard every unstaged change under one folder.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative folder to discard.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function discardFolder(sessionId: string | undefined, path: string): Promise<IndexPayload>;
+/**
  * Ask the Host to write a commit message for the changes on disk.
  *
  * The request names no changes and no model: which paths the model is shown, and

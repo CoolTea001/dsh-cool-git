@@ -331,6 +331,12 @@ const GIT_CSS = [
   // card is not height-capped here: the list below is what gives ground on a
   // short window, in `min()` with a viewport share.
   '.dsh-cg-branch-dialog{width:min(450px,100%)}',
+  // The discard confirmation is a narrower card than the branch dialogs — it
+  // asks about one path — and its submit is the same filled danger action the
+  // delete dialog uses, for the same reason: the worktree write cannot be undone.
+  '.dsh-cg-discard-dialog{width:min(420px,100%)}',
+  '.dsh-cg-discard-dialog .dsh-cg-discard-confirm{background:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-label-primary-foreground)}',
+  '.dsh-cg-discard-dialog .dsh-cg-discard-confirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 86%,#000)}',
   // The delete dialog's submit is a filled danger action rather than the
   // platform's ghost weight: removing branches is the one irreversible thing
   // either branch dialog does, and it has to read that way while it is still
@@ -632,7 +638,7 @@ const GIT_CSS = [
   // sized against, so neither the square nor the button can make the form taller
   // than the field it belongs to. Four of those lines is the 86px past which the
   // field scrolls instead of pushing the Changed files pane down the column.
-  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:6px;padding:0px 10px}',
+  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:8px;padding:0px 10px}',
   // The frame draws the field and holds the Generate glyph, and the two are laid
   // out independently: the field is the frame's only box in flow and spans it
   // whole, and the glyph is positioned against the frame's own corner. That is
@@ -748,23 +754,31 @@ const GIT_CSS = [
   '.dsh-cg-row-wrap{position:relative;display:flex;align-items:center;height:26px;padding-right:4px;border-radius:var(--dsw-radius-sm,6px)}',
   '.dsh-cg-row-wrap:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-row-wrap[data-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
-  // The trailing padding reserves the action's width, so a long name still elides
-  // short of it and revealing the control never moves the text.
+  // The trailing padding reserves the actions' width — one control, or two on an
+  // unstaged row (the override below) — so a long name still elides short of
+  // them and revealing them never moves the text.
   '.dsh-cg-row{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;height:26px;padding:0 26px 0 0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  // The stage control: laid over the row's end rather than given a flex slot, so
-  // the selection button underneath owns the full width. Hidden at rest and on
-  // hover/focus it arrives, which is what keeps a long list of rows quiet while
-  // leaving the action reachable from the keyboard (the button is in the tab
-  // order, and `focus-within` is what shows it).
-  '.dsh-cg-row-action{position:absolute;right:0;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary);opacity:0;pointer-events:none;cursor:pointer;transition:opacity .1s ease,color .1s ease,background-color .1s ease}',
+  // The row's trailing actions: laid over the row's end rather than given a
+  // flex slot each, so the selection button underneath owns the full width.
+  // Hidden at rest and on hover/focus they arrive, which is what keeps a long
+  // list of rows quiet while leaving them reachable from the keyboard (the
+  // buttons are in the tab order, and `focus-within` is what shows them). The
+  // pointer deepens a glyph alone — tertiary to primary — because the controls
+  // draw no fill of their own; the row's own fill is the only surface under
+  // them. An unstaged row reserves room for both, so revealing them never moves
+  // the text.
+  '.dsh-cg-row-actions{position:absolute;right:2px;top:50%;transform:translateY(-50%);display:flex;align-items:center}',
+  '.dsh-cg-row-wrap[data-actions=both] .dsh-cg-row{padding-right:46px}',
+  '.dsh-cg-row-action{display:inline-flex;align-items:center;justify-content:center;width:22px;height:26px;padding:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary);opacity:0;pointer-events:none;cursor:pointer;transition:opacity .1s ease,color .12s ease}',
   '.dsh-cg-row-wrap:hover .dsh-cg-row-action,.dsh-cg-row-wrap:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
   // A touch screen has no hover to reveal the action with, so the controls are
   // simply there: a row's +/− is part of what the row is on such a device, not a
   // decoration for a pointer that is only passing over it.
   '@media (hover:none){.dsh-cg-row-action{opacity:1;pointer-events:auto}}',
-  '.dsh-cg-row-action:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-row-action:hover:not(:disabled){color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-row-action:disabled{opacity:.45;cursor:default}',
-  '.dsh-cg-row-action svg{width:12px;height:12px;display:block}',
+  '.dsh-cg-row-action svg{width:16px;height:16px;display:block}',
+  '.dsh-cg-row-action[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
   '.dsh-cg-badge{flex:none;width:13px;text-align:center;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;font-weight:700;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-badge[data-kind=added]{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-badge[data-kind=modified]{color:var(--dsw-alias-state-warn-primary)}',
@@ -788,9 +802,20 @@ const GIT_CSS = [
   // A folder row is a disclosure button across the whole width — the row is the
   // target, not a chevron beside it — and it is one step quieter and a little
   // shorter than a file row, because the folder is the structure around the
-  // change while the file row is the change itself.
+  // change while the file row is the change itself. The row is a wrapper around
+  // that button for the same reason a file row is: the trailing actions are
+  // siblings of the button, and the wrapper owns the hover fill so it covers
+  // them too. The indent is drawn on the button, which inherits the level from
+  // the wrapper.
+  '.dsh-cg-folder-wrap{position:relative;display:flex;align-items:center;height:24px;border-radius:var(--dsw-radius-sm,6px)}',
+  '.dsh-cg-folder-wrap:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-folder-wrap .dsh-cg-row-action{height:24px}',
+  '.dsh-cg-folder-wrap:hover .dsh-cg-row-action,.dsh-cg-folder-wrap:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
+  // A folder reserves the same trailing room as a file row: one action on a
+  // staged folder, two on an unstaged one, so revealing them never moves the name.
+  '.dsh-cg-folder-wrap[data-actions=stage] .dsh-cg-folder{padding-right:26px}',
+  '.dsh-cg-folder-wrap[data-actions=both] .dsh-cg-folder{padding-right:46px}',
   '.dsh-cg-folder{display:flex;align-items:center;gap:2px;width:100%;height:24px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-folder:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   // The chevron is the same disclosure mark the diff pane's file titles use,
   // turned a quarter once the folder is open. Its seat is the badge's own 16px,
   // so a folder's name and the name of a file under it start in the same column.

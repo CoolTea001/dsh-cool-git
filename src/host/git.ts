@@ -2745,41 +2745,43 @@ async function retryWithStoredCredential(
 }
 
 /**
- * One queue of index writes per repository root.
+ * One queue of repository writes per repository root.
  *
- * Stage, unstage and both commit routes rewrite `.git/index`, and Git takes an
- * `index.lock` for each: two of them overlapping is a lock error the user did
- * not cause. The page already disables its own controls while one is in flight,
- * but a second window, the agent in the same repository, or a stale answer can
- * still arrive at the same moment, so the Host serializes the routes themselves.
- * The queue is keyed by root because two repositories have no reason to wait on
- * each other, and dropped when the last write finishes so it holds no state of
- * its own.
+ * Stage, unstage, discard and both commit routes write the repository. The index
+ * writers among them take Git's `index.lock`, and two overlapping is a lock error
+ * the user did not cause; a discard writes the worktree instead, but it still
+ * must not interleave with a stage that is re-reading the state it came from.
+ * The page already disables its own controls while one is in flight, but a
+ * second window, the agent in the same repository, or a stale answer can still
+ * arrive at the same moment, so the Host serializes the routes themselves. The
+ * queue is keyed by root because two repositories have no reason to wait on each
+ * other, and dropped when the last write finishes so it holds no state of its
+ * own.
  */
-const indexQueues = new Map<string, Promise<unknown>>()
+const writeQueues = new Map<string, Promise<unknown>>()
 
 /**
- * Run one index write after every earlier one for the same repository.
+ * Run one repository write after every earlier one for the same repository.
  *
  * @param root - the repository root the write belongs to.
  * @param run - the write to run, once the queue reaches it.
  * @returns whatever the write answered.
  */
-async function withIndexWrite<T>(root: string, run: () => Promise<T>): Promise<T> {
-  const previous = indexQueues.get(root) ?? Promise.resolve()
+async function withRepoWrite<T>(root: string, run: () => Promise<T>): Promise<T> {
+  const previous = writeQueues.get(root) ?? Promise.resolve()
   const next = previous.catch(() => undefined).then(run)
-  indexQueues.set(root, next)
+  writeQueues.set(root, next)
   try {
     return await next
   } finally {
     // Only the tail clears the entry: an earlier write finishing while a later
     // one is queued must not drop the later write's place.
-    if (indexQueues.get(root) === next) indexQueues.delete(root)
+    if (writeQueues.get(root) === next) writeQueues.delete(root)
   }
 }
 
 /**
- * Re-read the status after one index write, and shape it as the route's answer.
+ * Re-read the status after one repository write, and shape it as the route's answer.
  *
  * The status is read inside the queue, after the write, so the lists the page
  * paints are the state that write produced rather than a read that raced it.
@@ -2816,7 +2818,7 @@ export async function stagePath(target: GitTarget, path: string): Promise<IndexP
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
-  return withIndexWrite(repo.root, async () => {
+  return withRepoWrite(repo.root, async () => {
     const add = await runGit(root, ['add', '-A', '--', literalPath(path)])
     if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
     if (add.denied === true) return { ok: false, ...coded('stage-denied'), reason: 'denied' }
@@ -2853,13 +2855,220 @@ export async function unstagePath(
   const root = inDir(target, repo.root)
   const paths = (origPath === undefined ? [path] : [path, origPath]).map(literalPath)
 
-  return withIndexWrite(repo.root, async () => {
+  return withRepoWrite(repo.root, async () => {
     const restore = repo.hasHead
       ? await runGit(root, ['restore', '--staged', '--', ...paths])
       : await runGit(root, ['rm', '--cached', '--', ...paths])
     if (restore.failure !== undefined) return { ok: false, error: restore.failure, reason: 'error' }
     if (restore.denied === true) return { ok: false, ...coded('unstage-denied'), reason: 'denied' }
     if (restore.code !== 0) return { ok: false, ...refusalOf(restore), reason: 'error' }
+    return indexAnswer(target)
+  })
+}
+
+/**
+ * Discard one path's unstaged change.
+ *
+ * A tracked path is restored from the index — `git restore --worktree` — so a
+ * file that is staged and then edited again keeps the staged half and loses only
+ * the worktree half; the index is never touched. An untracked path has no index
+ * entry to restore, so `git clean -f` deletes the file itself instead. Both are
+ * destructive in the worktree, which is why the page asks before calling this.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param path - the repository-relative path to discard.
+ * @param untracked - whether the path is untracked, which is deleted rather than restored.
+ * @returns the fresh status, or the refusal.
+ */
+export async function discardPath(
+  target: GitTarget,
+  path: string,
+  untracked: boolean,
+): Promise<IndexPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const discard = untracked
+      ? await runGit(root, ['clean', '-f', '--', literalPath(path)])
+      : await runGit(root, ['restore', '--worktree', '--', literalPath(path)])
+    if (discard.failure !== undefined) return { ok: false, error: discard.failure, reason: 'error' }
+    if (discard.denied === true) return { ok: false, ...coded('discard-denied'), reason: 'denied' }
+    if (discard.code !== 0) return { ok: false, ...refusalOf(discard), reason: 'error' }
+    return indexAnswer(target)
+  })
+}
+
+/** Whether one repository-relative file path sits inside a folder path. */
+function inFolder(path: string, folder: string): boolean {
+  return path.startsWith(`${folder}/`)
+}
+
+/** The NUL-separated pathspec list the `--pathspec-from-file` commands read. */
+function pathspecInput(paths: readonly string[]): string {
+  return paths.map(literalPath).join('\0') + '\0'
+}
+
+/** The two options that make a Git command read its pathspecs from standard input. */
+const PATHSPEC_STDIN = ['--pathspec-from-file=-', '--pathspec-file-nul'] as const
+
+/**
+ * The changed paths under one folder, or the refusal that stopped the read.
+ *
+ * The status is read inside the write queue, so a folder write acts on the paths
+ * the repository holds when the write runs rather than on the page's possibly
+ * older list. A folder route names a directory, never its files: a tree with
+ * thousands of untracked paths would otherwise have to cross the request body.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @param folder - the repository-relative folder path.
+ * @returns the files under the folder, or the failure payload to answer with.
+ */
+async function folderStatus(
+  root: GitTarget,
+  folder: string,
+): Promise<
+  | { readonly ok: true; readonly files: readonly ChangedFile[] }
+  | { readonly ok: false; readonly payload: IndexPayload }
+> {
+  const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+  if (status.failure !== undefined) {
+    return { ok: false, payload: { ok: false, error: status.failure, reason: 'error' } }
+  }
+  if (status.denied === true) {
+    return { ok: false, payload: { ok: false, ...coded('git-denied'), reason: 'denied' } }
+  }
+  if (status.code !== 0) {
+    return { ok: false, payload: { ok: false, ...refusalOf(status), reason: 'error' } }
+  }
+  return {
+    ok: true,
+    files: parseStatus(status.stdout).files.filter(file => inFolder(file.path, folder)),
+  }
+}
+
+/**
+ * The failure one folder command amounts to, or null when it succeeded.
+ *
+ * Every folder write shares the same three checks — transport, sandbox denial,
+ * and Git's own refusal — and differs only in the coded refusal a denial maps
+ * to, so the check lives here once.
+ *
+ * @param run - the command's outcome.
+ * @param denied - the coded refusal a sandbox denial becomes.
+ * @returns the failure payload, or null when the command succeeded.
+ */
+function writeFailure(run: GitRun, denied: FailureCode): IndexPayload | null {
+  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+  if (run.denied === true) return { ok: false, ...coded(denied), reason: 'denied' }
+  if (run.code !== 0) return { ok: false, ...refusalOf(run), reason: 'error' }
+  return null
+}
+
+/**
+ * Stage every change under one folder.
+ *
+ * The paths come from the status the queue reads, not from the request: the page
+ * names a folder, and the Host resolves which paths under it are still waiting
+ * in the worktree. Conflicted paths are left out on purpose — `git add` on one
+ * means "resolved", and a folder action cannot know that the reader finished
+ * editing every conflict it contains.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param folder - the repository-relative folder to stage.
+ * @returns the fresh status, or the refusal.
+ */
+export async function stageFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const read = await folderStatus(root, folder)
+    if (!read.ok) return read.payload
+    const paths = read.files
+      .filter(file => file.conflicted !== true && (file.unstaged || file.untracked))
+      .map(file => file.path)
+    if (paths.length === 0) return indexAnswer(target)
+    const add = await runGit(root, ['add', '-A', ...PATHSPEC_STDIN], { stdin: pathspecInput(paths) })
+    return writeFailure(add, 'stage-denied') ?? indexAnswer(target)
+  })
+}
+
+/**
+ * Move every staged change under one folder out of the index.
+ *
+ * A staged rename is two index entries, so both halves of every rename are named
+ * together, exactly as the single-path unstage does. An unborn branch has no HEAD
+ * to restore from, so its index entries are removed instead and the files become
+ * untracked again.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param folder - the repository-relative folder to unstage.
+ * @returns the fresh status, or the refusal.
+ */
+export async function unstageFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const read = await folderStatus(root, folder)
+    if (!read.ok) return read.payload
+    const paths = [...new Set(read.files
+      .filter(file => file.staged && file.conflicted !== true)
+      .flatMap(file => file.origPath === undefined ? [file.path] : [file.path, file.origPath]))]
+    if (paths.length === 0) return indexAnswer(target)
+    const restore = repo.hasHead
+      ? await runGit(root, ['restore', '--staged', ...PATHSPEC_STDIN], { stdin: pathspecInput(paths) })
+      : await runGit(root, ['rm', '--cached', ...PATHSPEC_STDIN], { stdin: pathspecInput(paths) })
+    return writeFailure(restore, 'unstage-denied') ?? indexAnswer(target)
+  })
+}
+
+/**
+ * Discard every unstaged change under one folder.
+ *
+ * A tracked path is restored from the index, so a folder holding a partly staged
+ * file loses only that file's worktree half and keeps what the index holds. An
+ * untracked path is deleted, and because `git clean` takes no pathspec-from-file
+ * the folder itself is the pathspec: it removes exactly the untracked paths under
+ * the folder the list was drawn from, while ignored files stay untouched unless
+ * they were asked for (they never are). Conflicted paths are left alone — their
+ * worktree state is the reader's resolution in progress.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param folder - the repository-relative folder to discard.
+ * @returns the fresh status, or the refusal.
+ */
+export async function discardFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const read = await folderStatus(root, folder)
+    if (!read.ok) return read.payload
+    const tracked = read.files
+      .filter(file => file.conflicted !== true && file.unstaged && !file.untracked)
+      .map(file => file.path)
+    const untracked = read.files.some(file => file.untracked)
+    if (tracked.length === 0 && !untracked) return indexAnswer(target)
+    if (tracked.length > 0) {
+      const restore = await runGit(
+        root,
+        ['restore', '--worktree', ...PATHSPEC_STDIN],
+        { stdin: pathspecInput(tracked) },
+      )
+      const failure = writeFailure(restore, 'discard-denied')
+      if (failure !== null) return failure
+    }
+    if (untracked) {
+      const clean = await runGit(root, ['clean', '-f', '-d', '--', literalPath(folder)])
+      const failure = writeFailure(clean, 'discard-denied')
+      if (failure !== null) return failure
+    }
     return indexAnswer(target)
   })
 }
@@ -2905,7 +3114,7 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
-  return withIndexWrite(repo.root, async () => {
+  return withRepoWrite(repo.root, async () => {
     const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
     if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
@@ -2953,7 +3162,7 @@ export async function commitStaged(target: GitTarget, message: string): Promise<
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
-  return withIndexWrite(repo.root, async () => {
+  return withRepoWrite(repo.root, async () => {
     const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
     if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 

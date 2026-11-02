@@ -13,6 +13,10 @@ const PACKAGE_ID = 'dsh-cool-git'
  * time and exposed as the `__DSH_CG_ICONS__` string map `src/client/icons.tsx`
  * consumes. The map is keyed by asset filename stem, so dropping a new SVG into
  * the directory (and exporting its component) is all an icon needs.
+ *
+ * The map is read once when this config loads, so a running `--watch` session
+ * only sees a newly added SVG after it restarts; editing this file is what makes
+ * `tsdown` reload the config.
  */
 const ICON_DIR = fileURLToPath(new URL('./src/client/assets', import.meta.url))
 const ICONS: Record<string, string> = {}

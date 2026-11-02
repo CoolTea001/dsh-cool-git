@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message' | 'fallback.settings' | 'fallback.settingsRead'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -84,8 +84,11 @@ type UiKey =
 /** The changed-path pane's empty and loading states. */
  | 'list.notRepo' | 'list.statusFailed' | 'list.loading'
 /** The three changed-path lists: what each holds, and the actions that move
- *  one path between the first two. */
- | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stageFile' | 'stage.unstageFile'
+ *  one path between the first two or discard its worktree half. */
+ | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stage' | 'stage.unstage' | 'stage.stageFile' | 'stage.unstageFile'
+/** The unstaged action that throws the worktree half away, and the dialog it
+ *  opens before doing so. */
+ | 'stage.discard' | 'stage.discardFile' | 'stage.stageFolder' | 'stage.unstageFolder' | 'stage.discardFolder' | 'discard.title' | 'discard.description' | 'discard.tracked' | 'discard.untracked' | 'discard.folder' | 'discard.folderUntracked' | 'discard.confirm' | 'discard.delete' | 'discard.cancel'
 /** What a folder row in the changed-path tree is called. */
  | 'tree.folderLabel'
 /** The history pane's empty and loading states. */
@@ -146,6 +149,9 @@ export declare const en: {
     'title.commit': string;
     'title.stage': string;
     'title.unstage': string;
+    'title.stageFolder': string;
+    'title.unstageFolder': string;
+    'title.discard': string;
     'title.diff': string;
     'title.branches': string;
     'title.branchCreate': string;
@@ -237,8 +243,24 @@ export declare const en: {
     'stage.staged': string;
     'stage.unstaged': string;
     'stage.conflict': string;
+    'stage.stage': string;
+    'stage.unstage': string;
     'stage.stageFile': string;
     'stage.unstageFile': string;
+    'stage.discard': string;
+    'stage.discardFile': string;
+    'stage.stageFolder': string;
+    'stage.unstageFolder': string;
+    'stage.discardFolder': string;
+    'discard.title': string;
+    'discard.description': string;
+    'discard.tracked': string;
+    'discard.untracked': string;
+    'discard.folder': string;
+    'discard.folderUntracked': string;
+    'discard.confirm': string;
+    'discard.delete': string;
+    'discard.cancel': string;
     'tree.folderLabel': string;
     'history.failed': string;
     'history.loading': string;
@@ -309,6 +331,7 @@ export declare const en: {
     'error.push-ambiguous-remote': string;
     'error.stage-denied': string;
     'error.unstage-denied': string;
+    'error.discard-denied': string;
     'error.commit-clean': string;
     'error.commit-nothing-staged': string;
     'error.commit-conflict': string;
