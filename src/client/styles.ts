@@ -798,6 +798,12 @@ const GIT_CSS = [
   '.dsh-cg-folder[aria-expanded=true] .dsh-cg-folder-chevron{transform:rotate(90deg)}',
   '.dsh-cg-folder-chevron svg{width:12px;height:12px;display:block}',
   '.dsh-cg-folder-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
+  // A folded chain's slashes are structure, not names: they sit closer than a
+  // space would keep them, so `types / client` reads as one directory rather
+  // than as a phrase, and they keep the folder name's own tone — only the
+  // spacing sets them apart. The row's ellipsis still falls at the end of the
+  // whole chain.
+  '.dsh-cg-folder-sep{margin:0 2px}',
   // The indent both kinds of row share. The level travels from `treeDepth` in
   // `git.tsx` as one custom property per row, so the spacing stays here: fourteen
   // pixels a level is enough for a name to step in visibly under its folder and

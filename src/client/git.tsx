@@ -661,9 +661,18 @@ function splitPath(path: string): { dir: string; name: string } {
  * nothing about how many that is.
  */
 interface FileTreeFolder {
-  /** The folder's own name, without the path above it. */
+  /**
+   * The folder as its row names it: its own segment, and any single-child
+   * folders folded into it, joined with ` / `.
+   */
   readonly name: string
-  /** The folder's repository-relative path, which is also its identity. */
+  /** The segments `name` is built from, outermost first. */
+  readonly segments: readonly string[]
+  /**
+   * The folder's repository-relative path, which is also its identity. A folded
+   * chain carries the deepest folder's path, which is the one its children and
+   * its closed state hang from.
+   */
   readonly path: string
   readonly folders: readonly FileTreeFolder[]
   readonly files: readonly ChangedFile[]
@@ -685,6 +694,12 @@ interface MutableFolder {
  * the directory itself. Folders sort before files, both by name ignoring case:
  * that is the order a file explorer uses, and it keeps a folder's files together
  * however `git status` happened to list its paths.
+ *
+ * A directory holding one directory and no files of its own is a step in a path
+ * rather than a row of its own, so `finishFolder` folds it into its child: under
+ * `lib`, the chain `types/client` draws as one `types / client` row. That is the
+ * compact folder an editor's explorer shows, and it keeps a deep tree from
+ * spending a row and an indent on every directory that has nothing to say.
  *
  * @param files - the changed paths, in any order.
  * @returns the repository root, whose own row the sidebar does not draw.
@@ -716,7 +731,15 @@ function buildFileTree(files: readonly ChangedFile[]): FileTreeFolder {
 }
 
 /**
- * Sort one built folder's children.
+ * Sort one built folder's children and fold chains that lead nowhere.
+ *
+ * A folder with one child folder and no files is not a place a reader can stop:
+ * the two rows would only spell one path between them. It is therefore folded
+ * into its child, outermost segment first, so the row carries the whole chain
+ * (`types / client`) and the child's own children sit under it at the same
+ * depth. The root is exempt because its row is never drawn, and a folded chain
+ * keeps the deepest folder's path so the row's tooltip and its closed state name
+ * a real directory rather than a label.
  *
  * @param folder - a folder built from the changed paths.
  * @returns the folder as the sidebar renders it.
@@ -724,11 +747,21 @@ function buildFileTree(files: readonly ChangedFile[]): FileTreeFolder {
 function finishFolder(folder: MutableFolder): FileTreeFolder {
   const folders = [...folder.folders.values()]
     .map(finishFolder)
-    .sort((left, right) => compareTreeNames(left.name, right.name))
+    .sort((left, right) => compareTreeNames(left.segments[0], right.segments[0]))
   const files = [...folder.files].sort(
     (left, right) => compareTreeNames(splitPath(left.path).name, splitPath(right.path).name),
   )
-  return { name: folder.name, path: folder.path, folders, files }
+  if (folder.path === '' || files.length > 0 || folders.length !== 1) {
+    return { name: folder.name, segments: [folder.name], path: folder.path, folders, files }
+  }
+  const only = folders[0]
+  return {
+    name: `${folder.name} / ${only.name}`,
+    segments: [folder.name, ...only.segments],
+    path: only.path,
+    folders: only.folders,
+    files: only.files,
+  }
 }
 
 /**
@@ -4354,12 +4387,14 @@ function CommitBar(props: {
  *
  * Within the list the paths are grouped by directory rather than listed flat, so
  * a run of files from one directory reads as one block and the directory is
- * named once above them instead of on every row. Folders open by default — the
- * pane exists to show what changed, and a reader who has just opened the tab
- * should not have to unfold every directory to find out. A folder the reader
- * closes stays closed across status refreshes, which is why the closed set lives
- * here rather than being derived from the answer; one that disappears simply
- * stops being drawn, and a new one arrives open.
+ * named once above them instead of on every row. A directory that only holds the
+ * next directory is folded into it (`buildFileTree` explains the rule), so the
+ * tree spends its rows on the directories a reader can actually stop at. Folders
+ * open by default — the pane exists to show what changed, and a reader who has
+ * just opened the tab should not have to unfold every directory to find out. A
+ * folder the reader closes stays closed across status refreshes, which is why the
+ * closed set lives here rather than being derived from the answer; one that
+ * disappears simply stops being drawn, and a new one arrives open.
  *
  * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
@@ -4457,9 +4492,14 @@ const GROUP_KEY: Readonly<Record<DiffSide, MessageKey>> = {
  * The whole row is the disclosure control rather than a chevron the row merely
  * sits beside: the row is the target a reader aims at, and `aria-expanded` is
  * the state a screen reader announces either way. The row's own path is its
- * tooltip, because the tree names a folder by its last segment only and a deep
- * tree can hide the rest of the path. The row draws no count, and its accessible
- * name carries none either: the tree reads as paths, not as a column of totals.
+ * tooltip: the row folds a single-child chain into `types / client`, and the
+ * tooltip is where the path Git knows is spelled in full. The row draws no
+ * count, and its accessible name carries none either: the tree reads as paths,
+ * not as a column of totals.
+ *
+ * The segments of a folded chain are drawn with the slashes between them, the
+ * separators one step quieter than the names so the row still reads as one
+ * directory rather than as a sentence about two.
  *
  * The tree is drawn as a flat run of rows indented by `depth` rather than as
  * nested lists: the pane is a scroller whose rows are full-width buttons, so a
@@ -4508,7 +4548,14 @@ function FolderBranch(props: {
           onClick={() => onToggle(folder.path)}
         >
           <span className="dsh-cg-folder-chevron"><IconArrowRight /></span>
-          <span className="dsh-cg-folder-name">{folder.name}</span>
+          <span className="dsh-cg-folder-name">
+            {folder.segments.map((segment, index) => (
+              <Fragment key={`${index}:${segment}`}>
+                {index === 0 ? null : <span className="dsh-cg-folder-sep">/</span>}
+                {segment}
+              </Fragment>
+            ))}
+          </span>
         </button>
       </Tooltip>
       {open ? (
