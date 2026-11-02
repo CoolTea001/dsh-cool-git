@@ -2803,7 +2803,16 @@ function SideHead(props: {
   // which of the four groups the rows under it belong to, so the grouping is
   // argued in the order alone. No row carries a glyph: the words are the whole
   // of what each row does, and icons in a 144px card would only take width from
-  // them.
+  // them. No row carries a trailing ellipsis either: the mark means work in
+  // flight elsewhere on the page, and the rules already tell the rows that run
+  // at once from the ones that ask a second question.
+  //
+  // The two reads say which side of the repository they touch — `(local)` and
+  // `(remotes)` — because that is the one thing their names do not: Refresh
+  // re-reads what the working tree already answers, and Fetch is the only row
+  // here that leaves the machine. The other rows are bare, since Pull and Push
+  // already name a direction and a qualifier on each of them would make the card
+  // read as a table rather than a menu.
   //
   // Settings is set apart under the last rule rather than filed with the
   // repository rows above it: every other row acts on the repository, while this

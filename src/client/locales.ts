@@ -295,13 +295,18 @@ export const en = {
   'head.currentBranch': 'Current branch',
   'head.detached': 'detached',
   'head.more': 'More',
-  'head.refresh': 'Refresh',
-  'head.fetch': 'Fetch',
+  // The two reads carry the side of the repository they touch, in parentheses,
+  // because that is the whole of what tells them apart: Refresh re-reads what
+  // the working tree already says, while Fetch goes to the network. `remotes`
+  // and not `origin`: the row runs `git fetch --all`, so a repository with an
+  // `upstream` beside its `origin` is the case the word has to cover.
+  'head.refresh': 'Refresh (local)',
+  'head.fetch': 'Fetch (remotes)',
   'head.pull': 'Pull',
   'head.push': 'Push',
-  'head.mergeFrom': 'Merge from…',
-  'head.branchCreate': 'Branch create…',
-  'head.branchDelete': 'Branch delete…',
+  'head.mergeFrom': 'Merge from',
+  'head.branchCreate': 'Branch create',
+  'head.branchDelete': 'Branch delete',
   'head.settings': 'Settings',
 
   'settings.title': 'Settings',
@@ -544,21 +549,35 @@ export const zh: typeof en = {
   'head.currentBranch': '当前分支',
   'head.detached': '游离',
   'head.more': '更多',
-  // The menu's rows keep their English names in both locales: each one is what
-  // its Git command is called, and a translated row would name something the
-  // reader cannot match to `git fetch`, `git pull` or `git merge`. The control
-  // that opens the menu is not one of them — it is a row of the page's own, so
-  // `head.more` stays translated. The settings row keeps its English name for
-  // the same reason the card reads as one list; the dialog it opens still
-  // carries the translated title.
-  'head.refresh': 'Refresh',
-  'head.fetch': 'Fetch',
-  'head.pull': 'Pull',
-  'head.push': 'Push',
-  'head.mergeFrom': 'Merge from…',
-  'head.branchCreate': 'Branch create…',
-  'head.branchDelete': 'Branch delete…',
-  'head.settings': 'Settings',
+  // The menu names each row with the word the rest of the page already uses for
+  // that operation, so a row and the dialog it opens speak the same language:
+  // `head.branchCreate` is `创建分支` for the same reason `create.title` is, and
+  // `head.mergeFrom` is `合并分支` because `merge.titleFrom` says so. `Fetch` is
+  // `获取` rather than `抓取` to keep it apart from `Pull` (`拉取`), which is the
+  // distinction the menu is built on: the two rows differ only in whether the
+  // working tree moves. The settings row is `设置`, as its dialog is.
+  //
+  // No row ends in an ellipsis, in either locale. Elsewhere on this page `…`
+  // means work in flight (`settings.loading`, `delete.busy`, `commit.busy`), and
+  // a still row carrying one would claim a wait that has not started. The rows
+  // that open another screen say so by position — the rules already separate the
+  // rows that only re-read the repository from the ones that decide something —
+  // and one of those dialogs opens from a row with no mark in any case.
+  //
+  // Refresh and Fetch carry the side they touch in parentheses — `本地` and
+  // `远端` — because that is the one thing their names alone do not say, and it
+  // is the whole difference a reader needs. Pull and Push are left bare: their
+  // verbs already name a direction, and a qualifier on every row would turn the
+  // card into a table. `远端` stands for `git fetch --all` and not for `origin`,
+  // which a repository with an `upstream` beside it would contradict.
+  'head.refresh': '刷新（本地）',
+  'head.fetch': '获取（远端）',
+  'head.pull': '拉取',
+  'head.push': '推送',
+  'head.mergeFrom': '合并分支',
+  'head.branchCreate': '创建分支',
+  'head.branchDelete': '删除分支',
+  'head.settings': '设置',
 
   'settings.title': '设置',
   'settings.description': '设置生成模型和提示词',
