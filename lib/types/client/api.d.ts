@@ -5,7 +5,7 @@
  * `{ ok: false }` result the caller reports in the error dialog, so the page has
  * exactly one failure shape to render no matter how the answer went wrong.
  */
-import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type FetchUpstreamPayload, type LogPayload, type MergePayload, type MessageModel, type MessagePayload, type ModelEffortsPayload, type SaveSettingsPayload, type SettingsPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CommitScope, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type DiffSide, type FetchPayload, type FetchUpstreamPayload, type IndexPayload, type LogPayload, type MergePayload, type MessageModel, type MessagePayload, type ModelEffortsPayload, type SaveSettingsPayload, type SettingsPayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 /**
  * Ask the Host for the session's repository state and changed paths.
  *
@@ -22,17 +22,22 @@ export declare function fetchStatus(sessionId: string | undefined): Promise<Stat
  */
 export declare function fetchLog(sessionId: string | undefined, limit?: number): Promise<LogPayload>;
 /**
- * Ask the Host for one changed path's patch against HEAD.
+ * Ask the Host for one side of one changed path's patch.
+ *
+ * The side is the row's own: a staged row asks for the index against HEAD, and
+ * an unstaged row asks for the worktree against the index. A file that is both
+ * appears as two rows, and each must answer with the patch that row names rather
+ * than the same combined one.
  *
  * @param sessionId - the session whose directory Git runs in, when known.
- * @param file - the path to diff, with the row's own stage/untracked facts.
+ * @param file - the path to diff.
+ * @param side - the half of the path this row stands for.
+ * @param untracked - whether the path is untracked, which has no HEAD side.
  * @returns the diff payload.
  */
 export declare function fetchDiff(sessionId: string | undefined, file: {
     readonly path: string;
-    readonly staged: boolean;
-    readonly untracked: boolean;
-}): Promise<DiffPayload>;
+}, side: DiffSide, untracked: boolean): Promise<DiffPayload>;
 /**
  * Ask the Host for one commit's message and patch.
  *
@@ -56,6 +61,40 @@ export declare function fetchCommit(sessionId: string | undefined, hash: string)
  */
 export declare function commitAll(sessionId: string | undefined, message: string): Promise<CommitAllPayload>;
 /**
+ * Ask the Host to commit the index as it stands.
+ *
+ * Nothing is staged here: the page's own `+` and `−` actions decided what the
+ * index holds, and the Host commits exactly that. A conflict, or an index with
+ * nothing in it, is refused as one answer.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param message - the commit message, non-empty.
+ * @returns the commit payload, shaped like the commit-all answer.
+ */
+export declare function commitStaged(sessionId: string | undefined, message: string): Promise<CommitAllPayload>;
+/**
+ * Move one path into the index.
+ *
+ * The answer carries the repository's fresh status, so the page repaints both
+ * halves of the list from the state this write produced instead of asking for a
+ * second read that another writer could race.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative path to stage.
+ * @returns the index payload.
+ */
+export declare function stagePath(sessionId: string | undefined, path: string): Promise<IndexPayload>;
+/**
+ * Move one path out of the index, keeping its worktree file.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative path to unstage.
+ * @param origPath - the rename source, when the row is a rename: both halves of
+ *   a staged rename are restored together.
+ * @returns the index payload.
+ */
+export declare function unstagePath(sessionId: string | undefined, path: string, origPath?: string): Promise<IndexPayload>;
+/**
  * Ask the Host to write a commit message for the changes on disk.
  *
  * The request names no changes and no model: which paths the model is shown, and
@@ -63,10 +102,15 @@ export declare function commitAll(sessionId: string | undefined, message: string
  * state and the deployment's current default selection. The answer is a draft for
  * the form, never a commit: this call leaves the index and the history alone.
  *
+ * The scope is the one the form's commit button is set to: a staged-only commit
+ * gets a message about the index alone, so it cannot describe a file it will
+ * leave behind.
+ *
  * @param sessionId - the session whose directory Git runs in, when known.
+ * @param scope - whether the message describes the index or the whole tree.
  * @returns the message payload, with the model's own findings beside it.
  */
-export declare function generateMessage(sessionId: string | undefined): Promise<MessagePayload>;
+export declare function generateMessage(sessionId: string | undefined, scope: CommitScope): Promise<MessagePayload>;
 /**
  * Ask the Host what this Workspace has chosen for generated messages.
  *

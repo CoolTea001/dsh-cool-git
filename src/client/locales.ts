@@ -72,6 +72,8 @@ type UiKey =
   | 'title.push'
   | 'title.publish'
   | 'title.commit'
+  | 'title.stage'
+  | 'title.unstage'
   | 'title.diff'
   | 'title.branches'
   | 'title.branchCreate'
@@ -122,8 +124,7 @@ type UiKey =
   /** The remote control in the history pane's header. */
   | 'remote.publish'
   | 'remote.sync'
-  /** The two pane headers, each followed by its row count. */
-  | 'pane.files'
+  /** The history pane's header, followed by its row count. */
   | 'pane.history'
   /** The branch dialog. */
   | 'branch.title'
@@ -170,15 +171,26 @@ type UiKey =
   | 'commit.generate'
   | 'commit.generating'
   | 'commit.warning'
+  /** The commit form's scope: the caret's own name and the two choices. */
+  | 'commit.scope'
+  | 'commit.scopeStaged'
+  | 'commit.scopeAll'
+  /** The commit button's labels, each carrying the number of rows it records. */
+  | 'commit.buttonStaged'
+  | 'commit.buttonAll'
   /** The one-line fix stated under a refusal the user can undo by configuring Git. */
   | 'hint.commit-identity'
   /** The changed-path pane's empty and loading states. */
   | 'list.notRepo'
   | 'list.statusFailed'
   | 'list.loading'
-  /** Whether a row's change is in the index. */
+  /** The three changed-path lists: what each holds, and the actions that move
+   *  one path between the first two. */
   | 'stage.staged'
   | 'stage.unstaged'
+  | 'stage.conflict'
+  | 'stage.stageFile'
+  | 'stage.unstageFile'
   /** What a folder row in the changed-path tree is called. */
   | 'tree.folderLabel'
   /** The history pane's empty and loading states. */
@@ -267,6 +279,8 @@ export const en = {
   'title.push': 'Push failed',
   'title.publish': 'Publish failed',
   'title.commit': 'Commit failed',
+  'title.stage': 'Could not stage the file',
+  'title.unstage': 'Could not unstage the file',
   'title.diff': 'Could not read the diff',
   'title.branches': 'Could not read the branch list',
   'title.branchCreate': 'Could not create the branch',
@@ -311,7 +325,6 @@ export const en = {
   'remote.publish': 'Publish branch',
   'remote.sync': 'Sync · {behind} to pull · {ahead} to push',
 
-  'pane.files': 'Changed files',
   'pane.history': 'Commit history',
 
   'branch.title': 'Switch branch',
@@ -358,14 +371,22 @@ export const en = {
   'commit.generate': 'Generate a commit message',
   'commit.generating': 'Generating…',
   'commit.warning': 'Before you commit: {text}',
+  'commit.scope': 'Commit scope',
+  'commit.scopeStaged': 'Commit Staged',
+  'commit.scopeAll': 'Commit All',
+  'commit.buttonStaged': 'Commit Staged · {count}',
+  'commit.buttonAll': 'Commit All · {count}',
   'hint.commit-identity': 'Set it once with git config --global user.name "Your Name" and git config --global user.email "you@example.com"; drop --global to set it for this repository only',
 
   'list.notRepo': 'This session\'s directory is not a Git repository',
   'list.statusFailed': 'Could not read the repository status',
   'list.loading': 'Reading the repository…',
 
-  'stage.staged': 'Staged',
-  'stage.unstaged': 'Not staged',
+  'stage.staged': 'Staged changes',
+  'stage.unstaged': 'Changes',
+  'stage.conflict': 'Conflicts',
+  'stage.stageFile': 'Stage {path}',
+  'stage.unstageFile': 'Unstage {path}',
   'tree.folderLabel': 'Changed files in {name}',
 
   'history.failed': 'Could not read the commit history',
@@ -444,7 +465,11 @@ export const en = {
   'error.push-no-remote': 'This repository has no remote configured, so it cannot be pushed',
   'error.push-ambiguous-remote': 'There is more than one remote ({remotes}), so the push target is ambiguous',
 
+  'error.stage-denied': 'The current permission mode does not allow staging: it needs to write the workspace',
+  'error.unstage-denied': 'The current permission mode does not allow unstaging: it needs to write the workspace',
+
   'error.commit-clean': 'There is nothing to commit',
+  'error.commit-nothing-staged': 'Nothing is staged to commit',
   'error.commit-conflict': 'Unresolved conflicts remain; resolve them before committing',
   'error.commit-identity': 'Git has no author identity configured, so it refused the commit',
   'error.commit-denied': 'The current permission mode does not allow committing: it needs to write the workspace',
@@ -503,6 +528,8 @@ export const zh: typeof en = {
   'title.push': '推送失败',
   'title.publish': '发布分支失败',
   'title.commit': '提交失败',
+  'title.stage': '暂存文件失败',
+  'title.unstage': '取消暂存失败',
   'title.diff': '读取 Diff 失败',
   'title.branches': '读取分支列表失败',
   'title.branchCreate': '创建分支失败',
@@ -554,7 +581,6 @@ export const zh: typeof en = {
   'remote.publish': '发布分支',
   'remote.sync': '同步变更 · 待拉取 {behind} · 待推送 {ahead}',
 
-  'pane.files': '文件变更',
   'pane.history': '提交历史',
 
   'branch.title': '切换分支',
@@ -601,14 +627,22 @@ export const zh: typeof en = {
   'commit.generate': '自动生成提交信息',
   'commit.generating': '正在生成…',
   'commit.warning': '提交前请检查：{text}',
+  'commit.scope': '提交范围',
+  'commit.scopeStaged': '提交已暂存的更改',
+  'commit.scopeAll': '提交全部更改',
+  'commit.buttonStaged': '提交已暂存的更改 · {count}',
+  'commit.buttonAll': '提交全部更改 · {count}',
   'hint.commit-identity': '请先配置一次：git config --global user.name "你的名字"、git config --global user.email "你的邮箱"；去掉 --global 则只对当前仓库生效',
 
   'list.notRepo': '当前会话目录不是 Git 仓库',
   'list.statusFailed': '读取仓库状态失败',
   'list.loading': '正在读取仓库…',
 
-  'stage.staged': '已暂存',
-  'stage.unstaged': '未暂存',
+  'stage.staged': '已暂存的变更',
+  'stage.unstaged': '变更',
+  'stage.conflict': '冲突',
+  'stage.stageFile': '暂存 {path}',
+  'stage.unstageFile': '取消暂存 {path}',
   'tree.folderLabel': '{name} 中的变更文件',
 
   'history.failed': '读取提交历史失败',
@@ -687,7 +721,11 @@ export const zh: typeof en = {
   'error.push-no-remote': '该仓库没有配置远程仓库，无法 Push',
   'error.push-ambiguous-remote': '有多个远程仓库（{remotes}），无法确定推送目标',
 
+  'error.stage-denied': '当前权限模式不允许暂存：该操作需要写入工作区',
+  'error.unstage-denied': '当前权限模式不允许取消暂存：该操作需要写入工作区',
+
   'error.commit-clean': '工作区没有需要提交的改动',
+  'error.commit-nothing-staged': '暂存区没有需要提交的改动',
   'error.commit-conflict': '存在未解决的冲突文件，请先解决冲突再提交',
   'error.commit-identity': 'Git 还没有配置提交身份，无法提交',
   'error.commit-denied': '当前权限模式不允许提交：该操作需要写入工作区',

@@ -681,9 +681,31 @@ const GIT_CSS = [
   // The glyph is drawn a shade smaller than the field's own type, so it reads as
   // a mark on the row rather than as a character of the message.
   '.dsh-cg-commit-generate svg{width:14px;height:14px;display:block}',
-  // Commit is a row of its own across the whole width: what it records is every
-  // change the pane lists, under whatever the field above holds.
-  '.dsh-cg-commit-send{width:100%}',
+  // The commit row is two buttons that share one shape: the label commits, the
+  // caret at its end opens the scope list, no gap sits between them, and only the
+  // outer corners are rounded, so the touching edges are square. Each carries its
+  // own fill, hover and disabled state rather than drawing on a shared one,
+  // because each is a click of its own — and because the caret must stay live
+  // exactly while the label cannot act. (See the caret's rule below.)
+  '.dsh-cg-commit-actions{display:flex;align-items:stretch;width:100%}',
+  '.dsh-cg-commit-send{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:12px;line-height:18px;cursor:pointer;transition:background-color .12s ease,opacity .12s ease}',
+  '.dsh-cg-commit-send:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
+  // The platform's own disabled weight, so a busy or empty form dims the label
+  // exactly as a disabled primary button does.
+  '.dsh-cg-commit-send:disabled{opacity:.4;cursor:not-allowed}',
+  // The label elides rather than wraps: the button is the platform's 28px tall,
+  // and a second line would spill out of a box that does not grow with it.
+  '.dsh-cg-commit-label{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  // The caret is never disabled by the label's own reasons — no message yet,
+  // nothing staged — because choosing a scope is how a reader leaves exactly those
+  // states. It is its own button with its own fill, so it stays at full strength
+  // while the label beside it is the part that cannot act.
+  '.dsh-cg-commit-scope{flex:none;display:inline-flex;align-items:center;justify-content:center;width:30px;padding:0;border:0;border-radius:0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer;transition:background-color .12s ease,opacity .12s ease}',
+  '.dsh-cg-commit-scope:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
+  '.dsh-cg-commit-scope:disabled{opacity:.4;cursor:default}',
+  '.dsh-cg-commit-scope-caret{display:inline-flex}',
+  '.dsh-cg-commit-scope-caret svg{width:12px;height:12px;display:block}',
+  '.dsh-cg-commit-scope-anchor{display:flex;flex:none}',
   // What the model's own pre-commit check found: one line under the field, in
   // the warning colour, because it is about the commit rather than about the
   // message — the message above it is written either way. It wraps rather than
@@ -693,13 +715,56 @@ const GIT_CSS = [
   // travel as one sentence separated by newlines.
   '.dsh-cg-commit-note{margin:0;white-space:pre-line;color:var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:1.45}',
 
+  // The changed-path pane's header is the list's switch. The trigger reads like
+  // the header title it replaces — same size and weight — with a disclosure mark
+  // at its end; the platform's Menu draws the list underneath, always below it,
+  // so the mark points down and stays pointing down while the list is open. The
+  // anchor wrapper takes the width so the whole header title is the target, not
+  // just the words.
+  '.dsh-cg-filter-anchor{flex:1 1 auto;min-width:0;display:flex}',
+  '.dsh-cg-filter{display:flex;align-items:center;gap:4px;width:100%;min-width:0;height:24px;padding:0 4px 0 0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+  '.dsh-cg-filter-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em;transition:color .12s ease}',
+  '.dsh-cg-filter-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);transition:color .12s ease}',
+  '.dsh-cg-filter-chevron svg{width:12px;height:12px;display:block}',
+  // The pointer deepens the words rather than washing a fill under them: the label
+  // steps from secondary to primary and the disclosure mark from tertiary to
+  // secondary, which says the control is live without drawing a box around a line
+  // that already reads as the pane's title. The same emphasis holds while the list
+  // is open, since by then the pointer has usually left the trigger.
+  '.dsh-cg-filter:hover .dsh-cg-filter-label,.dsh-cg-filter[aria-expanded=true] .dsh-cg-filter-label{color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-filter:hover .dsh-cg-filter-chevron,.dsh-cg-filter[aria-expanded=true] .dsh-cg-filter-chevron{color:var(--dsw-alias-label-secondary)}',
+
   // Changed-path rows. The selected row keeps the hover fill's colour family but
   // takes the next step up the platform's ramp (`active` over `hover`), so the
   // row the page is on stays deeper than the row the pointer merely crosses —
-  // even when the pointer is resting on the selected row itself.
-  '.dsh-cg-row{display:flex;align-items:center;gap:2px;width:100%;height:26px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-  '.dsh-cg-row:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-  '.dsh-cg-row[aria-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
+  // even when the pointer is resting on the selected row itself. The fill lives
+  // on the wrapper rather than the selection button so it also covers the action
+  // at the row's end.
+  //
+  // The wrapper is also the stage control's containing block: the control is
+  // drawn over the row's end rather than in a slot of its own, which is what lets
+  // the selection button reach the row's own end and the hover bubble that hangs
+  // from it start outside the row instead of on top of the control.
+  '.dsh-cg-row-wrap{position:relative;display:flex;align-items:center;height:26px;padding-right:4px;border-radius:var(--dsw-radius-sm,6px)}',
+  '.dsh-cg-row-wrap:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-row-wrap[data-selected=true]{background:var(--dsw-alias-interactive-bg-active)}',
+  // The trailing padding reserves the action's width, so a long name still elides
+  // short of it and revealing the control never moves the text.
+  '.dsh-cg-row{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;height:26px;padding:0 26px 0 0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
+  // The stage control: laid over the row's end rather than given a flex slot, so
+  // the selection button underneath owns the full width. Hidden at rest and on
+  // hover/focus it arrives, which is what keeps a long list of rows quiet while
+  // leaving the action reachable from the keyboard (the button is in the tab
+  // order, and `focus-within` is what shows it).
+  '.dsh-cg-row-action{position:absolute;right:0;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary);opacity:0;pointer-events:none;cursor:pointer;transition:opacity .1s ease,color .1s ease,background-color .1s ease}',
+  '.dsh-cg-row-wrap:hover .dsh-cg-row-action,.dsh-cg-row-wrap:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
+  // A touch screen has no hover to reveal the action with, so the controls are
+  // simply there: a row's +/− is part of what the row is on such a device, not a
+  // decoration for a pointer that is only passing over it.
+  '@media (hover:none){.dsh-cg-row-action{opacity:1;pointer-events:auto}}',
+  '.dsh-cg-row-action:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-cg-row-action:disabled{opacity:.45;cursor:default}',
+  '.dsh-cg-row-action svg{width:12px;height:12px;display:block}',
   '.dsh-cg-badge{flex:none;width:13px;text-align:center;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;font-weight:700;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-badge[data-kind=added]{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-badge[data-kind=modified]{color:var(--dsw-alias-state-warn-primary)}',
@@ -717,10 +782,6 @@ const GIT_CSS = [
   '.dsh-cg-dot{flex:none;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-dir{color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-path .dsh-cg-dir{flex:0 100000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // The stage dot marks a row whose index side has content, so a file that is
-  // both staged and edited again is not mistaken for a plain modification.
-  '.dsh-cg-stage{flex:none;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-brand-primary)}',
-  '.dsh-cg-stage[data-staged=false]{background:transparent}',
 
   // The tree's folder rows.
   //
@@ -741,7 +802,8 @@ const GIT_CSS = [
   // `git.tsx` as one custom property per row, so the spacing stays here: fourteen
   // pixels a level is enough for a name to step in visibly under its folder and
   // small enough that a deep tree still leaves most of the sidebar for names.
-  '.dsh-cg-folder,.dsh-cg-row{padding-left:calc(6px + var(--dsh-cg-depth,0) * 14px)}',
+  '.dsh-cg-folder{padding-left:calc(6px + var(--dsh-cg-depth,0) * 14px)}',
+  '.dsh-cg-row-wrap{padding-left:calc(6px + var(--dsh-cg-depth,0) * 14px)}',
 
   // Commit rows.
   '.dsh-cg-commit{display:flex;flex-direction:column;gap:2px;width:100%;padding:5px 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
@@ -790,6 +852,10 @@ const GIT_CSS = [
   '.dsh-cg-main-head{flex:none;display:flex;align-items:center;gap:8px;min-height:30px;padding:4px 8px 4px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base)}',
   '.dsh-cg-main-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-main-subtitle{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+  // Which half of a path the patch is: a pill because it is a state of the pane
+  // rather than a second title, and quiet enough to sit beside the kind tag.
+  '.dsh-cg-main-side{flex:none;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:16px}',
+  '.dsh-cg-main-side[data-side=conflict]{color:var(--dsw-alias-state-error-primary)}',
   '.dsh-cg-stats{flex:none;display:flex;gap:6px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
   '.dsh-cg-added{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-deleted{color:var(--dsw-alias-state-error-primary)}',

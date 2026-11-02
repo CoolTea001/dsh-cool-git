@@ -4,13 +4,16 @@
  * The page is the whole of the tab: a sidebar carrying the changed-path list
  * above the commit history, and a diff pane taking every remaining pixel.
  * Changed paths come from `git status`, the history from `git log`, and the
- * diff pane shows either one path's patch against HEAD or one commit's whole
- * patch (see `api.ts` for the routes and `diff.ts` for the patch parser). The
- * sidebar's second row is the commit form — a message field and the button that
- * stages every change the changed-path list holds and records them as one commit
- * — and the two panes stack under it. Both of the sidebar's boundaries — its right
- * edge and the divider between the two lists — are the reader's to drag, and both
- * sizes are remembered between visits (see `layout.tsx`).
+ * diff pane shows one side of one path's change — the index against HEAD, or the
+ * worktree against the index — or one commit's whole patch (see `api.ts` for the
+ * routes and `diff.ts` for the patch parser). The list draws one tree at a time —
+ * the worktree's changes by default, then the index's, then the conflicts — chosen
+ * from its header. A row's trailing `+` or `−` moves its path between the first
+ * two. The sidebar's second row is the commit form — a message field, a button
+ * whose scope is the index or the whole tree, and the caret that switches between
+ * them — and the two panes stack under it. Both of the sidebar's boundaries —
+ * its right edge and the divider between the two lists — are the reader's to
+ * drag, and both sizes are remembered between visits (see `layout.tsx`).
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
@@ -70,6 +73,7 @@ import {
 import {
   checkoutBranch,
   commitAll,
+  commitStaged,
   createBranch,
   deleteBranches,
   fetchBranches,
@@ -87,6 +91,8 @@ import {
   pullBranch,
   pushBranch,
   saveSettings,
+  stagePath,
+  unstagePath,
 } from './api.js'
 import { isSnapshotFresh, readRepositorySnapshot, writeRepositorySnapshot } from './cache.js'
 import { suppressComposerSeat } from './chrome.js'
@@ -96,10 +102,13 @@ import {
   IconArrowRight,
   IconBranch,
   IconCheck,
+  IconChevronDown,
   IconCopy,
   IconFolder,
   IconGenerate,
+  IconMinus,
   IconMore,
+  IconPlus,
   IconPublish,
   IconPull,
   IconPush,
@@ -124,8 +133,10 @@ import {
   type BranchSafety,
   type ChangedFile,
   type ChangeKind,
+  type CommitScope,
   type CommitSummary,
   type DeleteBranchesPayload,
+  type DiffSide,
   type Failure,
   type LogPayload,
   type MessageModel,
@@ -195,10 +206,52 @@ const KIND_KEY: Readonly<Record<ChangeKind, MessageKey>> = {
 /** The half of a remote round trip that is running, if any. */
 type RemoteRun = 'pull' | 'push'
 
-/** Which row the diff pane is showing, if any. */
+/**
+ * Which row the diff pane is showing, if any.
+ *
+ * A changed path is named with the half of its change the row stands for: a file
+ * that is staged and then edited again appears once per half, and the two rows
+ * must select, highlight and diff independently. A commit needs no side.
+ */
 type Selection =
-  | { readonly kind: 'file'; readonly file: ChangedFile }
+  | { readonly kind: 'file'; readonly file: ChangedFile; readonly side: DiffSide }
   | { readonly kind: 'commit'; readonly commit: CommitSummary }
+
+/**
+ * The halves of one path that the sidebar lists.
+ *
+ * A path can be in the index, in the worktree, or both, and the two are separate
+ * rows: a partly staged file is one row under Staged and one under Changes. An
+ * untracked path is in neither porcelain column but is a worktree change, so it
+ * belongs to the unstaged list. A conflicted path is neither side: `git add`
+ * would mark it resolved, so it gets a list of its own with no stage control.
+ *
+ * @param file - one changed path.
+ * @returns the groups that list it, in sidebar order.
+ */
+function sidesOf(file: ChangedFile): readonly DiffSide[] {
+  if (file.conflicted) return ['conflict']
+  const sides: DiffSide[] = []
+  if (file.staged) sides.push('staged')
+  if (file.unstaged || file.untracked) sides.push('unstaged')
+  return sides
+}
+
+/**
+ * Whether one path is drawn in the changed-path list on screen.
+ *
+ * The pane draws one list at a time — the worktree's changes by default — and this
+ * decides which paths belong in it. A path that holds both halves is in both
+ * lists: the index holds one version of it and the worktree another, and each
+ * list states one of them.
+ *
+ * @param file - one changed path.
+ * @param side - the list the pane is showing.
+ * @returns true when the path has that half.
+ */
+function inFilter(file: ChangedFile, side: DiffSide): boolean {
+  return sidesOf(file).includes(side)
+}
 
 /** The diff pane's current answer, or the fact that it is still loading. */
 interface DocState {
@@ -216,19 +269,27 @@ interface DocState {
 /**
  * What one session's page remembers between mounts.
  *
- * Only the page's own reading position: the row it had selected and the patch
- * that row had loaded. The repository answers are `cache.ts`'s business; this is
- * what makes a return to the tab feel like a return rather than a reload — the
- * reader lands on the diff they were reading, drawn from the parsed patch they
- * already had, while the page re-reads the repository around it.
+ * Only the page's own reading position: the list it had open, the row it had
+ * selected and the patch that row had loaded. The repository answers are
+ * `cache.ts`'s business; this is what makes a return to the tab feel like a
+ * return rather than a reload — the reader lands on the list and diff they were
+ * reading, drawn from the parsed patch they already had, while the page re-reads
+ * the repository around it.
  */
 interface PageMemory {
+  readonly filter: DiffSide
   readonly selection: Selection | null
   readonly doc: DocState | null
 }
 
-/** The memory of a session whose page has not been open in this browser yet. */
-const EMPTY_PAGE_MEMORY: PageMemory = { selection: null, doc: null }
+/**
+ * The memory of a session whose page has not been open in this browser yet.
+ *
+ * The worktree's list is the one it opens on: the page exists to stage and
+ * commit, and the changes still waiting in the worktree are what that starts
+ * from — the index and the conflicts are one choice away in the header.
+ */
+const EMPTY_PAGE_MEMORY: PageMemory = { filter: 'unstaged', selection: null, doc: null }
 
 /** How many sessions' reading positions the page keeps in memory. */
 const PAGE_MEMORY_LIMIT = 8
@@ -355,7 +416,9 @@ interface GitError {
  */
 function selectionKey(selection: Selection | null): string {
   if (selection === null) return ''
-  return selection.kind === 'file' ? `file:${selection.file.path}` : `commit:${selection.commit.hash}`
+  return selection.kind === 'file'
+    ? `file:${selection.side}:${selection.file.path}`
+    : `commit:${selection.commit.hash}`
 }
 
 /**
@@ -816,6 +879,21 @@ export function GitView(props: {
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   /** Whether the changed-path pane's commit is in flight. */
   const [committing, setCommitting] = useState(false)
+  /** The scope the commit form's button is set to; staged is the default. */
+  const [commitScope, setCommitScope] = useState<CommitScope>('staged')
+  /**
+   * The row whose index write is in flight, as `side:path`, or null at rest.
+   *
+   * One at a time, like every other write on this page: a second `git add`
+   * started while the first still has the index lock is a failure the user did
+   * not cause. The row's own button shows it, and every action in the list is
+   * disabled for the wait.
+   */
+  const [staging, setStaging] = useState<string | null>(null)
+  /** Which list the changed-path pane is showing. */
+  const [changeFilter, setChangeFilter] = useState<DiffSide>(() => remembered.filter)
+  /** Whether the header's list menu is showing. */
+  const [filterOpen, setFilterOpen] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(() => remembered.selection)
   const [doc, setDoc] = useState<DocState | null>(() => remembered.doc)
   /** The failure the dialog is stating, or null while none is open. */
@@ -945,7 +1023,7 @@ export function GitView(props: {
   }, [])
 
   /**
-   * Drop a file selection the newest status no longer lists.
+   * Keep a file selection on the newest status, or drop it.
    *
    * The selected row can leave the working tree while the tab is away — a
    * commit, a revert, or the agent cleaning up after itself — and a path the
@@ -954,12 +1032,24 @@ export function GitView(props: {
    * commit selection is left alone: the history is bounded, and an older commit
    * falling off the list is no evidence that it disappeared.
    *
+   * A path that is still listed may have moved between the halves — an external
+   * `git add` or `git restore` turns one row into the other — so a selection
+   * whose side no longer exists follows the path to the half that does, which is
+   * the same patch for the same file rather than a pane over a row that is gone.
+   *
    * @param status - the status answer to judge the selection against.
    */
   const pruneSelection = useCallback((status: StatusPayload | null): void => {
     if (status?.ok !== true) return
-    const paths = new Set((status.files ?? []).map(file => file.path))
-    setSelection(current => current?.kind === 'file' && !paths.has(current.file.path) ? null : current)
+    setSelection(current => {
+      if (current?.kind !== 'file') return current
+      const file = (status.files ?? []).find(candidate => candidate.path === current.file.path)
+      if (file === undefined) return null
+      const sides = sidesOf(file)
+      if (sides.includes(current.side)) return { ...current, file }
+      const next = sides[0]
+      return next === undefined ? null : { kind: 'file', file, side: next }
+    })
   }, [])
 
   /** Re-read the repository state and the history, and cache both answers. */
@@ -1280,23 +1370,31 @@ export function GitView(props: {
   }, [pushRemote])
 
   /**
-   * Commit every change the changed-path list is showing, under the message the
-   * form holds.
+   * Commit under the message the form holds, with the scope the form is set to.
    *
-   * The page asks for the whole thing — the stage and the commit — in one call,
-   * because that is the one decision the form offers: there is no per-path
-   * staging on this page, so a commit interrupted between two requests would
-   * leave an index nothing here could finish. What the answer decides is whether
-   * the form keeps its message: a refusal leaves it where it is, because the
-   * message is usually the thing to fix, and the repository is re-read either way
-   * — even a refusal can have staged something first.
+   * `all` is the old one-call decision: stage every change the list holds and
+   * record it, because that is what the button offers in that mode. `staged`
+   * commits the index as it stands — the page's own `+` and `−` actions already
+   * decided what belongs there — and therefore can leave the worktree half of a
+   * path behind, which is the point of the mode. What the answer decides is
+   * whether the form keeps its message: a refusal leaves it where it is, because
+   * the message is usually the thing to fix, and the repository is re-read either
+   * way — even a refusal can have changed the index first.
+   *
+   * A staged commit keeps the reader's row where it can: the diff on screen may
+   * be the other half of the same path, which is still in the worktree. The
+   * re-read's pruning follows the selection to whichever half still exists, and
+   * drops it only when the path left the list entirely.
    *
    * @param message - the commit message the form holds, already non-empty.
    * @returns whether the commit was made, which is what clears the form.
    */
   const handleCommit = useCallback((message: string): Promise<boolean> => {
     setCommitting(true)
-    return commitAll(sessionId, message).then(result => {
+    const request = commitScope === 'staged'
+      ? commitStaged(sessionId, message)
+      : commitAll(sessionId, message)
+    return request.then(result => {
       setCommitting(false)
       if (result?.ok !== true) {
         const lines = [reasonOf(t, result, 'title.commit')]
@@ -1308,13 +1406,52 @@ export function GitView(props: {
         handleSynced()
         return false
       }
-      // The commit emptied the diffs just recorded, so the selection goes with
-      // them and the page re-reads the tree, the history, and the branch's
-      // divergence in one pass.
-      handleSwitched()
+      // A commit-all emptied every diff it recorded, so the selection goes with
+      // them. A staged commit may have left the worktree half of the selected
+      // path, and the re-read's pruning is what keeps that row readable.
+      if (commitScope === 'all') handleSwitched()
+      else handleSynced()
       return true
     })
-  }, [sessionId, handleSynced, handleSwitched, reportError, t])
+  }, [commitScope, sessionId, handleSynced, handleSwitched, reportError, t])
+
+  /**
+   * Move one row's path between the index and the worktree.
+   *
+   * The request answers with the fresh status, so the page paints the state the
+   * write produced rather than asking for a second read another writer could
+   * race. The row the reader had selected follows the path to its new half — the
+   * patch is the same file, and a pane left over the half that just disappeared
+   * would be a diff for a row that is no longer listed. A refusal is the error
+   * dialog's, and the page re-reads anyway: a failed `git add` can still have
+   * touched the index, and a stale row is worse than a slow one.
+   *
+   * @param file - the changed path the row names.
+   * @param side - the half the row is listed under, which is what decides the
+   *   direction: a staged row unstages, an unstaged row stages.
+   */
+  const handleStageToggle = useCallback((file: ChangedFile, side: DiffSide): void => {
+    if (side === 'conflict' || staging !== null) return
+    const key = `${side}:${file.path}`
+    setStaging(key)
+    const request = side === 'staged'
+      ? unstagePath(sessionId, file.path, file.origPath)
+      : stagePath(sessionId, file.path)
+    void request.then(result => {
+      setStaging(null)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, side === 'staged' ? 'title.unstage' : 'title.stage', result))
+        void refresh()
+        return
+      }
+      if (result.status === undefined) return
+      setStatus(result.status)
+      writeRepositorySnapshot(sessionId, result.status, log)
+      // The selection is not moved here: the list filter decides which half is
+      // drawn, and the effect above follows the path to it — or closes the pane
+      // when the new half is not in the list that is showing.
+    })
+  }, [sessionId, staging, log, refresh, reportError, t])
 
   /**
    * Ask the Host for a commit message written for the changes on disk.
@@ -1323,7 +1460,8 @@ export function GitView(props: {
    * route resolves the repository from the session's own header and takes the
    * model from the deployment's current default selection, so the request names
    * neither — and a refusal, from a clean tree to a missing model, is reported the
-   * way every other failed request is.
+   * way every other failed request is. The scope is the form's commitment: a
+   * staged-only commit gets a message about the index alone.
    *
    * Nothing is re-read on success: writing a message changes no file and no
    * history, so the status, the commit list, and the patch on screen are all still
@@ -1334,7 +1472,7 @@ export function GitView(props: {
    * the request failed and the dialog is already stating why.
    */
   const handleGenerateMessage = useCallback((): Promise<GeneratedMessage | null> => {
-    return generateMessage(sessionId).then(result => {
+    return generateMessage(sessionId, commitScope).then(result => {
       if (result?.ok !== true || typeof result.message !== 'string' || result.message === '') {
         reportError({
           title: t('title.message'),
@@ -1347,21 +1485,67 @@ export function GitView(props: {
       const warnings = result.warnings ?? []
       return { message: result.message, ...(warnings.length === 0 ? {} : { warning: warnings.join('\n') }) }
     })
-  }, [sessionId, reportError, t])
+  }, [commitScope, sessionId, reportError, t])
 
   // One operation at a time, wherever the control that asks for it lives: the
   // branch pill and the More menu in the toolbar, the remote control in the
-  // history pane's header, and the commit in the changed-path pane's. Stating it
-  // once here is what keeps a second click from queueing a second checkout, a
-  // second merge, a second create or delete, a second round trip, a second
-  // commit, or a second fetch behind the first. Generation is not one of these:
+  // history pane's header, the commit in the changed-path pane's, and the
+  // index write behind one row's stage control. Stating it once here is what
+  // keeps a second click from queueing a second checkout, a second merge, a
+  // second create or delete, a second round trip, a second commit, a second
+  // fetch, or a second stage behind the first. Generation is not one of these:
   // it writes nothing, so it is the form's own state rather than the page's, and
   // a slow model call must not lock the branch pill or More.
   const busy = switching !== null || merging !== null || syncing !== null || committing
-    || fetching || creating || deleting
+    || fetching || creating || deleting || staging !== null
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
+  // One count per half, for the commit button and the generate control. A
+  // half-staged path is counted in both lists, which is what it is: the index
+  // holds one version and the worktree another, and each count names rows rather
+  // than distinct paths. A conflicted path is in neither — it cannot be
+  // committed until it is resolved.
+  const stagedCount = files.filter(file => file.staged && !file.conflicted).length
+  const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
+  const conflictCount = files.filter(file => file.conflicted).length
+  /** How many rows the list on screen holds, for its header. */
+  const filterCount = changeFilter === 'staged'
+    ? stagedCount
+    : changeFilter === 'unstaged'
+      ? unstagedCount
+      : conflictCount
+  /** The header's own label: the list it is showing and how many rows it holds. */
+  const filterLabel = headText(t(GROUP_KEY[changeFilter]), filterCount)
+  // Each row carries its own list's count, including the lists a reader is not in:
+  // the numbers are how the choice is made. A list with nothing in it is disabled
+  // rather than hidden, so the menu always states the same three things.
+  const filterItems: readonly MenuEntry[] = [
+    { id: 'staged', label: headText(t('stage.staged'), stagedCount), disabled: stagedCount === 0 },
+    { id: 'unstaged', label: headText(t('stage.unstaged'), unstagedCount), disabled: unstagedCount === 0 },
+    { id: 'conflict', label: headText(t('stage.conflict'), conflictCount), disabled: conflictCount === 0 },
+  ]
+
+  // Keep the selected row meaningful in the list that is showing: a filter names
+  // the halves it draws, so a selection whose half is no longer drawn — because
+  // the list was switched, or because the path moved between halves — follows the
+  // path to the half the filter does draw, or closes when the list no longer
+  // holds it. A filtered-out path is not a failure, so the diff pane simply goes
+  // back to its empty state.
+  useEffect(() => {
+    if (status?.ok !== true) return
+    setSelection(current => {
+      if (current?.kind !== 'file') return current
+      const file = files.find(candidate => candidate.path === current.file.path)
+      if (file === undefined) return null
+      const side = inFilter(file, changeFilter) ? changeFilter : undefined
+      if (side === undefined) return null
+      // The side is what the pane is showing; a refresh that leaves it the same
+      // must not restate the selection, or every re-read would reload the patch
+      // under a reader who did not ask for it.
+      return side === current.side ? current : { kind: 'file', file, side }
+    })
+  }, [files, changeFilter, status])
 
   // Re-resolve a selected path against the newest `status`, so a refresh picks
   // up its stage flags while the selection itself survives the round trip.
@@ -1394,7 +1578,7 @@ export function GitView(props: {
         // between the click and this request — so the page words it itself, as
         // the text a route would otherwise have carried.
         ? Promise.resolve({ ok: false, error: t('fallback.fileGone') })
-        : fetchDiff(sessionId, activeFile)
+        : fetchDiff(sessionId, activeFile, selection.side, activeFile.untracked)
 
     void request.then(result => {
       if (cancelled) return
@@ -1415,8 +1599,8 @@ export function GitView(props: {
   // patch effect, so what is remembered is the patch that effect last left —
   // including the cached one it restored rather than a spinner.
   useEffect(() => {
-    writePageMemory(sessionId, { selection, doc })
-  }, [sessionId, selection, doc])
+    writePageMemory(sessionId, { filter: changeFilter, selection, doc })
+  }, [sessionId, changeFilter, selection, doc])
 
   const current = doc !== null && doc.key === selectionKey(selection) ? doc : null
 
@@ -1460,15 +1644,20 @@ export function GitView(props: {
         />
         {/* The commit form is the sidebar's own third row, under the toolbar and
             above both panes: what it commits is the changed-path pane's list, but
-            what it acts on is the whole working tree, so it belongs to the column
-            rather than to either pane. The form is `flex:none` so it keeps its rows
-            whatever height the panes are dragged to, and it draws no rule under
-            itself: the toolbar, the form, and the Changed files header beneath it
-            read as one block, with nothing cutting the column between them. */}
+            its scope belongs to the form as a whole, so it belongs to the column
+            rather than to either pane. The form is `flex:none` so it keeps its
+            rows whatever height the panes are dragged to, and it draws no rule
+            under itself: the toolbar, the form, and the Changed files header
+            beneath it read as one block, with nothing cutting the column between
+            them. */}
         <CommitBar
           t={t}
-          disabled={status?.ok !== true || files.length === 0 || busy || refreshing}
+          disabled={status?.ok !== true || busy || refreshing}
           committing={committing}
+          scope={commitScope}
+          stagedCount={stagedCount}
+          allCount={files.length}
+          onScopeChange={setCommitScope}
           onCommit={handleCommit}
           onGenerate={handleGenerateMessage}
         />
@@ -1478,7 +1667,39 @@ export function GitView(props: {
             own and the panes stay the only flow children of the column. */}
         <section ref={filesPane} className="dsh-cg-pane dsh-cg-files">
           <header className="dsh-cg-head">
-            <span className="dsh-cg-head-title">{headText(t('pane.files'), files.length)}</span>
+            {/* The header is the list's switch, not a caption: the pane draws one
+                tree at a time, and this is where a reader moves between the
+                worktree's changes, the index's and the conflicts. The label
+                carries the current list's count, so the count and the tree below
+                it always describe the same thing. */}
+            <Menu
+              open={filterOpen}
+              anchor={(
+                <button
+                  type="button"
+                  className="dsh-cg-filter"
+                  aria-haspopup="menu"
+                  aria-expanded={filterOpen}
+                  aria-label={filterLabel}
+                  onClick={() => setFilterOpen(value => !value)}
+                >
+                  <span className="dsh-cg-filter-label">{filterLabel}</span>
+                  <span className="dsh-cg-filter-chevron" aria-hidden="true"><IconChevronDown /></span>
+                </button>
+              )}
+              items={filterItems}
+              selectedId={changeFilter}
+              onSelect={id => {
+                setFilterOpen(false)
+                if (id === 'staged' || id === 'unstaged' || id === 'conflict') {
+                  setChangeFilter(id)
+                }
+              }}
+              onClose={() => setFilterOpen(false)}
+              align="start"
+              side="bottom"
+              className="dsh-cg-filter-anchor"
+            />
           </header>
           <div className="dsh-cg-list">
             <ChangeList
@@ -1486,8 +1707,11 @@ export function GitView(props: {
               status={status}
               loaded={loaded}
               files={files}
+              side={changeFilter}
               selection={selection}
-              onSelect={file => setSelection({ kind: 'file', file })}
+              staging={staging}
+              onSelect={(file, side) => setSelection({ kind: 'file', file, side })}
+              onToggleStage={handleStageToggle}
             />
           </div>
           <ResizeHandle
@@ -3842,10 +4066,19 @@ interface GeneratedMessage {
  * corner is the controls' own, which is what makes the three read as one form (see
  * `styles.ts`).
  *
- * It is a form of one decision, and that decision is the plain one: everything
- * the changed-path list holds goes in — tracked edits, deletions, and untracked
- * files alike — because nothing on this page offers a per-path choice that could
- * make the set smaller.
+ * The form asks one question with two possible answers, and the reader says
+ * which before they ask it: the commit takes the index alone, or the whole
+ * working tree. `staged` is the default because the changed-path list now offers
+ * `+` and `−` — a reader who has moved paths into the index has already said what
+ * the commit should hold, and a button that quietly took the rest as well would
+ * make that work meaningless. `all` is the explicit alternative, chosen from the
+ * caret button that butts against the commit button, for the reader who has staged
+ * nothing and wants the one-click commit the tab used to offer.
+ *
+ * The scope is the page's state rather than this form's, because both the
+ * Generate request and the commit request read it and the button's disabled state
+ * depends on the counts the page's status holds. The message stays here for the
+ * reason below.
  *
  * The message is this component's own state rather than the page's, and that is
  * deliberate: the page renders thousands of diff rows, so a keystroke that
@@ -3865,9 +4098,12 @@ interface GeneratedMessage {
  *
  * @param props.t - the page's translate seat.
  * @param props.disabled - whether the repository can take a commit right now:
- * there is none to name, nothing is changed, or the page is busy with something
- * else.
+ * there is none to name, or the page is busy with something else.
  * @param props.committing - the commit this form asked for is in flight.
+ * @param props.scope - the half the commit button is set to.
+ * @param props.stagedCount - how many rows the index holds.
+ * @param props.allCount - how many changed paths the whole list holds.
+ * @param props.onScopeChange - switches the commit's scope.
  * @param props.onCommit - runs the commit; resolves true when one was made.
  * @param props.onGenerate - asks the Host for a message; resolves null when the
  * request failed and the page has already reported it, in which case the field is
@@ -3878,14 +4114,27 @@ function CommitBar(props: {
   readonly t: Translate
   readonly disabled: boolean
   readonly committing: boolean
+  readonly scope: CommitScope
+  readonly stagedCount: number
+  readonly allCount: number
+  readonly onScopeChange: (scope: CommitScope) => void
   readonly onCommit: (message: string) => Promise<boolean>
   readonly onGenerate: () => Promise<GeneratedMessage | null>
 }): ReactElement {
-  const { t, disabled, committing, onCommit, onGenerate } = props
+  const { t, disabled, committing, scope, stagedCount, allCount, onScopeChange, onCommit, onGenerate } = props
   const [message, setMessage] = useState('')
   const [generating, setGenerating] = useState(false)
   const [warning, setWarning] = useState('')
+  /** Whether the scope menu is showing. */
+  const [scopeOpen, setScopeOpen] = useState(false)
   const field = useRef<HTMLTextAreaElement | null>(null)
+
+  /** How many rows the current scope would commit. */
+  const count = scope === 'staged' ? stagedCount : allCount
+  /** Whether the current scope has anything to commit at all. */
+  const nothingToCommit = count === 0
+  /** Whether Generate's scope has anything to describe. */
+  const nothingToGenerate = scope === 'staged' ? stagedCount === 0 : allCount === 0
 
   /**
    * Measure the field to what it holds.
@@ -3914,7 +4163,7 @@ function CommitBar(props: {
    */
   const submit = useCallback((): void => {
     const trimmed = message.trim()
-    if (trimmed === '' || disabled || committing || generating) return
+    if (trimmed === '' || disabled || committing || generating || nothingToCommit) return
     void onCommit(trimmed).then(made => {
       if (!made) return
       // The findings belonged to the changes this commit just recorded, so they
@@ -3922,7 +4171,28 @@ function CommitBar(props: {
       setMessage('')
       setWarning('')
     })
-  }, [message, disabled, committing, generating, onCommit])
+  }, [message, disabled, committing, generating, nothingToCommit, onCommit])
+
+  /**
+   * Switch the commit's scope, and drop a generated finding with the old one.
+   *
+   * The finding was about the changes the previous scope described; keeping it
+   * over a different set would be the form claiming a check it never ran.
+   *
+   * @param next - the scope the reader picked.
+   */
+  const chooseScope = useCallback((next: CommitScope): void => {
+    setScopeOpen(false)
+    if (next === scope) return
+    setWarning('')
+    onScopeChange(next)
+  }, [scope, onScopeChange])
+
+  /** The caret menu's two rows, with the current scope marked by the platform. */
+  const scopeItems: readonly MenuEntry[] = [
+    { id: 'staged', label: t('commit.scopeStaged') },
+    { id: 'all', label: t('commit.scopeAll') },
+  ]
 
   /**
    * Ask the Host for a message and put it in the field.
@@ -3934,7 +4204,7 @@ function CommitBar(props: {
    * the user typed would be this control taking a failure out on their work.
    */
   const generate = useCallback((): void => {
-    if (disabled || committing || generating) return
+    if (disabled || committing || generating || nothingToGenerate) return
     setGenerating(true)
     setWarning('')
     void onGenerate().then(result => {
@@ -3943,7 +4213,7 @@ function CommitBar(props: {
       setMessage(result.message)
       setWarning(result.warning ?? '')
     })
-  }, [disabled, committing, generating, onGenerate])
+  }, [disabled, committing, generating, nothingToGenerate, onGenerate])
 
   return (
     <div className="dsh-cg-commit-bar">
@@ -3957,8 +4227,8 @@ function CommitBar(props: {
           Generate glyph at the field's right end. It belongs inside the frame
           rather than beside the field because it is about the text in the field —
           it writes that text — and because the row under it is the one decision
-          this form asks for (commit everything), which the button there states on
-          its own across the whole width. It is a glyph rather than a word because
+          this form asks for (a commit, at the scope the button states), which the
+          button there names on its own. It is a glyph rather than a word because
           a label at the field's right end would take the room the message needs;
           its accessible name says what it does, and it carries no bubble, so
           nothing hangs over the text it writes into. */}
@@ -3990,13 +4260,14 @@ function CommitBar(props: {
             it. It is still a real button — it takes focus, it can be disabled,
             and it carries its own accessible name — and the only thing it says
             on hover is that it is live, by deepening its own colour (see
-            `styles.ts`). */}
+            `styles.ts`). It writes for the scope the button below is set to, so
+            it is disabled when that scope has nothing to describe. */}
         <button
           type="button"
           className="dsh-cg-commit-generate"
           aria-label={generating ? t('commit.generating') : t('commit.generate')}
           data-busy={generating}
-          disabled={disabled || committing || generating}
+          disabled={disabled || committing || generating || nothingToGenerate}
           onClick={generate}
         >
           {generating ? SPINNER_ICON : <IconGenerate />}
@@ -4005,40 +4276,91 @@ function CommitBar(props: {
       {warning === '' ? null : (
         <p className="dsh-cg-commit-note" role="status">{t('commit.warning', { text: warning })}</p>
       )}
-      <Button
-        className="dsh-cg-commit-send"
-        variant="primary"
-        size="sm"
-        disabled={disabled || committing || generating || message.trim() === ''}
-        onClick={submit}
-      >
-        {committing ? t('commit.busy') : t('commit.button')}
-      </Button>
+      {/* The two controls are one decision and its scope, and they stand as two
+          buttons with no gap between them: the label commits, the caret at its
+          end opens the only other answer. Each carries its own fill and hover,
+          and each keeps its own disabled state — the caret must stay live while
+          the label cannot act, because choosing a scope is how a reader leaves
+          exactly that state. The halves are separate buttons rather than one
+          button with a mark inside it — a caret that is not a control of its own
+          could not be reached from the keyboard, and one that is could not live
+          inside the button it would have to sit in. The menu marks the current
+          scope, so the label and the checked row always agree. */}
+      <div className="dsh-cg-commit-actions">
+        <button
+          type="button"
+          className="dsh-cg-commit-send"
+          disabled={disabled || committing || generating || message.trim() === '' || nothingToCommit}
+          onClick={submit}
+        >
+          {/* The label is its own span so a narrow sidebar elides it instead of
+              wrapping it: the button is the platform's 28px tall, and a second
+              line of text would spill out of a box that cannot grow. */}
+          <span className="dsh-cg-commit-label">
+            {committing
+              ? t('commit.busy')
+              : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll', { count })}
+          </span>
+        </button>
+        <Menu
+          open={scopeOpen}
+          anchor={(
+            <button
+              type="button"
+              className="dsh-cg-commit-scope"
+              aria-label={t('commit.scope')}
+              aria-haspopup="menu"
+              aria-expanded={scopeOpen}
+              disabled={committing || generating}
+              onClick={() => setScopeOpen(value => !value)}
+            >
+              {/* No bubble of its own: the menu is one click away and states the
+                  same two scopes itself, so a tooltip here would repeat the list
+                  it opens. The accessible name still says what it does. */}
+              <span className="dsh-cg-commit-scope-caret" aria-hidden="true"><IconChevronDown /></span>
+            </button>
+          )}
+          items={scopeItems}
+          selectedId={scope}
+          onSelect={id => chooseScope(id === 'all' ? 'all' : 'staged')}
+          onClose={() => setScopeOpen(false)}
+          align="end"
+          side="bottom"
+          className="dsh-cg-commit-scope-anchor"
+        />
+      </div>
     </div>
   )
 }
 
 /**
- * The changed-path tree, or the reason there is none to draw.
+ * The changed-path tree for the list the header is showing.
  *
- * A clean working tree draws nothing at all: the header's own count already
- * says zero, so a line inside the pane would only say it a second time.
+ * One tree at a time: the header's menu picks the list, and this component draws
+ * exactly that. A path staged and edited again is one row in each list — the
+ * worktree's row offers `+`, which stages what the reader is looking at, and the
+ * index's offers `−` — so switching lists is how a reader moves between the
+ * halves, rather than reading two stacked trees that scroll and collapse
+ * independently.
  *
- * The paths are grouped by directory rather than listed flat, so a run of files
- * from one directory reads as one block and the directory is named once above
- * them instead of on every row. Folders open by default — the pane exists to
- * show what changed, and a reader who has just opened the tab should not have to
- * unfold every directory to find out. A folder the reader closes stays closed
- * across status refreshes, which is why the closed set lives here rather than
- * being derived from the answer; a folder that disappears simply stops being
- * drawn, and a new one arrives open.
+ * Within the list the paths are grouped by directory rather than listed flat, so
+ * a run of files from one directory reads as one block and the directory is
+ * named once above them instead of on every row. Folders open by default — the
+ * pane exists to show what changed, and a reader who has just opened the tab
+ * should not have to unfold every directory to find out. A folder the reader
+ * closes stays closed across status refreshes, which is why the closed set lives
+ * here rather than being derived from the answer; one that disappears simply
+ * stops being drawn, and a new one arrives open.
  *
  * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
  * @param props.loaded - at least one answer has arrived.
- * @param props.files - the changed paths the tree is built from.
+ * @param props.files - every changed path; the list picks the rows to draw.
+ * @param props.side - which list the header is showing.
  * @param props.selection - the current selection, for the selected row's state.
- * @param props.onSelect - called with the file the user picked.
+ * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.onSelect - called with the file and the half the reader picked.
+ * @param props.onToggleStage - moves one row's path in or out of the index.
  * @returns the list body.
  */
 function ChangeList(props: {
@@ -4046,17 +4368,21 @@ function ChangeList(props: {
   readonly status: StatusPayload | null
   readonly loaded: boolean
   readonly files: readonly ChangedFile[]
+  readonly side: DiffSide
   readonly selection: Selection | null
-  readonly onSelect: (file: ChangedFile) => void
+  readonly staging: string | null
+  readonly onSelect: (file: ChangedFile, side: DiffSide) => void
+  readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
 }): ReactElement {
-  const { t, status, loaded, files, selection, onSelect } = props
+  const { t, status, loaded, files, side, selection, staging, onSelect, onToggleStage } = props
 
   /** The folders the reader closed, keyed by their repository-relative path. */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
-  // Built only when the answer changes: a status refresh rebuilds the tree,
-  // while a selection or an indentation change leaves it alone.
-  const tree = useMemo(() => buildFileTree(files), [files])
+  // Built only when the answer or the list changes: a status refresh rebuilds the
+  // tree, while a selection or an indentation change leaves it alone.
+  const visible = useMemo(() => files.filter(file => inFilter(file, side)), [files, side])
+  const tree = useMemo(() => buildFileTree(visible), [visible])
 
   const toggleFolder = useCallback((path: string): void => {
     setCollapsed(previous => {
@@ -4082,11 +4408,14 @@ function ChangeList(props: {
           key={folder.path}
           t={t}
           folder={folder}
+          side={side}
           depth={0}
           collapsed={collapsed}
           onToggle={toggleFolder}
           selection={selection}
+          staging={staging}
           onSelect={onSelect}
+          onToggleStage={onToggleStage}
         />
       ))}
       {tree.files.map(file => (
@@ -4094,13 +4423,23 @@ function ChangeList(props: {
           key={file.path}
           t={t}
           file={file}
+          side={side}
           depth={0}
           selection={selection}
+          staging={staging}
           onSelect={onSelect}
+          onToggleStage={onToggleStage}
         />
       ))}
     </>
   )
+}
+
+/** The dictionary entry each list's heading is worded from. */
+const GROUP_KEY: Readonly<Record<DiffSide, MessageKey>> = {
+  staged: 'stage.staged',
+  unstaged: 'stage.unstaged',
+  conflict: 'stage.conflict',
 }
 
 /**
@@ -4120,23 +4459,32 @@ function ChangeList(props: {
  *
  * @param props.t - the page's translate seat.
  * @param props.folder - the folder to draw, with its children.
+ * @param props.side - the list this folder is drawn under, which decides each
+ *   file's side.
  * @param props.depth - how many folder rows the folder sits under.
  * @param props.collapsed - the folders the reader closed.
  * @param props.onToggle - asks the page to flip one folder.
  * @param props.selection - the current selection, for the selected row's state.
- * @param props.onSelect - called with the file the user picked.
+ * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.onSelect - called with the file and the half the reader picked.
+ * @param props.onToggleStage - moves one row's path in or out of the index.
  * @returns the folder row, and its open children.
  */
 function FolderBranch(props: {
   readonly t: Translate
   readonly folder: FileTreeFolder
+  readonly side: DiffSide
   readonly depth: number
   readonly collapsed: ReadonlySet<string>
   readonly onToggle: (path: string) => void
   readonly selection: Selection | null
-  readonly onSelect: (file: ChangedFile) => void
+  readonly staging: string | null
+  readonly onSelect: (file: ChangedFile, side: DiffSide) => void
+  readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
 }): ReactElement {
-  const { t, folder, depth, collapsed, onToggle, selection, onSelect } = props
+  const {
+    t, folder, side, depth, collapsed, onToggle, selection, staging, onSelect, onToggleStage,
+  } = props
   const open = !collapsed.has(folder.path)
 
   return (
@@ -4161,11 +4509,14 @@ function FolderBranch(props: {
               key={child.path}
               t={t}
               folder={child}
+              side={side}
               depth={depth + 1}
               collapsed={collapsed}
               onToggle={onToggle}
               selection={selection}
+              staging={staging}
               onSelect={onSelect}
+              onToggleStage={onToggleStage}
             />
           ))}
           {folder.files.map(file => (
@@ -4173,9 +4524,12 @@ function FolderBranch(props: {
               key={file.path}
               t={t}
               file={file}
+              side={side}
               depth={depth + 1}
               selection={selection}
+              staging={staging}
               onSelect={onSelect}
+              onToggleStage={onToggleStage}
             />
           ))}
         </>
@@ -4185,78 +4539,131 @@ function FolderBranch(props: {
 }
 
 /**
- * One changed file in the tree: its state letter, its own name, and whether the
- * index holds it.
+ * One changed file in the tree: its state letter, its own name, and the control
+ * that moves it between the index and the worktree.
  *
  * The row names the file alone — the folders it sits under are the rows above
  * it — except for a rename, whose source path trails the name in the dimmed
  * column because it is the one part of the path the tree cannot place. The
- * tooltip still states the whole path and the state in words, since the row
- * itself has room for a letter and an elided name at most.
+ * tooltip still states the whole path, the state, and the half this row stands
+ * for, since the row itself has room for a letter and an elided name at most.
+ *
+ * The stage control is a sibling of the selection button rather than a child:
+ * a button inside a button is invalid markup, its clicks bubble as a selection,
+ * and a reader cannot tab to it. The row is therefore a wrapper that owns the
+ * hover, the indent and the selected fill, with the selection button taking the
+ * width and the action sitting in its own trailing slot. The action is shown on
+ * hover and on focus-within, so the keyboard can reach it too, and Space on the
+ * selected row does the same thing without moving focus — the shortcut a list of
+ * paths invites.
+ *
+ * Only the opposite half's action is offered: a staged row shows `−` (unstage),
+ * an unstaged row `+` (stage). A conflicted row shows neither, because `git add`
+ * on it means "resolved" and the page cannot know that the reader finished
+ * editing. A path that holds both halves is one row in each list: the worktree
+ * side's row offers `+`, the index side's `−`.
  *
  * @param props.t - the page's translate seat.
  * @param props.file - the changed path this row names.
+ * @param props.side - the list this row is drawn in, which is the side it stands for.
  * @param props.depth - how many folder rows the file sits under.
  * @param props.selection - the current selection, for the selected row's state.
- * @param props.onSelect - called with the file the user picked.
+ * @param props.staging - the row whose index write is in flight, as `side:path`.
+ * @param props.onSelect - called with the file and the half the reader picked.
+ * @param props.onToggleStage - moves this row's path in or out of the index.
  * @returns the row.
  */
 function ChangeRow(props: {
   readonly t: Translate
   readonly file: ChangedFile
+  readonly side: DiffSide
   readonly depth: number
   readonly selection: Selection | null
-  readonly onSelect: (file: ChangedFile) => void
+  readonly staging: string | null
+  readonly onSelect: (file: ChangedFile, side: DiffSide) => void
+  readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
 }): ReactElement {
-  const { t, file, depth, selection, onSelect } = props
+  const { t, file, side, depth, selection, staging, onSelect, onToggleStage } = props
   const { name } = splitPath(file.path)
+  const key = `${side}:${file.path}`
+  const selected = selection?.kind === 'file'
+    && selection.file.path === file.path
+    && selection.side === side
+  const busy = staging === key
+  const actionLabel = t(side === 'staged' ? 'stage.unstageFile' : 'stage.stageFile', { path: name })
 
   return (
-    // The bubble is portaled so it can sit beside the sidebar rather than inside
-    // the list's own scroll box, which would clip it; a path too long for the
-    // cap wraps inside the bubble.
-    <Tooltip label={rowLabel(t, file)} side="right" portal maxWidth={TOOLTIP_MAX_WIDTH}>
-      <button
-        type="button"
-        className="dsh-cg-row"
-        style={treeDepth(depth)}
-        aria-selected={selection?.kind === 'file' && selection.file.path === file.path}
-        onClick={() => onSelect(file)}
+    <div className="dsh-cg-row-wrap" data-selected={selected} style={treeDepth(depth)}>
+      {/* The bubble is portaled so it can sit beside the sidebar rather than
+          inside the list's own scroll box, which would clip it; a path too long
+          for the cap wraps inside the bubble. It hangs from the selection button
+          and the button reaches the row's own end, so the bubble starts outside
+          the row instead of over the stage control drawn there — the two never
+          cover each other, and hovering the control still says what it does. */}
+      <Tooltip
+        label={rowLabel(t, file, side)}
+        side="right"
+        portal
+        maxWidth={TOOLTIP_MAX_WIDTH}
       >
-        <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
-        <span className="dsh-cg-path">
-          <span className="dsh-cg-name">{name}</span>
-          {file.origPath === undefined
-            ? null
-            : (
-              <>
-                <span className="dsh-cg-dot">←</span>
-                <span className="dsh-cg-dir" title={file.origPath}>{file.origPath}</span>
-              </>
-            )}
-        </span>
-        <span
-          className="dsh-cg-stage"
-          data-staged={file.staged}
-          title={t(file.staged ? 'stage.staged' : 'stage.unstaged')}
-        />
-      </button>
-    </Tooltip>
+        <button
+          type="button"
+          className="dsh-cg-row"
+          aria-selected={selected}
+          onClick={() => onSelect(file, side)}
+          onKeyDown={event => {
+            if (event.key !== ' ' || side === 'conflict') return
+            event.preventDefault()
+            onToggleStage(file, side)
+          }}
+        >
+          <span className="dsh-cg-badge" data-kind={file.kind}>{KIND_LETTER[file.kind]}</span>
+          <span className="dsh-cg-path">
+            <span className="dsh-cg-name">{name}</span>
+            {file.origPath === undefined
+              ? null
+              : (
+                <>
+                  <span className="dsh-cg-dot">←</span>
+                  <span className="dsh-cg-dir" title={file.origPath}>{file.origPath}</span>
+                </>
+              )}
+          </span>
+        </button>
+      </Tooltip>
+      {side === 'conflict'
+        ? null
+        : (
+          <button
+            type="button"
+            className="dsh-cg-row-action"
+            aria-label={actionLabel}
+            title={actionLabel}
+            data-busy={busy}
+            disabled={staging !== null}
+            onClick={() => onToggleStage(file, side)}
+          >
+            {busy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
+          </button>
+        )}
+    </div>
   )
 }
 
 /**
  * What a changed-path row says about itself when hovered: its path first — a
- * rename's old path trailing it — then its state, spelled out rather than
- * lettered, the same `· ` separator the pane headers use.
+ * rename's old path trailing it — then its state and the half it stands for,
+ * spelled out rather than lettered, the same `· ` separator the pane headers
+ * use.
  *
  * @param t - the page's translate seat.
  * @param file - the row's changed path.
+ * @param side - the half of the path the row stands for.
  * @returns the tooltip's text.
  */
-function rowLabel(t: Translate, file: ChangedFile): string {
+function rowLabel(t: Translate, file: ChangedFile, side: DiffSide): string {
   const renamed = file.origPath === undefined ? '' : ` ← ${file.origPath}`
-  return `${file.path}${renamed} · ${t(KIND_KEY[file.kind])}`
+  return `${file.path}${renamed} · ${t(KIND_KEY[file.kind])} · ${t(GROUP_KEY[side])}`
 }
 
 /**
@@ -4465,6 +4872,12 @@ function DiffPane(props: {
       <header className="dsh-cg-main-head">
         <span className="dsh-cg-main-title" title={title}>{title}</span>
         {selection.kind === 'file' ? <KindTag t={t} kind={selection.file.kind} /> : null}
+        {/* Which half this patch is: the same path can be open as its index
+            version and as its worktree version, and the header is where a reader
+            can tell the two apart. */}
+        {selection.kind === 'file'
+          ? <span className="dsh-cg-main-side" data-side={selection.side}>{t(GROUP_KEY[selection.side])}</span>
+          : null}
         {current?.commit === undefined ? null : (
           <span className="dsh-cg-main-subtitle">
             {current.commit.short} · {current.commit.author} · {relativeTime(t, current.commit.date)}

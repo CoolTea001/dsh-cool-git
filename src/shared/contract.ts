@@ -84,8 +84,12 @@ export type FailureCode =
   | 'push-behind'
   | 'push-no-remote'
   | 'push-ambiguous-remote'
+  // Moving one path between the worktree and the index.
+  | 'stage-denied'
+  | 'unstage-denied'
   // Committing.
   | 'commit-clean'
+  | 'commit-nothing-staged'
   | 'commit-conflict'
   | 'commit-identity'
   | 'commit-denied'
@@ -513,7 +517,19 @@ export interface LogPayload {
   readonly empty?: boolean
 }
 
-/** `POST /diff`: one path's patch against HEAD. */
+/**
+ * Which half of a path's change one diff request is about.
+ *
+ * `staged` compares the index against HEAD — what a commit of the index would
+ * record; `unstaged` compares the worktree against the index — what a `git add`
+ * would capture; `conflict` is an unmerged path, whose diff is the combined one
+ * Git prints for it. The side is part of the request because one path can have
+ * both halves at once, and the two rows the page shows for it must not answer
+ * with the same patch.
+ */
+export type DiffSide = 'staged' | 'unstaged' | 'conflict'
+
+/** `POST /diff`: one side of one path's change. */
 export interface DiffPayload {
   readonly ok: boolean
   /** Raw diagnostic text: Git's own words, or a transport or seam message. */
@@ -548,12 +564,13 @@ export interface CommitPayload {
 }
 
 /**
- * `POST /commit-all`: one commit made out of every change the working tree has.
+ * `POST /commit-all` and `POST /commit-staged`: one commit, made out of every
+ * change the working tree has or out of the index alone.
  *
- * The page asks for this in one request because staging and committing are one
- * decision here: the tab lists changes and commits all of them, so an index left
- * half-staged between two answers would be a state nothing on the page could
- * name or undo.
+ * Commit-all stages and commits in one request, because that is the one decision
+ * the button offers when the page commits everything. Commit-staged runs `git
+ * commit` over the index as it stands: the page's own stage and unstage actions
+ * are what decides what is in it, and this route never stages anything itself.
  */
 export interface CommitAllPayload {
   readonly ok: boolean
@@ -563,14 +580,48 @@ export interface CommitAllPayload {
   readonly failure?: Failure
   /**
    * Why no commit was made, when the page can act on it: there is no repository,
-   * the session may not write, there was nothing to commit, or the tree still
-   * holds an unresolved conflict — which `git add -A` would otherwise stage,
-   * markers and all.
+   * the session may not write, there was nothing to commit, the index holds
+   * nothing to commit (commit-staged only), or the tree still holds an
+   * unresolved conflict — which `git add -A` would otherwise stage, markers and
+   * all.
    */
   readonly reason?: 'no-repo' | 'error' | 'denied' | 'clean' | 'conflict'
   /** The commit that was just created, once it succeeded. */
   readonly commit?: CommitSummary
 }
+
+/**
+ * `POST /stage` and `POST /unstage`: the index after one path moved.
+ *
+ * The answer carries the re-read status, so the page can repaint both lists and
+ * the counts in one step instead of asking for a second read that could race a
+ * third writer. A failure says why like every other route, and the page's
+ * actions stay where they were: an index write that did not happen changed
+ * nothing on disk.
+ */
+export interface IndexPayload {
+  readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+  readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
+  /** Why no move happened, when the page can act on it. */
+  readonly reason?: 'no-repo' | 'error' | 'denied'
+  /** The repository state after the move, when the move was made. */
+  readonly status?: StatusPayload
+}
+
+/**
+ * Whether a commit — and the message written for it — covers the index alone or
+ * the whole working tree.
+ *
+ * The page's default is `staged`: a reader who has moved paths into the index
+ * has said what the commit should hold, and a commit that quietly took the rest
+ * too would make the staging they just did meaningless. `all` is the explicit
+ * alternative, for the reader who has staged nothing and wants the one-click
+ * commit the tab used to offer.
+ */
+export type CommitScope = 'staged' | 'all'
 
 /**
  * `POST /message`: one commit message the Workspace's model wrote for the
@@ -782,6 +833,9 @@ export const ROUTES = {
   diff: '/dsh-cool-git/api/diff',
   commit: '/dsh-cool-git/api/commit',
   commitAll: '/dsh-cool-git/api/commit-all',
+  commitStaged: '/dsh-cool-git/api/commit-staged',
+  stage: '/dsh-cool-git/api/stage',
+  unstage: '/dsh-cool-git/api/unstage',
   message: '/dsh-cool-git/api/message',
   settings: '/dsh-cool-git/api/settings',
   settingsSave: '/dsh-cool-git/api/settings-save',

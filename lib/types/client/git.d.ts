@@ -4,13 +4,16 @@
  * The page is the whole of the tab: a sidebar carrying the changed-path list
  * above the commit history, and a diff pane taking every remaining pixel.
  * Changed paths come from `git status`, the history from `git log`, and the
- * diff pane shows either one path's patch against HEAD or one commit's whole
- * patch (see `api.ts` for the routes and `diff.ts` for the patch parser). The
- * sidebar's second row is the commit form — a message field and the button that
- * stages every change the changed-path list holds and records them as one commit
- * — and the two panes stack under it. Both of the sidebar's boundaries — its right
- * edge and the divider between the two lists — are the reader's to drag, and both
- * sizes are remembered between visits (see `layout.tsx`).
+ * diff pane shows one side of one path's change — the index against HEAD, or the
+ * worktree against the index — or one commit's whole patch (see `api.ts` for the
+ * routes and `diff.ts` for the patch parser). The list draws one tree at a time —
+ * the worktree's changes by default, then the index's, then the conflicts — chosen
+ * from its header. A row's trailing `+` or `−` moves its path between the first
+ * two. The sidebar's second row is the commit form — a message field, a button
+ * whose scope is the index or the whole tree, and the caret that switches between
+ * them — and the two panes stack under it. Both of the sidebar's boundaries —
+ * its right edge and the divider between the two lists — are the reader's to
+ * drag, and both sizes are remembered between visits (see `layout.tsx`).
  *
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which

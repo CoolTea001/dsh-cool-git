@@ -25,6 +25,7 @@
 
 import {
   commitAll,
+  commitStaged,
   createBranch,
   deleteBranches,
   fetchRemotes,
@@ -39,7 +40,9 @@ import {
   readLog,
   readRepositoryRoot,
   readStatus,
+  stagePath,
   switchBranch,
+  unstagePath,
   DEFAULT_LOG_LIMIT,
   MAX_BRANCHES,
   type GitTarget,
@@ -47,6 +50,8 @@ import {
 import {
   ROUTES,
   type BranchDeleteTarget,
+  type CommitScope,
+  type DiffSide,
   type SettingsPayload,
   type SaveSettingsPayload,
 } from '../shared/contract.js'
@@ -390,6 +395,52 @@ function readPath(body: Record<string, unknown>): string | undefined {
 }
 
 /**
+ * Read the rename source an unstage request may carry.
+ *
+ * A staged rename is two index entries, so restoring it means naming both. The
+ * field is optional — every other row has no source — and an absent or empty one
+ * is simply no source rather than a malformed request. A NUL is refused for the
+ * same reason {@link readPath} refuses one.
+ *
+ * @param body - the parsed request body.
+ * @returns the source path, or undefined when the body names none.
+ */
+function readOrigPath(body: Record<string, unknown>): string | undefined {
+  const origPath = body.origPath
+  if (origPath === undefined || origPath === '') return undefined
+  if (typeof origPath !== 'string' || origPath.includes('\0')) return undefined
+  return origPath
+}
+
+/**
+ * Read which half of a path a diff request is about.
+ *
+ * The page always names the side of the row it drew, because a path can be
+ * listed twice — staged and unstaged — and the two rows must answer with
+ * different patches. A request that names none is read as the worktree side, the
+ * answer the page used to give for a tracked path; the `staged` boolean is still
+ * honoured as the older spelling of the same choice.
+ *
+ * @param body - the parsed request body.
+ * @returns the side to diff.
+ */
+function readSide(body: Record<string, unknown>): DiffSide {
+  const side = body.side
+  if (side === 'staged' || side === 'unstaged' || side === 'conflict') return side
+  return body.staged === true ? 'staged' : 'unstaged'
+}
+
+/**
+ * Read the scope a commit or a generated message covers.
+ *
+ * @param body - the parsed request body.
+ * @returns `staged` only when the request names it; everything else is `all`.
+ */
+function readScope(body: Record<string, unknown>): CommitScope {
+  return body.scope === 'staged' ? 'staged' : 'all'
+}
+
+/**
  * Read one request's commit argument.
  *
  * @param body - the parsed request body.
@@ -546,7 +597,7 @@ export function registerRoutes(ctx: any): () => void {
       if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
       return readDiff(target, {
         path,
-        staged: body.staged === true,
+        side: readSide(body),
         untracked: body.untracked === true,
       })
     })),
@@ -560,26 +611,60 @@ export function registerRoutes(ctx: any): () => void {
     route(ROUTES.branches, (req, res) => handle(ctx, req, res, 'read', (_body, target) =>
       readBranches(target))),
 
+    // One path into the index. A write, so it is refused before Git runs when the
+    // session's own file policy does not allow one; the answer carries the fresh
+    // status, so the page repaints both lists from the state this write produced.
+    route(ROUTES.stage, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return stagePath(target, path)
+    })),
+
+    // One path out of the index, with the rename source when the row has one:
+    // both halves of a staged rename are restored in one request.
+    route(ROUTES.unstage, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return unstagePath(target, path, readOrigPath(body))
+    })),
+
     // The one route that writes both the index and the history: it stages every
     // change the page is listing and commits it under the page's own message, so
-    // the two halves of a commit cannot be left apart by a page that never sent
-    // the second request.
+    // the two halves of a commit-all cannot be left apart by a page that never
+    // sent the second request. The staged-scope sibling below commits only what
+    // the page's own stage actions put in the index.
     route(ROUTES.commitAll, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const message = readMessage(body)
       if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
       return commitAll(target, message)
     })),
 
+    // Commit the index alone. Nothing is staged here: the page's `+` and `−`
+    // actions decided what this commits, and staging the rest would make them
+    // meaningless.
+    route(ROUTES.commitStaged, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const message = readMessage(body)
+      if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
+      return commitStaged(target, message)
+    })),
+
     // The commit form's other request, and a read: it writes a message for the
     // changes on disk, which is why the Commit button stays the only control that
-    // stages or records anything. Which model writes it and what prompt it is
-    // given are the Host's business too — the Workspace's saved choices, or the
-    // deployment's defaults — so the page asks for a message and never says how
-    // to write it. The session id is passed on only as the model call's own
-    // attribution; the repository is resolved from it by `handle`, never from
-    // anything the body holds.
+    // records anything. The scope decides which changes the message describes, so
+    // a message for a staged-only commit never names a path the commit leaves
+    // behind. Which model writes it and what prompt it is given are the Host's
+    // business too — the Workspace's saved choices, or the deployment's defaults
+    // — so the page asks for a message and never says how to write it. The
+    // session id is passed on only as the model call's own attribution; the
+    // repository is resolved from it by `handle`, never from anything the body
+    // holds.
     route(ROUTES.message, (req, res) => handle(ctx, req, res, 'read', (body, target) =>
-      generateCommitMessage(ctx, target, typeof body.sessionId === 'string' ? body.sessionId : undefined))),
+      generateCommitMessage(
+        ctx,
+        target,
+        typeof body.sessionId === 'string' ? body.sessionId : undefined,
+        readScope(body),
+      ))),
 
     // The Settings dialog's read. It answers with the Workspace's saved choices
     // beside the defaults they fall back to — the current default model and the

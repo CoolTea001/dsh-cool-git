@@ -38,7 +38,7 @@
  * read. The system prompt itself lives in `shared/prompt.ts`, because the
  * Settings dialog shows the same text as the built-in default.
  */
-import type { MessagePayload } from '../shared/contract.js';
+import type { CommitScope, MessagePayload } from '../shared/contract.js';
 import { type GitTarget } from './git.js';
 /**
  * Write one commit message for the changes this working tree holds.
@@ -59,7 +59,9 @@ import { type GitTarget } from './git.js';
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param sessionId - the session the request named, for the model call's own
  * attribution; the repository is resolved from it already, never from a path.
+ * @param scope - whether the message describes the index alone or the whole
+ * working tree, the same scope the commit button is set to.
  * @returns the payload the page fills its form from.
  */
-export declare function generateCommitMessage(ctx: any, target: GitTarget, sessionId?: string): Promise<MessagePayload>;
+export declare function generateCommitMessage(ctx: any, target: GitTarget, sessionId?: string, scope?: CommitScope): Promise<MessagePayload>;
 //# sourceMappingURL=message.d.ts.map

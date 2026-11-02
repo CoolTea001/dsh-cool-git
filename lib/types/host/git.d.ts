@@ -35,7 +35,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type FetchPayload, type FetchUpstreamPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CommitScope, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type DiffSide, type FetchPayload, type FetchUpstreamPayload, type IndexPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
@@ -121,20 +121,30 @@ export declare function readLog(target: GitTarget, limit: number): Promise<LogPa
  */
 export declare function readCommit(target: GitTarget, hash: string): Promise<CommitPayload>;
 /**
- * Read one path's difference against HEAD.
+ * Read one side of one path's change.
  *
- * A tracked path is diffed against HEAD rather than against the index, so a
- * file with both staged and unstaged edits shows everything that differs from
- * the last commit in one patch — which is what the row's own "show this file's
- * changes" means. An untracked path has no HEAD side at all, so it is diffed
- * against `/dev/null`; a repository without commits compares against the index
- * or the worktree, whichever side the row says holds the change.
+ * The request names the side because the page lists a path once per half it
+ * holds: a file staged and then edited again is two rows, and the patch under
+ * each must be the one that row stands for. `staged` compares the index against
+ * HEAD — what committing the index would record — and `unstaged` compares the
+ * worktree against the index — what `git add` would capture. A conflicted path
+ * has no meaningful side, so its request reads the combined diff Git prints for
+ * an unmerged path.
+ *
+ * An untracked path has no HEAD side at all, so it is diffed against
+ * `/dev/null`, whatever side the request names. A repository without commits has
+ * no HEAD to compare against either, and `--cached` then compares the index
+ * against the empty tree, which is the honest answer for the staged side there.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param file - the changed path, as `status` reported it.
+ * @param file - the changed path and the side of it to diff.
  * @returns the unified diff, or the reason there is none.
  */
-export declare function readDiff(target: GitTarget, file: Pick<ChangedFile, 'path' | 'staged' | 'untracked'>): Promise<DiffPayload>;
+export declare function readDiff(target: GitTarget, file: {
+    readonly path: string;
+    readonly side: DiffSide;
+    readonly untracked: boolean;
+}): Promise<DiffPayload>;
 /** One recent commit message, as the prompt's style evidence. */
 export interface StyleSample {
     /** The message as it was committed: its subject, and its body when it has one. */
@@ -174,7 +184,9 @@ export type ChangeDigest = {
      * question this answer already holds.
      */
     readonly root: string;
-    /** Every changed path, in the order `git status` named them. */
+    /** Which half of the working tree this digest describes. */
+    readonly scope: CommitScope;
+    /** Every changed path in scope, in the order `git status` named them. */
     readonly files: readonly ChangedFile[];
     /**
      * `git diff --stat` of the tracked changes: one line per path, following the
@@ -210,13 +222,20 @@ export type ChangeDigest = {
  * is meant to see the changes as one change set rather than as an answer per
  * row.
  *
+ * The scope narrows the material, not this reader's honesty about it. `staged`
+ * describes the index alone: only the paths whose index side differs, the
+ * `--cached` patch and stat, and no untracked previews, because an untracked
+ * path is by definition not in the index. `all` keeps the whole working tree,
+ * which is the message the commit-all button records.
+ *
  * The one thing here that is not a change is the style sample: the branch's own
  * recent messages, which the prompt asks the model to write in the manner of.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
+ * @param scope - whether to describe the index alone or the whole working tree.
  * @returns the digest, or why the repository could not be read.
  */
-export declare function readChangeDigest(target: GitTarget): Promise<ChangeDigest>;
+export declare function readChangeDigest(target: GitTarget, scope?: CommitScope): Promise<ChangeDigest>;
 /**
  * Read the branches a switch may pick: the local ones and the remote-tracking
  * ones.
@@ -425,6 +444,38 @@ export declare function pullFromRemote(target: GitTarget): Promise<SyncPayload>;
  */
 export declare function pushToRemote(target: GitTarget): Promise<SyncPayload>;
 /**
+ * Move one path into the index.
+ *
+ * `-A` rather than a bare `add`: the path may be a deletion (a removed file has
+ * no worktree content to add) or an untracked file, and `-A` is what makes one
+ * call cover both without deciding from the row the page drew. `--` ends the
+ * options so a path that begins with a dash is a path.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param path - the repository-relative path to stage.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function stagePath(target: GitTarget, path: string): Promise<IndexPayload>;
+/**
+ * Move one path out of the index, keeping the worktree file.
+ *
+ * `git restore --staged` is the normal answer: it puts the index entry back to
+ * HEAD and leaves the file on disk alone, which is exactly "unstage". An unborn
+ * branch has no HEAD to restore from, so its index entries are removed instead —
+ * the file becomes untracked again, which is what it was before it was staged.
+ *
+ * A staged rename is two index entries — the new path added and the old one
+ * removed — so the row's source path is restored in the same call. Restoring only
+ * the destination would leave the deletion of the source staged: half a rename,
+ * which is not a state the row it came from can describe.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param path - the repository-relative path to unstage.
+ * @param origPath - the rename/copy source, when the row has one.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function unstagePath(target: GitTarget, path: string, origPath?: string): Promise<IndexPayload>;
+/**
  * Stage every change and commit it under one message.
  *
  * The tree is read before it is touched, and both refusals that matter come out
@@ -436,13 +487,27 @@ export declare function pushToRemote(target: GitTarget): Promise<SyncPayload>;
  * mean and one this page has no way to take back.
  *
  * What is committed is deliberately everything the page is listing — tracked
- * edits, deletions, and untracked files alike — because that is the one decision
- * the form offers. The message is the route's to validate; by the time it
- * arrives here it is non-empty text.
+ * edits, deletions, and untracked files alike — because that is the decision
+ * this route's button offers. The message is the route's to validate; by the
+ * time it arrives here it is non-empty text.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param message - the commit message, already trimmed and checked by the route.
  * @returns the outcome, including the reason a commit did not happen.
  */
 export declare function commitAll(target: GitTarget, message: string): Promise<CommitAllPayload>;
+/**
+ * Commit the index as it stands, under one message.
+ *
+ * The opposite trade from {@link commitAll}: nothing is staged here, because the
+ * page's own `+` and `−` actions are what decided the index, and a commit that
+ * quietly staged the rest would make those actions meaningless. The checks that
+ * remain are the ones Git would make anyway, worded so the page can say which
+ * happened: an unfinished merge, or an index with nothing in it to record.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param message - the commit message, already trimmed and checked by the route.
+ * @returns the outcome, including the reason a commit did not happen.
+ */
+export declare function commitStaged(target: GitTarget, message: string): Promise<CommitAllPayload>;
 //# sourceMappingURL=git.d.ts.map

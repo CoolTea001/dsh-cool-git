@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message' | 'fallback.settings' | 'fallback.settingsRead'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -61,8 +61,8 @@ type UiKey =
  | 'settings.title' | 'settings.description' | 'settings.model' | 'settings.modelDefaultUnknown' | 'settings.modelEmpty' | 'settings.modelUnavailable' | 'settings.modelSearch' | 'settings.searchEmpty' | 'settings.effort' | 'settings.effortReadFailed' | 'settings.prompt' | 'settings.promptHint' | 'settings.promptReset' | 'settings.loading' | 'settings.cancel' | 'settings.save' | 'settings.saving'
 /** The remote control in the history pane's header. */
  | 'remote.publish' | 'remote.sync'
-/** The two pane headers, each followed by its row count. */
- | 'pane.files' | 'pane.history'
+/** The history pane's header, followed by its row count. */
+ | 'pane.history'
 /** The branch dialog. */
  | 'branch.title' | 'branch.description' | 'branch.cancel' | 'branch.confirm' | 'branch.search' | 'branch.list' | 'branch.current' | 'branch.local' | 'branch.remote' | 'branch.notRepo' | 'branch.none' | 'branch.loading' | 'branch.noMatch' | 'branch.truncated'
 /** The merge dialog, which reuses the branch dialog's list and footer. */
@@ -75,12 +75,17 @@ type UiKey =
  | 'commit.placeholder' | 'commit.button' | 'commit.busy'
 /** The commit form's Generate control, and what the model asked be read first. */
  | 'commit.generate' | 'commit.generating' | 'commit.warning'
+/** The commit form's scope: the caret's own name and the two choices. */
+ | 'commit.scope' | 'commit.scopeStaged' | 'commit.scopeAll'
+/** The commit button's labels, each carrying the number of rows it records. */
+ | 'commit.buttonStaged' | 'commit.buttonAll'
 /** The one-line fix stated under a refusal the user can undo by configuring Git. */
  | 'hint.commit-identity'
 /** The changed-path pane's empty and loading states. */
  | 'list.notRepo' | 'list.statusFailed' | 'list.loading'
-/** Whether a row's change is in the index. */
- | 'stage.staged' | 'stage.unstaged'
+/** The three changed-path lists: what each holds, and the actions that move
+ *  one path between the first two. */
+ | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stageFile' | 'stage.unstageFile'
 /** What a folder row in the changed-path tree is called. */
  | 'tree.folderLabel'
 /** The history pane's empty and loading states. */
@@ -139,6 +144,8 @@ export declare const en: {
     'title.push': string;
     'title.publish': string;
     'title.commit': string;
+    'title.stage': string;
+    'title.unstage': string;
     'title.diff': string;
     'title.branches': string;
     'title.branchCreate': string;
@@ -178,7 +185,6 @@ export declare const en: {
     'settings.saving': string;
     'remote.publish': string;
     'remote.sync': string;
-    'pane.files': string;
     'pane.history': string;
     'branch.title': string;
     'branch.description': string;
@@ -219,12 +225,20 @@ export declare const en: {
     'commit.generate': string;
     'commit.generating': string;
     'commit.warning': string;
+    'commit.scope': string;
+    'commit.scopeStaged': string;
+    'commit.scopeAll': string;
+    'commit.buttonStaged': string;
+    'commit.buttonAll': string;
     'hint.commit-identity': string;
     'list.notRepo': string;
     'list.statusFailed': string;
     'list.loading': string;
     'stage.staged': string;
     'stage.unstaged': string;
+    'stage.conflict': string;
+    'stage.stageFile': string;
+    'stage.unstageFile': string;
     'tree.folderLabel': string;
     'history.failed': string;
     'history.loading': string;
@@ -293,7 +307,10 @@ export declare const en: {
     'error.push-behind': string;
     'error.push-no-remote': string;
     'error.push-ambiguous-remote': string;
+    'error.stage-denied': string;
+    'error.unstage-denied': string;
     'error.commit-clean': string;
+    'error.commit-nothing-staged': string;
     'error.commit-conflict': string;
     'error.commit-identity': string;
     'error.commit-denied': string;

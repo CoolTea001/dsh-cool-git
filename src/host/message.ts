@@ -39,7 +39,7 @@
  * Settings dialog shows the same text as the built-in default.
  */
 
-import type { ChangedFile, MessageModel, MessagePayload } from '../shared/contract.js'
+import type { ChangedFile, CommitScope, MessageModel, MessagePayload } from '../shared/contract.js'
 import { errorMessage } from '../shared/error.js'
 import { DEFAULT_MESSAGE_PROMPT } from '../shared/prompt.js'
 import { readChangeDigest, type ChangeDigest, type GitTarget } from './git.js'
@@ -128,6 +128,11 @@ function describeFile(file: ChangedFile): string {
  * @returns the user message's text.
  */
 function promptText(digest: Extract<ChangeDigest, { ok: true }>): string {
+  // The scope changes what the model is asked to describe, so it also changes
+  // what each section is called: a model told "the working tree" while the
+  // commit will record only the index would write about files the commit is
+  // about to leave behind.
+  const stagedOnly = digest.scope === 'staged'
   const lines: string[] = []
   lines.push('Recent commit messages on this branch, newest first (git log --pretty=format:%B):')
   if (digest.recentMessages.length === 0) {
@@ -141,31 +146,40 @@ function promptText(digest: Extract<ChangeDigest, { ok: true }>): string {
   }
 
   lines.push('')
-  lines.push(`This working tree has ${digest.files.length} changed path(s).`)
+  lines.push(stagedOnly
+    ? `This index has ${digest.files.length} staged path(s).`
+    : `This working tree has ${digest.files.length} changed path(s).`)
   lines.push('')
-  lines.push('Changed paths (git status --porcelain, XY then path):')
+  lines.push(stagedOnly
+    ? 'Staged paths (git status --porcelain, XY then path):'
+    : 'Changed paths (git status --porcelain, XY then path):')
   for (const file of digest.files) lines.push(`  ${describeFile(file)}`)
 
   lines.push('')
-  lines.push('Tracked changes (git diff --stat):')
+  lines.push(stagedOnly ? 'Staged changes (git diff --cached --stat):' : 'Tracked changes (git diff --stat):')
   lines.push(digest.stat === '' ? '  (none)' : digest.stat)
 
   lines.push('')
-  lines.push('Tracked changes (git diff, staged and unstaged):')
+  lines.push(stagedOnly ? 'Staged changes (git diff --cached):' : 'Tracked changes (git diff, staged and unstaged):')
   if (digest.patch === '') lines.push('  (none)')
   else {
     lines.push(digest.patch)
     if (digest.patchTruncated) lines.push('[the patch above was cut at the read limit]')
   }
 
-  lines.push('')
-  if (digest.untracked.length === 0) {
-    lines.push('Untracked files: none.')
-  } else {
-    lines.push('Untracked files (git diff --no-index --stat -p against /dev/null):')
-    for (const preview of digest.untracked) {
-      lines.push(`--- ${preview.path}${preview.truncated ? ' (cut at the read limit)' : ''}`)
-      lines.push(preview.text)
+  // An untracked path is not in the index, so a message for a staged commit has
+  // nothing to say about it and the section would only invite the model to
+  // mention a file the commit leaves out.
+  if (!stagedOnly) {
+    lines.push('')
+    if (digest.untracked.length === 0) {
+      lines.push('Untracked files: none.')
+    } else {
+      lines.push('Untracked files (git diff --no-index --stat -p against /dev/null):')
+      for (const preview of digest.untracked) {
+        lines.push(`--- ${preview.path}${preview.truncated ? ' (cut at the read limit)' : ''}`)
+        lines.push(preview.text)
+      }
     }
   }
   return lines.join('\n')
@@ -320,16 +334,25 @@ function splitAnswer(raw: string): { readonly message: string; readonly warnings
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param sessionId - the session the request named, for the model call's own
  * attribution; the repository is resolved from it already, never from a path.
+ * @param scope - whether the message describes the index alone or the whole
+ * working tree, the same scope the commit button is set to.
  * @returns the payload the page fills its form from.
  */
 export async function generateCommitMessage(
   ctx: any,
   target: GitTarget,
   sessionId?: string,
+  scope: CommitScope = 'all',
 ): Promise<MessagePayload> {
-  const digest = await readChangeDigest(target)
+  const digest = await readChangeDigest(target, scope)
   if (digest.ok !== true) return { ok: false, ...digest.refusal, reason: digest.reason }
-  if (digest.files.length === 0) return { ok: false, ...coded('commit-clean'), reason: 'clean' }
+  if (digest.files.length === 0) {
+    return {
+      ok: false,
+      ...coded(scope === 'staged' ? 'commit-nothing-staged' : 'commit-clean'),
+      reason: 'clean',
+    }
+  }
 
   const workspace = await resolveWorkspace(ctx, sessionId, digest.root)
   const workspacePath = workspace?.path === undefined || workspace.path === ''

@@ -151,3 +151,25 @@ export const IconAlert = svgIcon('alert')
  * left edge so the pair reads as "write this, then commit it".
  */
 export const IconGenerate = svgIcon('generate')
+
+/**
+ * Move a path into the index (assets/plus.svg).
+ *
+ * The changed-path row's trailing action, shown on the row's unstaged half. A
+ * bare plus rather than a filled button: the row is 24px tall and the action is
+ * about the row, not a control beside it, so the glyph is the whole of it.
+ */
+export const IconPlus = svgIcon('plus')
+
+/** Move a path out of the index (assets/minus.svg). */
+export const IconMinus = svgIcon('minus')
+
+/**
+ * The commit capsule's scope mark (assets/chevron-down.svg).
+ *
+ * A chevron that always points down, at the end of the button it belongs to. The
+ * list it opens always hangs underneath, so the mark states where the list is
+ * rather than which way it would turn: one glyph, one meaning, whether the list
+ * is open or closed.
+ */
+export const IconChevronDown = svgIcon('chevron-down')

@@ -51,13 +51,16 @@ import {
   type CheckoutPayload,
   type CommitAllPayload,
   type CommitPayload,
+  type CommitScope,
   type CommitSummary,
   type CreateBranchPayload,
   type DeleteBranchesPayload,
   type DiffPayload,
+  type DiffSide,
   type FailureCode,
   type FetchPayload,
   type FetchUpstreamPayload,
+  type IndexPayload,
   type LogPayload,
   type MergePayload,
   type StatusPayload,
@@ -322,6 +325,22 @@ export interface GitTarget {
  */
 function inDir(target: GitTarget, workdir: string): GitTarget {
   return { ...target, workdir }
+}
+
+/**
+ * A path as a pathspec that cannot be read as a pattern.
+ *
+ * Git pathspecs treat `*`, `?`, and `[` as wildcards, so a path that really
+ * contains one — a file named `a*.txt` — would otherwise name every file the
+ * pattern matches. `:(literal)` turns the rest of the word into a literal path,
+ * which is the only reading a path from `git status` should ever get: it is a
+ * name, not a pattern the page composed.
+ *
+ * @param path - the repository-relative path as `status` reported it.
+ * @returns the literal pathspec for it.
+ */
+function literalPath(path: string): string {
+  return `:(literal)${path}`
 }
 
 /**
@@ -859,22 +878,28 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
 }
 
 /**
- * Read one path's difference against HEAD.
+ * Read one side of one path's change.
  *
- * A tracked path is diffed against HEAD rather than against the index, so a
- * file with both staged and unstaged edits shows everything that differs from
- * the last commit in one patch — which is what the row's own "show this file's
- * changes" means. An untracked path has no HEAD side at all, so it is diffed
- * against `/dev/null`; a repository without commits compares against the index
- * or the worktree, whichever side the row says holds the change.
+ * The request names the side because the page lists a path once per half it
+ * holds: a file staged and then edited again is two rows, and the patch under
+ * each must be the one that row stands for. `staged` compares the index against
+ * HEAD — what committing the index would record — and `unstaged` compares the
+ * worktree against the index — what `git add` would capture. A conflicted path
+ * has no meaningful side, so its request reads the combined diff Git prints for
+ * an unmerged path.
+ *
+ * An untracked path has no HEAD side at all, so it is diffed against
+ * `/dev/null`, whatever side the request names. A repository without commits has
+ * no HEAD to compare against either, and `--cached` then compares the index
+ * against the empty tree, which is the honest answer for the staged side there.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param file - the changed path, as `status` reported it.
+ * @param file - the changed path and the side of it to diff.
  * @returns the unified diff, or the reason there is none.
  */
 export async function readDiff(
   target: GitTarget,
-  file: Pick<ChangedFile, 'path' | 'staged' | 'untracked'>,
+  file: { readonly path: string; readonly side: DiffSide; readonly untracked: boolean },
 ): Promise<DiffPayload> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
@@ -889,12 +914,14 @@ export async function readDiff(
     diff = await runGit(root, [
       'diff', '--no-index', ...base, '--', '/dev/null', file.path,
     ])
-  } else if (!repo.hasHead) {
-    diff = await runGit(root, [
-      'diff', ...(file.staged ? ['--cached'] : []), ...base, '--', file.path,
-    ])
+  } else if (file.side === 'conflict') {
+    // An unmerged path's combined diff is neither side: it shows the worktree
+    // against the merge base, with the conflict markers in place.
+    diff = await runGit(root, ['diff', '-M', ...base, '--', literalPath(file.path)])
+  } else if (file.side === 'staged') {
+    diff = await runGit(root, ['diff', '--cached', '-M', ...base, '--', literalPath(file.path)])
   } else {
-    diff = await runGit(root, ['diff', 'HEAD', '-M', ...base, '--', file.path])
+    diff = await runGit(root, ['diff', '-M', ...base, '--', literalPath(file.path)])
   }
 
   if (diff.code !== 0 && diff.code !== 1) {
@@ -998,7 +1025,9 @@ export type ChangeDigest =
      * question this answer already holds.
      */
     readonly root: string
-    /** Every changed path, in the order `git status` named them. */
+    /** Which half of the working tree this digest describes. */
+    readonly scope: CommitScope
+    /** Every changed path in scope, in the order `git status` named them. */
     readonly files: readonly ChangedFile[]
     /**
      * `git diff --stat` of the tracked changes: one line per path, following the
@@ -1161,25 +1190,45 @@ async function readRecentMessages(root: GitTarget, hasHead: boolean): Promise<re
  * is meant to see the changes as one change set rather than as an answer per
  * row.
  *
+ * The scope narrows the material, not this reader's honesty about it. `staged`
+ * describes the index alone: only the paths whose index side differs, the
+ * `--cached` patch and stat, and no untracked previews, because an untracked
+ * path is by definition not in the index. `all` keeps the whole working tree,
+ * which is the message the commit-all button records.
+ *
  * The one thing here that is not a change is the style sample: the branch's own
  * recent messages, which the prompt asks the model to write in the manner of.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
+ * @param scope - whether to describe the index alone or the whole working tree.
  * @returns the digest, or why the repository could not be read.
  */
-export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest> {
+export async function readChangeDigest(
+  target: GitTarget,
+  scope: CommitScope = 'all',
+): Promise<ChangeDigest> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, refusal: repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
   const status = await runGit(root, STATUS_ARGS)
   if (status.code !== 0) return { ok: false, refusal: refusalOf(status), reason: 'error' }
-  const files = parseStatus(status.stdout).files
+  const parsed = parseStatus(status.stdout).files
+  // A commit of the index is refused while the tree holds an unmerged path, so a
+  // message for that commit must not describe a set it could never record. The
+  // page states the conflict refusal rather than pretending the index is whole.
+  if (scope === 'staged' && parsed.some(file => file.conflicted)) {
+    return { ok: false, refusal: coded('commit-conflict'), reason: 'error' }
+  }
+  const files = scope === 'staged'
+    ? parsed.filter(file => file.staged)
+    : parsed
   const recentMessages = await readRecentMessages(root, repo.hasHead)
   if (files.length === 0) {
     return {
       ok: true,
       root: repo.root,
+      scope,
       files,
       stat: '',
       patch: '',
@@ -1189,20 +1238,26 @@ export async function readChangeDigest(target: GitTarget): Promise<ChangeDigest>
     }
   }
 
-  const stat = await runTrackedDiff(root, repo.hasHead, ['--stat'])
+  const format = scope === 'staged' ? ['--cached'] : []
+  const stat = scope === 'staged'
+    ? await runGit(root, ['diff', ...format, '-M', '--no-color', '--no-ext-diff', '--stat'])
+    : await runTrackedDiff(root, repo.hasHead, ['--stat'])
   if (stat.code !== 0) return { ok: false, refusal: refusalOf(stat), reason: 'error' }
-  const diff = await runTrackedDiff(root, repo.hasHead, ['--unified=3'])
+  const diff = scope === 'staged'
+    ? await runGit(root, ['diff', ...format, '-M', '--no-color', '--no-ext-diff', '--unified=3'])
+    : await runTrackedDiff(root, repo.hasHead, ['--unified=3'])
   if (diff.code !== 0) return { ok: false, refusal: refusalOf(diff), reason: 'error' }
   const patch = cutAtLine(diff.stdout, MAX_DIGEST_PATCH_CHARS)
 
   return {
     ok: true,
     root: repo.root,
+    scope,
     files,
     stat: stat.stdout.trim(),
     patch: patch.text,
     patchTruncated: patch.truncated || diff.truncated,
-    untracked: await readUntrackedPreviews(root, files),
+    untracked: scope === 'staged' ? [] : await readUntrackedPreviews(root, files),
     recentMessages,
   }
 }
@@ -2690,6 +2745,142 @@ async function retryWithStoredCredential(
 }
 
 /**
+ * One queue of index writes per repository root.
+ *
+ * Stage, unstage and both commit routes rewrite `.git/index`, and Git takes an
+ * `index.lock` for each: two of them overlapping is a lock error the user did
+ * not cause. The page already disables its own controls while one is in flight,
+ * but a second window, the agent in the same repository, or a stale answer can
+ * still arrive at the same moment, so the Host serializes the routes themselves.
+ * The queue is keyed by root because two repositories have no reason to wait on
+ * each other, and dropped when the last write finishes so it holds no state of
+ * its own.
+ */
+const indexQueues = new Map<string, Promise<unknown>>()
+
+/**
+ * Run one index write after every earlier one for the same repository.
+ *
+ * @param root - the repository root the write belongs to.
+ * @param run - the write to run, once the queue reaches it.
+ * @returns whatever the write answered.
+ */
+async function withIndexWrite<T>(root: string, run: () => Promise<T>): Promise<T> {
+  const previous = indexQueues.get(root) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(run)
+  indexQueues.set(root, next)
+  try {
+    return await next
+  } finally {
+    // Only the tail clears the entry: an earlier write finishing while a later
+    // one is queued must not drop the later write's place.
+    if (indexQueues.get(root) === next) indexQueues.delete(root)
+  }
+}
+
+/**
+ * Re-read the status after one index write, and shape it as the route's answer.
+ *
+ * The status is read inside the queue, after the write, so the lists the page
+ * paints are the state that write produced rather than a read that raced it.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the fresh status, or why it could not be read.
+ */
+async function indexAnswer(target: GitTarget): Promise<IndexPayload> {
+  const status = await readStatus(target)
+  if (status.ok === true) return { ok: true, status }
+  return {
+    ok: false,
+    ...(status.failure === undefined
+      ? { error: status.error ?? 'could not read the status after the index write' }
+      : { failure: status.failure }),
+    reason: status.reason === 'no-repo' ? 'no-repo' : 'error',
+  }
+}
+
+/**
+ * Move one path into the index.
+ *
+ * `-A` rather than a bare `add`: the path may be a deletion (a removed file has
+ * no worktree content to add) or an untracked file, and `-A` is what makes one
+ * call cover both without deciding from the row the page drew. `--` ends the
+ * options so a path that begins with a dash is a path.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param path - the repository-relative path to stage.
+ * @returns the fresh status, or the refusal.
+ */
+export async function stagePath(target: GitTarget, path: string): Promise<IndexPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withIndexWrite(repo.root, async () => {
+    const add = await runGit(root, ['add', '-A', '--', literalPath(path)])
+    if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
+    if (add.denied === true) return { ok: false, ...coded('stage-denied'), reason: 'denied' }
+    if (add.code !== 0) return { ok: false, ...refusalOf(add), reason: 'error' }
+    return indexAnswer(target)
+  })
+}
+
+/**
+ * Move one path out of the index, keeping the worktree file.
+ *
+ * `git restore --staged` is the normal answer: it puts the index entry back to
+ * HEAD and leaves the file on disk alone, which is exactly "unstage". An unborn
+ * branch has no HEAD to restore from, so its index entries are removed instead —
+ * the file becomes untracked again, which is what it was before it was staged.
+ *
+ * A staged rename is two index entries — the new path added and the old one
+ * removed — so the row's source path is restored in the same call. Restoring only
+ * the destination would leave the deletion of the source staged: half a rename,
+ * which is not a state the row it came from can describe.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param path - the repository-relative path to unstage.
+ * @param origPath - the rename/copy source, when the row has one.
+ * @returns the fresh status, or the refusal.
+ */
+export async function unstagePath(
+  target: GitTarget,
+  path: string,
+  origPath?: string,
+): Promise<IndexPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+  const paths = (origPath === undefined ? [path] : [path, origPath]).map(literalPath)
+
+  return withIndexWrite(repo.root, async () => {
+    const restore = repo.hasHead
+      ? await runGit(root, ['restore', '--staged', '--', ...paths])
+      : await runGit(root, ['rm', '--cached', '--', ...paths])
+    if (restore.failure !== undefined) return { ok: false, error: restore.failure, reason: 'error' }
+    if (restore.denied === true) return { ok: false, ...coded('unstage-denied'), reason: 'denied' }
+    if (restore.code !== 0) return { ok: false, ...refusalOf(restore), reason: 'error' }
+    return indexAnswer(target)
+  })
+}
+
+/**
+ * Read back the commit Git just wrote, the same way the history reads one.
+ *
+ * A failure here is not a failed commit — the commit is already made — so the
+ * answer stays a success and simply names nothing.
+ *
+ * @param root - the repository root, with the session's file policy.
+ * @returns the success payload, with the summary when it could be read.
+ */
+async function readMadeCommit(root: GitTarget): Promise<CommitAllPayload> {
+  const made = await runGit(root, ['log', '-1', `--pretty=format:${LOG_FORMAT}`])
+  if (made.code !== 0) return { ok: true }
+  const summary = parseSummary(made.stdout.split(FIELD))
+  return summary === undefined ? { ok: true } : { ok: true, commit: summary }
+}
+
+/**
  * Stage every change and commit it under one message.
  *
  * The tree is read before it is touched, and both refusals that matter come out
@@ -2701,9 +2892,9 @@ async function retryWithStoredCredential(
  * mean and one this page has no way to take back.
  *
  * What is committed is deliberately everything the page is listing — tracked
- * edits, deletions, and untracked files alike — because that is the one decision
- * the form offers. The message is the route's to validate; by the time it
- * arrives here it is non-empty text.
+ * edits, deletions, and untracked files alike — because that is the decision
+ * this route's button offers. The message is the route's to validate; by the
+ * time it arrives here it is non-empty text.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
  * @param message - the commit message, already trimmed and checked by the route.
@@ -2714,43 +2905,78 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
 
-  const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-  if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
+  return withIndexWrite(repo.root, async () => {
+    const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
-  const files = parseStatus(status.stdout).files
-  if (files.length === 0) return emptyCommit()
-  if (files.some(file => file.conflicted)) return conflictedCommit()
+    const files = parseStatus(status.stdout).files
+    if (files.length === 0) return emptyCommit()
+    if (files.some(file => file.conflicted)) return conflictedCommit()
 
-  // `-A` is what makes the two halves one decision: it stages a new path, a
-  // deletion, and an edit in the same pass, from the repository root, whatever
-  // the session's own directory is.
-  const add = await runGit(root, ['add', '-A'])
-  if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
-  if (add.code !== 0) return commitFailure(add)
+    // `-A` is what makes the two halves one decision: it stages a new path, a
+    // deletion, and an edit in the same pass, from the repository root, whatever
+    // the session's own directory is.
+    const add = await runGit(root, ['add', '-A'])
+    if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
+    if (add.code !== 0) return commitFailure(add)
 
-  // No `--no-verify`: a repository's own hooks are part of what committing to it
-  // means, and a hook that refuses is reported as the refusal it is.
-  //
-  // `-F -` puts the message on stdin rather than on the command line: a commit
-  // message is free text, and a Windows PowerShell 5.1 executor drops the
-  // double quotes out of native arguments (it has no quoting layer to escape
-  // them), so `-m` would silently change what the user wrote.
-  const commit = await runGit(root, ['commit', '-F', '-'], { stdin: message })
-  if (commit.failure !== undefined) return { ok: false, error: commit.failure, reason: 'error' }
-  if (commit.code !== 0) return commitFailure(commit)
+    // No `--no-verify`: a repository's own hooks are part of what committing to it
+    // means, and a hook that refuses is reported as the refusal it is.
+    //
+    // `-F -` puts the message on stdin rather than on the command line: a commit
+    // message is free text, and a Windows PowerShell 5.1 executor drops the
+    // double quotes out of native arguments (it has no quoting layer to escape
+    // them), so `-m` would silently change what the user wrote.
+    const commit = await runGit(root, ['commit', '-F', '-'], { stdin: message })
+    if (commit.failure !== undefined) return { ok: false, error: commit.failure, reason: 'error' }
+    if (commit.code !== 0) return commitFailure(commit)
 
-  // The commit Git just wrote, read back the same way the history reads one. A
-  // failure here is not a failed commit — the commit is already made — so the
-  // answer stays a success and simply names nothing.
-  const made = await runGit(root, ['log', '-1', `--pretty=format:${LOG_FORMAT}`])
-  if (made.code !== 0) return { ok: true }
-  const summary = parseSummary(made.stdout.split(FIELD))
-  return summary === undefined ? { ok: true } : { ok: true, commit: summary }
+    return readMadeCommit(root)
+  })
+}
+
+/**
+ * Commit the index as it stands, under one message.
+ *
+ * The opposite trade from {@link commitAll}: nothing is staged here, because the
+ * page's own `+` and `−` actions are what decided the index, and a commit that
+ * quietly staged the rest would make those actions meaningless. The checks that
+ * remain are the ones Git would make anyway, worded so the page can say which
+ * happened: an unfinished merge, or an index with nothing in it to record.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @param message - the commit message, already trimmed and checked by the route.
+ * @returns the outcome, including the reason a commit did not happen.
+ */
+export async function commitStaged(target: GitTarget, message: string): Promise<CommitAllPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withIndexWrite(repo.root, async () => {
+    const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
+
+    const files = parseStatus(status.stdout).files
+    if (files.some(file => file.conflicted)) return conflictedCommit()
+    if (!files.some(file => file.staged)) return nothingStagedCommit()
+
+    const commit = await runGit(root, ['commit', '-F', '-'], { stdin: message })
+    if (commit.failure !== undefined) return { ok: false, error: commit.failure, reason: 'error' }
+    if (commit.code !== 0) return commitFailure(commit, 'staged')
+
+    return readMadeCommit(root)
+  })
 }
 
 /** The answer for a tree that holds nothing to commit. */
 function emptyCommit(): CommitAllPayload {
   return { ok: false, ...coded('commit-clean'), reason: 'clean' }
+}
+
+/** The answer for an index that holds nothing to commit. */
+function nothingStagedCommit(): CommitAllPayload {
+  return { ok: false, ...coded('commit-nothing-staged'), reason: 'clean' }
 }
 
 /** The answer for a tree whose merge is not finished. */
@@ -2759,10 +2985,10 @@ function conflictedCommit(): CommitAllPayload {
 }
 
 /**
- * Describe why staging or the commit itself was refused.
+ * Describe why a commit was refused.
  *
  * The sandbox is the refusal the user can act on: under a `read-only` mode Git
- * never ran at all, and the seam is what says so. The other three cases worth
+ * never ran at all, and the seam is what says so. The other cases worth
  * separating are races against the read above — a merge that was aborted after
  * it, and a tree another process emptied — and a missing author identity, which
  * Git reports as a state the user can fix rather than as a fault of this
@@ -2771,16 +2997,20 @@ function conflictedCommit(): CommitAllPayload {
  * invent.
  *
  * @param run - the failed invocation.
+ * @param scope - which commit was asked for, so "nothing to commit" says which
+ *   half it found empty.
  * @returns the payload the page renders.
  */
-function commitFailure(run: GitRun): CommitAllPayload {
+function commitFailure(run: GitRun, scope: CommitScope = 'all'): CommitAllPayload {
   if (run.denied === true) {
     return { ok: false, ...coded('commit-denied'), reason: 'denied' }
   }
 
   const text = diagnosticText(run)
   if (/unmerged|merging is not possible|you have unmerged files/i.test(text)) return conflictedCommit()
-  if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(text)) return emptyCommit()
+  if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(text)) {
+    return scope === 'staged' ? nothingStagedCommit() : emptyCommit()
+  }
   if (MISSING_IDENTITY.test(text)) {
     return { ok: false, ...coded('commit-identity'), reason: 'error' }
   }
