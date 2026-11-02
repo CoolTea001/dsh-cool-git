@@ -684,6 +684,9 @@ export declare const ROUTES: {
     readonly stageFolder: "/dsh-cool-git/api/stage-folder";
     readonly unstageFolder: "/dsh-cool-git/api/unstage-folder";
     readonly discardFolder: "/dsh-cool-git/api/discard-folder";
+    readonly stageAll: "/dsh-cool-git/api/stage-all";
+    readonly unstageAll: "/dsh-cool-git/api/unstage-all";
+    readonly discardAll: "/dsh-cool-git/api/discard-all";
     readonly message: "/dsh-cool-git/api/message";
     readonly settings: "/dsh-cool-git/api/settings";
     readonly settingsSave: "/dsh-cool-git/api/settings-save";

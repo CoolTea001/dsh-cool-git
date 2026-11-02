@@ -138,6 +138,31 @@ export declare function unstageFolder(sessionId: string | undefined, path: strin
  */
 export declare function discardFolder(sessionId: string | undefined, path: string): Promise<IndexPayload>;
 /**
+ * Stage every changed path in the repository.
+ *
+ * The header's whole-list action names no path: the Host resolves the worktree
+ * side from the status it reads in its write queue, so the request stays one
+ * call however large the tree is.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function stageAll(sessionId: string | undefined): Promise<IndexPayload>;
+/**
+ * Move every staged change in the repository out of the index.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function unstageAll(sessionId: string | undefined): Promise<IndexPayload>;
+/**
+ * Discard every unstaged change in the repository.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the index payload, carrying the repository state after the write.
+ */
+export declare function discardAll(sessionId: string | undefined): Promise<IndexPayload>;
+/**
  * Ask the Host to write a commit message for the changes on disk.
  *
  * The request names no changes and no model: which paths the model is shown, and

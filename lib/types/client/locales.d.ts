@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message' | 'fallback.settings' | 'fallback.settingsRead'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.stageAll' | 'title.unstageAll' | 'title.discardAll' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -91,7 +91,7 @@ type UiKey =
  | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stage' | 'stage.unstage' | 'stage.stageFile' | 'stage.unstageFile'
 /** The unstaged action that throws the worktree half away, and the dialog it
  *  opens before doing so. */
- | 'stage.discard' | 'stage.discardFile' | 'stage.stageFolder' | 'stage.unstageFolder' | 'stage.discardFolder' | 'discard.title' | 'discard.description' | 'discard.tracked' | 'discard.untracked' | 'discard.folder' | 'discard.folderUntracked' | 'discard.confirm' | 'discard.delete' | 'discard.cancel'
+ | 'stage.discard' | 'stage.discardFile' | 'stage.stageFolder' | 'stage.unstageFolder' | 'stage.discardFolder' | 'stage.stageAll' | 'stage.unstageAll' | 'stage.discardAll' | 'discard.title' | 'discard.description' | 'discard.tracked' | 'discard.untracked' | 'discard.folder' | 'discard.folderUntracked' | 'discard.all' | 'discard.allUntracked' | 'discard.confirm' | 'discard.delete' | 'discard.cancel'
 /** What a folder row in the changed-path tree is called. */
  | 'tree.folderLabel'
 /** The history pane's empty and loading states. */
@@ -154,6 +154,9 @@ export declare const en: {
     'title.unstage': string;
     'title.stageFolder': string;
     'title.unstageFolder': string;
+    'title.stageAll': string;
+    'title.unstageAll': string;
+    'title.discardAll': string;
     'title.discard': string;
     'title.diff': string;
     'title.branches': string;
@@ -256,12 +259,17 @@ export declare const en: {
     'stage.stageFolder': string;
     'stage.unstageFolder': string;
     'stage.discardFolder': string;
+    'stage.stageAll': string;
+    'stage.unstageAll': string;
+    'stage.discardAll': string;
     'discard.title': string;
     'discard.description': string;
     'discard.tracked': string;
     'discard.untracked': string;
     'discard.folder': string;
     'discard.folderUntracked': string;
+    'discard.all': string;
+    'discard.allUntracked': string;
     'discard.confirm': string;
     'discard.delete': string;
     'discard.cancel': string;

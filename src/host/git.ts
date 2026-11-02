@@ -2922,12 +2922,12 @@ const PATHSPEC_STDIN = ['--pathspec-from-file=-', '--pathspec-file-nul'] as cons
  * thousands of untracked paths would otherwise have to cross the request body.
  *
  * @param root - the repository root, with the session's file policy.
- * @param folder - the repository-relative folder path.
+ * @param folder - the repository-relative folder path, or null for every path.
  * @returns the files under the folder, or the failure payload to answer with.
  */
 async function folderStatus(
   root: GitTarget,
-  folder: string,
+  folder: string | null,
 ): Promise<
   | { readonly ok: true; readonly files: readonly ChangedFile[] }
   | { readonly ok: false; readonly payload: IndexPayload }
@@ -2944,7 +2944,8 @@ async function folderStatus(
   }
   return {
     ok: true,
-    files: parseStatus(status.stdout).files.filter(file => inFolder(file.path, folder)),
+    files: parseStatus(status.stdout).files
+      .filter(file => folder === null || inFolder(file.path, folder)),
   }
 }
 
@@ -2976,10 +2977,10 @@ function writeFailure(run: GitRun, denied: FailureCode): IndexPayload | null {
  * editing every conflict it contains.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param folder - the repository-relative folder to stage.
+ * @param folder - the repository-relative folder to stage, or null for every path.
  * @returns the fresh status, or the refusal.
  */
-export async function stageFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+async function stageScope(target: GitTarget, folder: string | null): Promise<IndexPayload> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
@@ -3005,10 +3006,10 @@ export async function stageFolder(target: GitTarget, folder: string): Promise<In
  * untracked again.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param folder - the repository-relative folder to unstage.
+ * @param folder - the repository-relative folder to unstage, or null for every path.
  * @returns the fresh status, or the refusal.
  */
-export async function unstageFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+async function unstageScope(target: GitTarget, folder: string | null): Promise<IndexPayload> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
@@ -3039,10 +3040,10 @@ export async function unstageFolder(target: GitTarget, folder: string): Promise<
  * worktree state is the reader's resolution in progress.
  *
  * @param target - the shell seam, the session's directory, and the file policy.
- * @param folder - the repository-relative folder to discard.
+ * @param folder - the repository-relative folder to discard, or null for every path.
  * @returns the fresh status, or the refusal.
  */
-export async function discardFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+async function discardScope(target: GitTarget, folder: string | null): Promise<IndexPayload> {
   const repo = await resolveRepo(target)
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
   const root = inDir(target, repo.root)
@@ -3065,12 +3066,66 @@ export async function discardFolder(target: GitTarget, folder: string): Promise<
       if (failure !== null) return failure
     }
     if (untracked) {
-      const clean = await runGit(root, ['clean', '-f', '-d', '--', literalPath(folder)])
+      const clean = folder === null
+        ? await runGit(root, ['clean', '-f', '-d'])
+        : await runGit(root, ['clean', '-f', '-d', '--', literalPath(folder)])
       const failure = writeFailure(clean, 'discard-denied')
       if (failure !== null) return failure
     }
     return indexAnswer(target)
   })
+}
+
+/** Stage every change under one folder (see `stageScope`). */
+export function stageFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+  return stageScope(target, folder)
+}
+
+/**
+ * Stage every changed path in the repository, from every folder.
+ *
+ * The page's header action names no directory: it stands for the whole worktree
+ * list, and the Host resolves that list from the status it reads in the queue.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the fresh status, or the refusal.
+ */
+export function stageAll(target: GitTarget): Promise<IndexPayload> {
+  return stageScope(target, null)
+}
+
+/** Move every staged change under one folder out of the index (see `unstageScope`). */
+export function unstageFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+  return unstageScope(target, folder)
+}
+
+/**
+ * Move every staged change in the repository out of the index.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the fresh status, or the refusal.
+ */
+export function unstageAll(target: GitTarget): Promise<IndexPayload> {
+  return unstageScope(target, null)
+}
+
+/** Discard every unstaged change under one folder (see `discardScope`). */
+export function discardFolder(target: GitTarget, folder: string): Promise<IndexPayload> {
+  return discardScope(target, folder)
+}
+
+/**
+ * Discard every unstaged change in the repository, from every folder.
+ *
+ * The clean step has no folder to name, so it runs over the whole worktree
+ * without a pathspec; ignored files are still left alone because the command is
+ * never given `-x`.
+ *
+ * @param target - the shell seam, the session's directory, and the file policy.
+ * @returns the fresh status, or the refusal.
+ */
+export function discardAll(target: GitTarget): Promise<IndexPayload> {
+  return discardScope(target, null)
 }
 
 /**

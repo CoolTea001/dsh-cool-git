@@ -28,6 +28,7 @@ import {
   commitStaged,
   createBranch,
   deleteBranches,
+  discardAll,
   discardFolder,
   discardPath,
   fetchRemotes,
@@ -42,9 +43,11 @@ import {
   readLog,
   readRepositoryRoot,
   readStatus,
+  stageAll,
   stageFolder,
   stagePath,
   switchBranch,
+  unstageAll,
   unstageFolder,
   unstagePath,
   DEFAULT_LOG_LIMIT,
@@ -660,6 +663,19 @@ export function registerRoutes(ctx: any): () => void {
       if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
       return discardFolder(target, path)
     })),
+
+    // The header's whole-list siblings: no path in the body, because the scope
+    // is every changed path the repository lists on the side the action belongs
+    // to. The Host reads that list inside the write queue, exactly as the folder
+    // routes do for one directory.
+    route(ROUTES.stageAll, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      stageAll(target))),
+
+    route(ROUTES.unstageAll, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      unstageAll(target))),
+
+    route(ROUTES.discardAll, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      discardAll(target))),
 
     // The one route that writes both the index and the history: it stages every
     // change the page is listing and commits it under the page's own message, so

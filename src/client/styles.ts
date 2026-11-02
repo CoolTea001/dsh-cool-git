@@ -128,6 +128,12 @@ const GIT_CSS = [
   // out a weight and a tracking heavier than the same button draws in the sidebar.
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
+  // The changed-path header's bulk actions are the row controls' own glyphs: the
+  // same reveal on hover or focus, the same hover ink, and the same spinner, only
+  // sized to the header. They stand for every row the list holds.
+  '.dsh-cg-head-actions{flex:none;display:flex;align-items:center;gap:4px}',
+  '.dsh-cg-head-actions .dsh-cg-row-action{height:24px}',
+  '.dsh-cg-head:hover .dsh-cg-head-actions .dsh-cg-row-action,.dsh-cg-head:focus-within .dsh-cg-head-actions .dsh-cg-row-action{opacity:1;pointer-events:auto}',
   '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 6px 8px}',
   // Every scrollport the tab owns — the sidebar's two panes here, the branch
   // dialog's list below, and the diff pane's own scrollers, which state the same

@@ -79,6 +79,7 @@ import {
   commitStaged,
   createBranch,
   deleteBranches,
+  discardAll,
   discardFolder,
   discardPath,
   fetchBranches,
@@ -96,8 +97,10 @@ import {
   pullBranch,
   pushBranch,
   saveSettings,
+  stageAll,
   stageFolder,
   stagePath,
+  unstageAll,
   unstageFolder,
   unstagePath,
 } from './api.js'
@@ -268,6 +271,7 @@ type DiscardRequest =
     readonly count: number
     readonly untracked: boolean
   }
+  | { readonly kind: 'all'; readonly count: number; readonly untracked: boolean }
 
 /**
  * The halves of one path that the sidebar lists.
@@ -1652,6 +1656,32 @@ export function GitView(props: {
   }, [sessionId, staging, discarding, log, refresh, reportError, t])
 
   /**
+   * Move the whole list on screen between the index and the worktree.
+   *
+   * The request names no path: the Host resolves the side it acts on from the
+   * status it reads inside its write queue, so the header action covers every
+   * row the list holds without sending a tree of paths across the body.
+   *
+   * @param side - the list the header is showing: staged unstages, unstaged stages.
+   */
+  const handleStageAll = useCallback((side: DiffSide): void => {
+    if (side === 'conflict' || staging !== null || discarding !== null) return
+    setStaging(`${side}:`)
+    const request = side === 'staged' ? unstageAll(sessionId) : stageAll(sessionId)
+    void request.then(result => {
+      setStaging(null)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, side === 'staged' ? 'title.unstageAll' : 'title.stageAll', result))
+        void refresh()
+        return
+      }
+      if (result.status === undefined) return
+      setStatus(result.status)
+      writeRepositorySnapshot(sessionId, result.status, log)
+    })
+  }, [sessionId, staging, discarding, log, refresh, reportError, t])
+
+  /**
    * Ask before discarding one row's worktree change.
    *
    * A discard cannot be undone — an edited file goes back to the index, and an
@@ -1682,6 +1712,17 @@ export function GitView(props: {
   }, [staging, discarding])
 
   /**
+   * Ask before discarding every unstaged change in the repository.
+   *
+   * @param count - how many changed files the list on screen held.
+   * @param untracked - whether any of them will be deleted rather than restored.
+   */
+  const handleDiscardAll = useCallback((count: number, untracked: boolean): void => {
+    if (staging !== null || discarding !== null) return
+    setDiscardTarget({ kind: 'all', count, untracked })
+  }, [staging, discarding])
+
+  /**
    * Discard what the dialog confirmed, and repaint from the answer.
    *
    * The request answers with the fresh status, so the page paints the state the
@@ -1694,15 +1735,19 @@ export function GitView(props: {
     const target = discardTarget
     if (target === null || staging !== null || discarding !== null) return
     setDiscardTarget(null)
-    const path = target.kind === 'file' ? target.file.path : target.path
+    const path = target.kind === 'file'
+      ? target.file.path
+      : target.kind === 'folder' ? target.path : ''
     setDiscarding(`unstaged:${path}`)
     const request = target.kind === 'file'
       ? discardPath(sessionId, target.file.path, target.file.untracked)
-      : discardFolder(sessionId, target.path)
+      : target.kind === 'folder'
+        ? discardFolder(sessionId, target.path)
+        : discardAll(sessionId)
     void request.then(result => {
       setDiscarding(null)
       if (result?.ok !== true) {
-        reportError(failureOf(t, 'title.discard', result))
+        reportError(failureOf(t, target.kind === 'all' ? 'title.discardAll' : 'title.discard', result))
         void refresh()
         return
       }
@@ -1769,6 +1814,8 @@ export function GitView(props: {
   const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
   /** How many rows the list on screen holds, for its header. */
   const filterCount = changeFilter === 'staged' ? stagedCount : unstagedCount
+  /** Whether the list on screen holds an untracked path, for the discard warning. */
+  const filterUntracked = files.some(file => inFilter(file, changeFilter) && file.untracked)
   /** The header's own label: the list it is showing and how many rows it holds. */
   const filterLabel = headText(t(GROUP_KEY[changeFilter]), filterCount)
   // Each row carries its own list's count, including the list a reader is not in:
@@ -1955,6 +2002,54 @@ export function GitView(props: {
               side="bottom"
               className="dsh-cg-filter-anchor"
             />
+            {/* The header's bulk actions are the row actions' own glyphs, doing
+                what the rows below do to every row the list holds. They share the
+                row controls' reveal: absent at rest, present when the header is
+                hovered or holds focus. */}
+            <span className="dsh-cg-head-actions">
+              {changeFilter === 'unstaged'
+                ? (
+                  <Tooltip
+                    label={t('stage.discardAll')}
+                    side="top"
+                    delayMs={TOOLTIP_DELAY_MS}
+                    portal
+                    maxWidth={TOOLTIP_MAX_WIDTH}
+                  >
+                    <button
+                      type="button"
+                      className="dsh-cg-row-action"
+                      aria-label={t('stage.discardAll')}
+                      data-busy={discarding === 'unstaged:'}
+                      disabled={filterCount === 0 || staging !== null || discarding !== null}
+                      onClick={() => handleDiscardAll(filterCount, filterUntracked)}
+                    >
+                      {discarding === 'unstaged:' ? SPINNER_ICON : <IconDiscard />}
+                    </button>
+                  </Tooltip>
+                )
+                : null}
+              <Tooltip
+                label={t(changeFilter === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
+                side="top"
+                delayMs={TOOLTIP_DELAY_MS}
+                portal
+                maxWidth={TOOLTIP_MAX_WIDTH}
+              >
+                <button
+                  type="button"
+                  className="dsh-cg-row-action"
+                  aria-label={t(changeFilter === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
+                  data-busy={staging === `${changeFilter}:`}
+                  disabled={filterCount === 0 || staging !== null || discarding !== null}
+                  onClick={() => handleStageAll(changeFilter)}
+                >
+                  {staging === `${changeFilter}:`
+                    ? SPINNER_ICON
+                    : changeFilter === 'staged' ? <IconMinus /> : <IconPlus />}
+                </button>
+              </Tooltip>
+            </span>
           </header>
           <div className="dsh-cg-list">
             <ChangeList
@@ -2105,10 +2200,15 @@ function DiscardDialog(props: {
     ? ''
     : target.kind === 'file'
       ? t(target.file.untracked ? 'discard.untracked' : 'discard.tracked', { path: target.file.path })
-      : t(
-        target.untracked ? 'discard.folderUntracked' : 'discard.folder',
-        { path: target.path, count: target.count },
-      )
+      : target.kind === 'folder'
+        ? t(
+          target.untracked ? 'discard.folderUntracked' : 'discard.folder',
+          { path: target.path, count: target.count },
+        )
+        : t(
+          target.untracked ? 'discard.allUntracked' : 'discard.all',
+          { count: target.count },
+        )
   const deleting = target?.kind === 'file' && target.file.untracked
   return (
     <Modal

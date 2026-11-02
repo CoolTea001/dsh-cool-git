@@ -76,6 +76,9 @@ type UiKey =
   | 'title.unstage'
   | 'title.stageFolder'
   | 'title.unstageFolder'
+  | 'title.stageAll'
+  | 'title.unstageAll'
+  | 'title.discardAll'
   | 'title.discard'
   | 'title.diff'
   | 'title.branches'
@@ -206,12 +209,17 @@ type UiKey =
   | 'stage.stageFolder'
   | 'stage.unstageFolder'
   | 'stage.discardFolder'
+  | 'stage.stageAll'
+  | 'stage.unstageAll'
+  | 'stage.discardAll'
   | 'discard.title'
   | 'discard.description'
   | 'discard.tracked'
   | 'discard.untracked'
   | 'discard.folder'
   | 'discard.folderUntracked'
+  | 'discard.all'
+  | 'discard.allUntracked'
   | 'discard.confirm'
   | 'discard.delete'
   | 'discard.cancel'
@@ -307,6 +315,9 @@ export const en = {
   'title.unstage': 'Could not unstage the file',
   'title.stageFolder': 'Could not stage the folder',
   'title.unstageFolder': 'Could not unstage the folder',
+  'title.stageAll': 'Could not stage every change',
+  'title.unstageAll': 'Could not unstage every change',
+  'title.discardAll': 'Could not discard every change',
   'title.discard': 'Could not discard the changes',
   'title.diff': 'Could not read the diff',
   'title.branches': 'Could not read the branch list',
@@ -427,12 +438,17 @@ export const en = {
   'stage.stageFolder': 'Stage changes under {path}',
   'stage.unstageFolder': 'Unstage changes under {path}',
   'stage.discardFolder': 'Discard changes under {path}',
+  'stage.stageAll': 'Stage all changes',
+  'stage.unstageAll': 'Unstage all changes',
+  'stage.discardAll': 'Discard all changes',
   'discard.title': 'Discard changes',
   'discard.description': 'This cannot be undone.',
   'discard.tracked': 'Discard the unstaged changes in {path}?',
   'discard.untracked': 'Delete the untracked file {path}?',
   'discard.folder': 'Discard the unstaged changes under {path}? Files affected: {count}.',
   'discard.folderUntracked': 'Discard the unstaged changes under {path}? Files affected: {count}. Untracked files will be deleted.',
+  'discard.all': 'Discard all unstaged changes? Files affected: {count}.',
+  'discard.allUntracked': 'Discard all unstaged changes? Files affected: {count}. Untracked files will be deleted.',
   'discard.confirm': 'Discard changes',
   'discard.delete': 'Delete file',
   'discard.cancel': 'Cancel',
@@ -582,6 +598,9 @@ export const zh: typeof en = {
   'title.unstage': '取消暂存失败',
   'title.stageFolder': '暂存文件夹失败',
   'title.unstageFolder': '取消暂存文件夹失败',
+  'title.stageAll': '暂存全部更改失败',
+  'title.unstageAll': '取消暂存全部更改失败',
+  'title.discardAll': '放弃全部更改失败',
   'title.discard': '放弃变更失败',
   'title.diff': '读取 Diff 失败',
   'title.branches': '读取分支列表失败',
@@ -718,12 +737,17 @@ export const zh: typeof en = {
   'stage.stageFolder': '暂存 {path} 下的变更',
   'stage.unstageFolder': '取消暂存 {path} 下的变更',
   'stage.discardFolder': '放弃 {path} 下的变更',
+  'stage.stageAll': '暂存全部更改',
+  'stage.unstageAll': '取消暂存全部更改',
+  'stage.discardAll': '放弃全部更改',
   'discard.title': '放弃变更',
   'discard.description': '此操作无法撤销。',
   'discard.tracked': '放弃 {path} 的未暂存更改？',
   'discard.untracked': '删除未跟踪文件 {path}？',
   'discard.folder': '放弃 {path} 下的未暂存更改？涉及 {count} 个文件。',
   'discard.folderUntracked': '放弃 {path} 下的未暂存更改？涉及 {count} 个文件。未跟踪文件会被删除。',
+  'discard.all': '放弃全部未暂存更改？涉及 {count} 个文件。',
+  'discard.allUntracked': '放弃全部未暂存更改？涉及 {count} 个文件。未跟踪文件会被删除。',
   'discard.confirm': '放弃变更',
   'discard.delete': '删除文件',
   'discard.cancel': '取消',
