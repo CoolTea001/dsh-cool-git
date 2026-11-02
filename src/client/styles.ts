@@ -129,7 +129,7 @@ const GIT_CSS = [
   // out a weight and a tracking heavier than the same button draws in the sidebar.
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
-  '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 6px 8px}',
+  '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:8px}',
   // Every scrollport the tab owns — the sidebar's two panes here, the branch
   // dialog's list below, and the diff pane's own scrollers, which state the same
   // binding by sharing this selector — keeps the platform's bar out of the frame
@@ -729,7 +729,7 @@ const GIT_CSS = [
   // root from a folder are one indentation step and the count it carries. That is
   // what keeps the pane from reading as two headings above two separate trees.
   '.dsh-cg-group{display:flex;flex-direction:column}',
-  '.dsh-cg-group+.dsh-cg-group{margin-top:6px}',
+  '.dsh-cg-group+.dsh-cg-group{margin-top:4px}',
   '.dsh-cg-group-head{position:relative;display:flex;align-items:center;height:24px;border-radius:var(--dsw-radius-sm,6px)}',
   '.dsh-cg-group-head:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-group-toggle{display:flex;align-items:center;gap:2px;width:100%;height:24px;padding:0 6px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
@@ -742,7 +742,7 @@ const GIT_CSS = [
   // The group's name is the folder name's type, not a pane title's: both are
   // paths in the same tree, and the count is part of the name rather than a
   // badge of its own.
-  '.dsh-cg-group-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-group-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
   // The group's trailing actions are the row controls' own glyphs, revealed the
   // same way: absent at rest, present when the header is hovered or holds focus.
   // A staged group reserves one action's width, an unstaged group two, so
