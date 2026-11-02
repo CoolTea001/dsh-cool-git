@@ -417,8 +417,8 @@ export const en = {
   'commit.scope': 'Commit scope',
   'commit.scopeStaged': 'Commit Staged',
   'commit.scopeAll': 'Commit All',
-  'commit.buttonStaged': 'Commit Staged · {count}',
-  'commit.buttonAll': 'Commit All · {count}',
+  'commit.buttonStaged': 'Commit Staged',
+  'commit.buttonAll': 'Commit All',
   'hint.commit-identity': 'Set it once with git config --global user.name "Your Name" and git config --global user.email "you@example.com"; drop --global to set it for this repository only',
 
   'list.notRepo': 'This session\'s directory is not a Git repository',
@@ -714,10 +714,10 @@ export const zh: typeof en = {
   'commit.generating': '正在生成…',
   'commit.warning': '提交前请检查：{text}',
   'commit.scope': '提交范围',
-  'commit.scopeStaged': '提交已暂存的更改',
+  'commit.scopeStaged': '提交暂存的更改',
   'commit.scopeAll': '提交全部更改',
-  'commit.buttonStaged': '提交已暂存的更改 · {count}',
-  'commit.buttonAll': '提交全部更改 · {count}',
+  'commit.buttonStaged': '提交暂存的更改',
+  'commit.buttonAll': '提交全部更改',
   'hint.commit-identity': '请先配置一次：git config --global user.name "你的名字"、git config --global user.email "你的邮箱"；去掉 --global 则只对当前仓库生效',
 
   'list.notRepo': '当前会话目录不是 Git 仓库',
@@ -725,7 +725,7 @@ export const zh: typeof en = {
   'list.loading': '正在读取仓库…',
   'list.conflictsHidden': '未解决的冲突暂不显示，请先在终端解决',
 
-  'stage.staged': '已暂存的变更',
+  'stage.staged': '暂存的变更',
   'stage.unstaged': '变更',
   'stage.conflict': '冲突',
   'stage.stage': '暂存变更',

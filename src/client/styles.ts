@@ -274,7 +274,7 @@ const GIT_CSS = [
   // below its own width that centring is what would cut the name at both ends
   // instead of ending it in an ellipsis — and any frame that widened this label
   // without moving the icon with it would open a hollow between the two.
-  '.dsh-cg-branch-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-family:var(--ds-font-family-code,ui-monospace,monospace)}',
+  '.dsh-cg-branch-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}',
   // The pill's anchor is where the row is told what may be shortened, and in which
   // order. A deficit is shared in proportion to each item's `flex-shrink` times its
   // base size, so "first" and "second" are a ratio: the pill carries a thousand
@@ -551,7 +551,7 @@ const GIT_CSS = [
   // The effort control runs to the row's own edge: square on the left where it
   // meets the name, rounded on the right with the row's radius, so its hover
   // fill reads as the row's end rather than as a pill floating inside it.
-  '.dsh-cg-settings-row-effort{align-self:stretch;flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 10px 0 8px;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11.5px;cursor:pointer}',
+  '.dsh-cg-settings-row-effort{align-self:stretch;flex:none;display:inline-flex;align-items:center;gap:4px;padding:0 10px 0 8px;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;cursor:pointer}',
   '.dsh-cg-settings-row-effort[data-static=true]{cursor:default}',
   'button.dsh-cg-settings-row-effort:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
   // The control's arrow is a fixed down chevron: the menu it opens only ever
@@ -567,7 +567,7 @@ const GIT_CSS = [
   // list while its own models scroll under it, which is why it sits in a wrapper
   // that carries the panel's fill: the button over it only adds the hover tint.
   '.dsh-cg-settings-picker-group-sticky{position:sticky;top:0;z-index:1}',
-  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 10px 7px 8px;border:0;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;font-weight:500;line-height:20px;text-align:left;cursor:pointer}',
+  '.dsh-cg-settings-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 10px 7px 8px;border:0;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;font-weight:600;line-height:20px;text-align:left;cursor:pointer}',
   '.dsh-cg-settings-picker-group-arrow{flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-settings-picker-group-arrow svg{display:block;width:12px;height:12px;transform:rotate(0);transition:transform .12s ease}',
   '.dsh-cg-settings-picker-group-arrow[data-open=true] svg{transform:rotate(90deg)}',
@@ -578,7 +578,7 @@ const GIT_CSS = [
   '.dsh-cg-settings-effort-control{align-self:stretch}',
   '.dsh-cg-settings-row-name:focus-visible,.dsh-cg-settings-row-effort:focus-visible,.dsh-cg-settings-picker-group-head:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}',
   '.dsh-cg-settings-picker-rule{margin:6px 4px;border-top:.5px solid var(--dsw-alias-border-l3)}',
-  '.dsh-cg-settings-picker-empty{margin:8px 8px 10px;color:var(--dsw-alias-label-tertiary);font-size:11.5px;line-height:18px}',
+  '.dsh-cg-settings-picker-empty{margin:8px 8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
   '.dsh-cg-settings-prompt:disabled{opacity:.6;cursor:default}',
   // The prompt's frame repeats the commit field's material — the half-pixel
   // border, the layer fill, and the business token on focus — because the two
@@ -720,14 +720,16 @@ const GIT_CSS = [
   // short enough to read as two or three lines when it has to. `pre-line` is what
   // puts each finding the model reported on a line of its own, since the findings
   // travel as one sentence separated by newlines.
-  '.dsh-cg-commit-note{margin:0;white-space:pre-line;color:var(--dsw-alias-state-warn-primary);font-size:11.5px;line-height:1.45}',
+  '.dsh-cg-commit-note{margin:0;white-space:pre-line;color:var(--dsw-alias-state-warn-primary);font-size:12px;line-height:1.45}',
 
   // The changed-path pane is one tree: the two halves are its roots, and the
   // folders and files under them are its branches. A group header is a row of
   // that tree rather than a heading above it — same height, type, chevron, hover
   // fill and trailing actions as a folder row — so the only things separating a
   // root from a folder are one indentation step and the count it carries. That is
-  // what keeps the pane from reading as two headings above two separate trees.
+  // what keeps the pane from reading as two headings above two separate trees. A
+  // half with no rows under it draws no root at all (`ChangeList`), because a
+  // root without branches would be the heading the header is not.
   '.dsh-cg-group{display:flex;flex-direction:column}',
   '.dsh-cg-group+.dsh-cg-group{margin-top:4px}',
   '.dsh-cg-group-head{position:relative;display:flex;align-items:center;height:24px;border-radius:var(--dsw-radius-sm,6px)}',
@@ -738,19 +740,22 @@ const GIT_CSS = [
   // so its children's rows begin one indent step further in.
   '.dsh-cg-group-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--dsw-alias-label-tertiary);transition:transform .12s ease}',
   '.dsh-cg-group-toggle[aria-expanded=true] .dsh-cg-group-chevron{transform:rotate(90deg)}',
-  '.dsh-cg-group-chevron svg{width:12px;height:12px;display:block}',
+  '.dsh-cg-group-chevron svg{width:14px;height:14px;display:block}',
   // The group's name is the folder name's type, not a pane title's: both are
   // paths in the same tree, and the count is part of the name rather than a
   // badge of its own.
-  '.dsh-cg-group-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;font-weight:500;color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-group-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
   // The group's trailing actions are the row controls' own glyphs, revealed the
-  // same way: absent at rest, present when the header is hovered or holds focus.
+  // same way: absent at rest, present once the header is hovered or one of those
+  // actions holds keyboard focus. Collapsing the group is not hovering it, so
+  // the disclosure button's own focus must not put them on screen, and a
+  // disabled action never appears at all (see the row controls below).
   // A staged group reserves one action's width, an unstaged group two, so
   // revealing them never moves the count.
   '.dsh-cg-group-head[data-actions=stage] .dsh-cg-group-toggle{padding-right:26px}',
   '.dsh-cg-group-head[data-actions=both] .dsh-cg-group-toggle{padding-right:46px}',
   '.dsh-cg-group-head .dsh-cg-row-action{height:24px}',
-  '.dsh-cg-group-head:hover .dsh-cg-row-action,.dsh-cg-group-head:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
+  '.dsh-cg-group-head:hover .dsh-cg-row-action:not(:disabled),.dsh-cg-group-head .dsh-cg-row-action:focus-visible{opacity:1;pointer-events:auto}',
 
   // Changed-path rows. The selected row keeps the hover fill's colour family but
   // takes the next step up the platform's ramp (`active` over `hover`), so the
@@ -772,26 +777,34 @@ const GIT_CSS = [
   '.dsh-cg-row{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;height:26px;padding:0 26px 0 0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}',
   // The row's trailing actions: laid over the row's end rather than given a
   // flex slot each, so the selection button underneath owns the full width.
-  // Hidden at rest and on hover/focus they arrive, which is what keeps a long
-  // list of rows quiet while leaving them reachable from the keyboard (the
-  // buttons are in the tab order, and `focus-within` is what shows them). The
-  // pointer deepens a glyph alone — tertiary to primary — because the controls
-  // draw no fill of their own; the row's own fill is the only surface under
-  // them. An unstaged row reserves room for both, so revealing them never moves
-  // the text.
+  // Hidden at rest, and they arrive for exactly three states: the pointer over
+  // the row, the row being the active one (the selected path keeps its controls
+  // in reach after the pointer has moved on), and an action's own keyboard focus
+  // — not the focus of the row it belongs to. The pointer deepens a glyph alone —
+  // tertiary to primary — because the controls draw no fill of their own; the
+  // row's own fill is the only surface under them. An unstaged row reserves room
+  // for both, so revealing them never moves the text.
+  //
+  // A disabled control is not on screen at all: it has nothing to offer, and an
+  // `opacity` of its own here would out-rank the resting `opacity:0` and leave a
+  // glyph hanging over a row that cannot use it — the reason `+` and `−` stay
+  // invisible while another write is still in flight. A write in flight is the
+  // one exception — that is progress rather than an affordance — so a busy
+  // control keeps its spinner up wherever the pointer went.
   '.dsh-cg-row-actions{position:absolute;right:2px;top:50%;transform:translateY(-50%);display:flex;align-items:center}',
   '.dsh-cg-row-wrap[data-actions=both] .dsh-cg-row{padding-right:46px}',
   '.dsh-cg-row-action{display:inline-flex;align-items:center;justify-content:center;width:22px;height:26px;padding:0;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary);opacity:0;pointer-events:none;cursor:pointer;transition:opacity .1s ease,color .12s ease}',
-  '.dsh-cg-row-wrap:hover .dsh-cg-row-action,.dsh-cg-row-wrap:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
+  '.dsh-cg-row-wrap:hover .dsh-cg-row-action:not(:disabled),.dsh-cg-row-wrap[data-selected=true] .dsh-cg-row-action:not(:disabled),.dsh-cg-row-wrap .dsh-cg-row-action:focus-visible{opacity:1;pointer-events:auto}',
   // A touch screen has no hover to reveal the action with, so the controls are
   // simply there: a row's +/− is part of what the row is on such a device, not a
   // decoration for a pointer that is only passing over it.
-  '@media (hover:none){.dsh-cg-row-action{opacity:1;pointer-events:auto}}',
+  '@media (hover:none){.dsh-cg-row-action:not(:disabled){opacity:1;pointer-events:auto}}',
   '.dsh-cg-row-action:hover:not(:disabled){color:var(--dsw-alias-label-primary)}',
-  '.dsh-cg-row-action:disabled{opacity:.45;cursor:default}',
+  '.dsh-cg-row-action:disabled{cursor:default}',
+  '.dsh-cg-row-action[data-busy=true]{opacity:1;pointer-events:auto}',
   '.dsh-cg-row-action svg{width:16px;height:16px;display:block}',
   '.dsh-cg-row-action[data-busy=true] svg{animation:dsh-cg-spin .9s linear infinite}',
-  '.dsh-cg-badge{flex:none;width:13px;text-align:center;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;font-weight:700;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-badge{flex:none;width:13px;text-align:center;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;font-weight:500;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-badge[data-kind=added]{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-badge[data-kind=modified]{color:var(--dsw-alias-state-warn-primary)}',
   '.dsh-cg-badge[data-kind=deleted]{color:var(--dsw-alias-state-error-primary)}',
@@ -803,7 +816,7 @@ const GIT_CSS = [
   // The row's path reads `name ← old/path` for a rename; the name keeps its
   // width while the source gives way first, because the name is what the row is
   // about.
-  '.dsh-cg-path{display:flex;align-items:baseline;gap:4px;flex:1 1 auto;min-width:0;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px}',
+  '.dsh-cg-path{display:flex;align-items:baseline;gap:4px;flex:1 1 auto;min-width:0;font-size:12px}',
   '.dsh-cg-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-dot{flex:none;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-dir{color:var(--dsw-alias-label-tertiary)}',
@@ -822,7 +835,7 @@ const GIT_CSS = [
   '.dsh-cg-folder-wrap{position:relative;display:flex;align-items:center;height:24px;border-radius:var(--dsw-radius-sm,6px)}',
   '.dsh-cg-folder-wrap:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.dsh-cg-folder-wrap .dsh-cg-row-action{height:24px}',
-  '.dsh-cg-folder-wrap:hover .dsh-cg-row-action,.dsh-cg-folder-wrap:focus-within .dsh-cg-row-action{opacity:1;pointer-events:auto}',
+  '.dsh-cg-folder-wrap:hover .dsh-cg-row-action:not(:disabled),.dsh-cg-folder-wrap .dsh-cg-row-action:focus-visible{opacity:1;pointer-events:auto}',
   // A folder reserves the same trailing room as a file row: one action on a
   // staged folder, two on an unstaged one, so revealing them never moves the name.
   '.dsh-cg-folder-wrap[data-actions=stage] .dsh-cg-folder{padding-right:26px}',
@@ -833,8 +846,8 @@ const GIT_CSS = [
   // so a folder's name and the name of a file under it start in the same column.
   '.dsh-cg-folder-chevron{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--dsw-alias-label-tertiary);transition:transform .12s ease}',
   '.dsh-cg-folder[aria-expanded=true] .dsh-cg-folder-chevron{transform:rotate(90deg)}',
-  '.dsh-cg-folder-chevron svg{width:12px;height:12px;display:block}',
-  '.dsh-cg-folder-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-folder-chevron svg{width:14px;height:14px;display:block}',
+  '.dsh-cg-folder-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-secondary)}',
   // A folded chain's slashes are structure, not names: they sit closer than a
   // space would keep them, so `types / client` reads as one directory rather
   // than as a phrase, and they keep the folder name's own tone — only the
@@ -893,7 +906,7 @@ const GIT_CSS = [
   // 3. Diff pane.
   '.dsh-cg-main{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0}',
   '.dsh-cg-main-head{flex:none;display:flex;align-items:center;gap:8px;min-height:30px;padding:4px 8px 4px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base)}',
-  '.dsh-cg-main-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11.5px;color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-main-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-main-subtitle{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
   // Which half of a path the patch is: a pill because it is a state of the pane
   // rather than a second title, and quiet enough to sit beside the kind tag.

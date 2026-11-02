@@ -1804,11 +1804,12 @@ export function GitView(props: {
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
-  // One count per half, for the commit button and the generate control. A
-  // half-staged path is counted in both lists, which is what it is: the index
-  // holds one version and the worktree another, and each count names rows rather
-  // than distinct paths. A conflicted path is in neither — it cannot be
-  // committed until it is resolved — and the list that would hold it is withheld.
+  // One count per half, for the commit form: whether its button can act at all,
+  // and whether Generate has anything to describe. A half-staged path is counted
+  // in both lists, which is what it is: the index holds one version and the
+  // worktree another, and each count names rows rather than distinct paths. A
+  // conflicted path is in neither — it cannot be committed until it is resolved —
+  // and the list that would hold it is withheld.
   const stagedCount = files.filter(file => file.staged && !file.conflicted).length
   const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
 
@@ -4632,7 +4633,7 @@ function CommitBar(props: {
           <span className="dsh-cg-commit-label">
             {committing
               ? t('commit.busy')
-              : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll', { count })}
+              : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll')}
           </span>
         </button>
         <Menu
@@ -4674,6 +4675,11 @@ function CommitBar(props: {
  * cycled through. Drawing both at once means a reader can see what is already
  * staged while staging the rest, and a path that is both staged and edited again
  * is one row under each header: the worktree's row offers `+`, the index's `−`.
+ * A half with nothing in it is not drawn at all: its header is the tree's root
+ * for the rows under it, so an empty one would be a heading for a list that is
+ * not there, and a zero is nothing a reader can act on. A clean tree therefore
+ * leaves the pane blank — the commit form is disabled at zero and the diff pane
+ * is back at its empty hint, so there is nothing left to explain.
  *
  * Each half is a disclosure of its own (`ChangeGroup`): folding one away is how
  * the reader makes room for the other without the pane forgetting that it is
@@ -4770,10 +4776,8 @@ function ChangeList(props: {
     return <Note text={t(status.reason === 'no-repo' ? 'list.notRepo' : 'list.statusFailed')} />
   }
   if (!loaded && status === null) return <Note text={t('list.loading')} />
-  // A clean tree still draws both groups, each at zero: the two headings are the
-  // pane's structure, and a blank panel would leave the reader unable to tell a
-  // clean tree from a list that has not arrived.
-
+  // Empty halves are skipped, not drawn at zero (see the pane's doc comment).
+  //
   // The conflict list is withheld until the page can resolve one (see
   // `VisibleSide`). An unmerged path would otherwise simply vanish from every
   // list, so the pane says it is there and that finishing it is not this page's.
@@ -4782,7 +4786,7 @@ function ChangeList(props: {
   return (
     <>
       {conflicted ? <Note text={t('list.conflictsHidden')} /> : null}
-      {SIDES.map(side => (
+      {SIDES.filter(side => visible[side].length > 0).map(side => (
         <ChangeGroup
           key={side}
           t={t}
@@ -5210,11 +5214,13 @@ function FolderBranch(props: {
  * as a selection, and a reader cannot tab to it. The row is therefore a wrapper
  * that owns the hover, the indent and the selected fill, with the selection
  * button taking the width and the actions sitting in their own trailing slot.
- * The actions are shown on hover and on focus-within, so the keyboard can reach
- * them too, and Space on the selected row stages without moving focus — the
- * shortcut a list of paths invites. Their own bubbles name the moves — `Stage
- * changes`, `Discard changes` or `Unstage` — because a glyph alone does not say
- * which half it writes to.
+ * The actions are shown on hover, on the active row (the selected path keeps
+ * them in reach once the pointer has moved on) and once one of them holds
+ * keyboard focus, so the keyboard can reach them too; a disabled action is never
+ * shown, because there is nothing it can do. Space on the selected row stages
+ * without moving focus — the shortcut a list of paths invites. Their own bubbles
+ * name the moves — `Stage changes`, `Discard changes` or `Unstage` — because a
+ * glyph alone does not say which half it writes to.
  *
  * Only the opposite half's action is offered: a staged row shows `−` (unstage),
  * an unstaged row `+` (stage). The unstaged row also offers the discard action
