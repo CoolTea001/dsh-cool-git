@@ -83,8 +83,11 @@ type UiKey =
  | 'hint.commit-identity'
 /** The changed-path pane's empty and loading states. */
  | 'list.notRepo' | 'list.statusFailed' | 'list.loading'
-/** The three changed-path lists: what each holds, and the actions that move
- *  one path between the first two or discard its worktree half. */
+/** The note shown while conflicts are withheld from the changed-path lists. */
+ | 'list.conflictsHidden'
+/** The changed-path lists: what each holds, and the actions that move one path
+ *  between the first two or discard its worktree half. The conflict name is
+ *  kept for the list the header withholds (see the client's `VisibleSide`). */
  | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stage' | 'stage.unstage' | 'stage.stageFile' | 'stage.unstageFile'
 /** The unstaged action that throws the worktree half away, and the dialog it
  *  opens before doing so. */
@@ -240,6 +243,7 @@ export declare const en: {
     'list.notRepo': string;
     'list.statusFailed': string;
     'list.loading': string;
+    'list.conflictsHidden': string;
     'stage.staged': string;
     'stage.unstaged': string;
     'stage.conflict': string;

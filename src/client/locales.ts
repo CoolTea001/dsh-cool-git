@@ -187,8 +187,11 @@ type UiKey =
   | 'list.notRepo'
   | 'list.statusFailed'
   | 'list.loading'
-  /** The three changed-path lists: what each holds, and the actions that move
-   *  one path between the first two or discard its worktree half. */
+  /** The note shown while conflicts are withheld from the changed-path lists. */
+  | 'list.conflictsHidden'
+  /** The changed-path lists: what each holds, and the actions that move one path
+   *  between the first two or discard its worktree half. The conflict name is
+   *  kept for the list the header withholds (see the client's `VisibleSide`). */
   | 'stage.staged'
   | 'stage.unstaged'
   | 'stage.conflict'
@@ -410,6 +413,7 @@ export const en = {
   'list.notRepo': 'This session\'s directory is not a Git repository',
   'list.statusFailed': 'Could not read the repository status',
   'list.loading': 'Reading the repository…',
+  'list.conflictsHidden': 'Unresolved conflicts are not shown here; resolve them in your terminal first',
 
   'stage.staged': 'Staged changes',
   'stage.unstaged': 'Changes',
@@ -700,6 +704,7 @@ export const zh: typeof en = {
   'list.notRepo': '当前会话目录不是 Git 仓库',
   'list.statusFailed': '读取仓库状态失败',
   'list.loading': '正在读取仓库…',
+  'list.conflictsHidden': '未解决的冲突暂不显示，请先在终端解决',
 
   'stage.staged': '已暂存的变更',
   'stage.unstaged': '变更',

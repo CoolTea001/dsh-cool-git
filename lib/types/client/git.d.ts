@@ -7,9 +7,10 @@
  * diff pane shows one side of one path's change — the index against HEAD, or the
  * worktree against the index — or one commit's whole patch (see `api.ts` for the
  * routes and `diff.ts` for the patch parser). The list draws one tree at a time —
- * the worktree's changes by default, then the index's, then the conflicts — chosen
- * from its header. A row's trailing `+` or `−` moves its path between the first
- * two. The sidebar's second row is the commit form — a message field, a button
+ * the worktree's changes by default or the index's — chosen from its header. The
+ * conflict list is withheld until the page can resolve one (see `VisibleSide`).
+ * A row's trailing `+` or `−` moves its path between the two lists. The
+ * sidebar's second row is the commit form — a message field, a button
  * whose scope is the index or the whole tree, and the caret that switches between
  * them — and the two panes stack under it. Both of the sidebar's boundaries —
  * its right edge and the divider between the two lists — are the reader's to

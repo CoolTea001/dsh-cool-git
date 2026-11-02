@@ -7,9 +7,10 @@
  * diff pane shows one side of one path's change — the index against HEAD, or the
  * worktree against the index — or one commit's whole patch (see `api.ts` for the
  * routes and `diff.ts` for the patch parser). The list draws one tree at a time —
- * the worktree's changes by default, then the index's, then the conflicts — chosen
- * from its header. A row's trailing `+` or `−` moves its path between the first
- * two. The sidebar's second row is the commit form — a message field, a button
+ * the worktree's changes by default or the index's — chosen from its header. The
+ * conflict list is withheld until the page can resolve one (see `VisibleSide`).
+ * A row's trailing `+` or `−` moves its path between the two lists. The
+ * sidebar's second row is the commit form — a message field, a button
  * whose scope is the index or the whole tree, and the caret that switches between
  * them — and the two panes stack under it. Both of the sidebar's boundaries —
  * its right edge and the divider between the two lists — are the reader's to
@@ -275,7 +276,8 @@ type DiscardRequest =
  * rows: a partly staged file is one row under Staged and one under Changes. An
  * untracked path is in neither porcelain column but is a worktree change, so it
  * belongs to the unstaged list. A conflicted path is neither side: `git add`
- * would mark it resolved, so it gets a list of its own with no stage control.
+ * would mark it resolved, so it is classified as the conflict list — which the
+ * header withholds until the page can resolve one (see `VisibleSide`).
  *
  * @param file - one changed path.
  * @returns the groups that list it, in sidebar order.
@@ -318,6 +320,20 @@ interface DocState {
 }
 
 /**
+ * The changed-path lists the header offers.
+ *
+ * The conflict list is deliberately absent. The page can show an unmerged path's
+ * combined diff, but it has no way to resolve one: `git merge` aborts a
+ * conflicting merge (see `mergeBranch` in the Host), and a conflicted row
+ * therefore carries no action. Offering a list whose rows only restate Git's
+ * state, and whose count is always zero for a merge this page started, promises
+ * a resolver that does not exist yet. The list is one entry in `filterItems`
+ * away from returning once one does; `DiffSide`, the Host's `conflict` diff, and
+ * the sidebar's classification all stay in place for it.
+ */
+type VisibleSide = Exclude<DiffSide, 'conflict'>
+
+/**
  * What one session's page remembers between mounts.
  *
  * Only the page's own reading position: the list it had open, the row it had
@@ -328,7 +344,7 @@ interface DocState {
  * the repository around it.
  */
 interface PageMemory {
-  readonly filter: DiffSide
+  readonly filter: VisibleSide
   readonly selection: Selection | null
   readonly doc: DocState | null
 }
@@ -338,7 +354,7 @@ interface PageMemory {
  *
  * The worktree's list is the one it opens on: the page exists to stage and
  * commit, and the changes still waiting in the worktree are what that starts
- * from — the index and the conflicts are one choice away in the header.
+ * from — the index is one choice away in the header.
  */
 const EMPTY_PAGE_MEMORY: PageMemory = { filter: 'unstaged', selection: null, doc: null }
 
@@ -996,7 +1012,7 @@ export function GitView(props: {
   /** The row or folder the discard dialog is asking about, or null while none is open. */
   const [discardTarget, setDiscardTarget] = useState<DiscardRequest | null>(null)
   /** Which list the changed-path pane is showing. */
-  const [changeFilter, setChangeFilter] = useState<DiffSide>(() => remembered.filter)
+  const [changeFilter, setChangeFilter] = useState<VisibleSide>(() => remembered.filter)
   /** Whether the header's list menu is showing. */
   const [filterOpen, setFilterOpen] = useState(false)
   const [selection, setSelection] = useState<Selection | null>(() => remembered.selection)
@@ -1748,25 +1764,21 @@ export function GitView(props: {
   // half-staged path is counted in both lists, which is what it is: the index
   // holds one version and the worktree another, and each count names rows rather
   // than distinct paths. A conflicted path is in neither — it cannot be
-  // committed until it is resolved.
+  // committed until it is resolved — and the list that would hold it is withheld.
   const stagedCount = files.filter(file => file.staged && !file.conflicted).length
   const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
-  const conflictCount = files.filter(file => file.conflicted).length
   /** How many rows the list on screen holds, for its header. */
-  const filterCount = changeFilter === 'staged'
-    ? stagedCount
-    : changeFilter === 'unstaged'
-      ? unstagedCount
-      : conflictCount
+  const filterCount = changeFilter === 'staged' ? stagedCount : unstagedCount
   /** The header's own label: the list it is showing and how many rows it holds. */
   const filterLabel = headText(t(GROUP_KEY[changeFilter]), filterCount)
-  // Each row carries its own list's count, including the lists a reader is not in:
+  // Each row carries its own list's count, including the list a reader is not in:
   // the numbers are how the choice is made. A list with nothing in it is disabled
-  // rather than hidden, so the menu always states the same three things.
+  // rather than hidden, so the menu always states the same two things. The
+  // conflict list is not one of them while the page cannot resolve a conflict
+  // (see `VisibleSide`).
   const filterItems: readonly MenuEntry[] = [
     { id: 'staged', label: headText(t('stage.staged'), stagedCount), disabled: stagedCount === 0 },
     { id: 'unstaged', label: headText(t('stage.unstaged'), unstagedCount), disabled: unstagedCount === 0 },
-    { id: 'conflict', label: headText(t('stage.conflict'), conflictCount), disabled: conflictCount === 0 },
   ]
 
   // Keep the selected row meaningful in the list that is showing: a filter names
@@ -1912,9 +1924,9 @@ export function GitView(props: {
           <header className="dsh-cg-head">
             {/* The header is the list's switch, not a caption: the pane draws one
                 tree at a time, and this is where a reader moves between the
-                worktree's changes, the index's and the conflicts. The label
-                carries the current list's count, so the count and the tree below
-                it always describe the same thing. */}
+                worktree's changes and the index's. The label carries the current
+                list's count, so the count and the tree below it always describe
+                the same thing. The conflict list is withheld (see `VisibleSide`). */}
             <Menu
               open={filterOpen}
               anchor={(
@@ -1934,7 +1946,7 @@ export function GitView(props: {
               selectedId={changeFilter}
               onSelect={id => {
                 setFilterOpen(false)
-                if (id === 'staged' || id === 'unstaged' || id === 'conflict') {
+                if (id === 'staged' || id === 'unstaged') {
                   setChangeFilter(id)
                 }
               }}
@@ -4690,7 +4702,7 @@ function ChangeList(props: {
   readonly status: StatusPayload | null
   readonly loaded: boolean
   readonly files: readonly ChangedFile[]
-  readonly side: DiffSide
+  readonly side: VisibleSide
   readonly selection: Selection | null
   readonly staging: string | null
   readonly discarding: string | null
@@ -4730,8 +4742,14 @@ function ChangeList(props: {
   if (!loaded && status === null) return <Note text={t('list.loading')} />
   if (files.length === 0) return <></>
 
+  // The conflict list is withheld until the page can resolve one (see
+  // `VisibleSide`). An unmerged path would otherwise simply vanish from every
+  // list, so the pane says it is there and that finishing it is not this page's.
+  const conflicted = files.some(file => file.conflicted)
+
   return (
     <>
+      {conflicted ? <Note text={t('list.conflictsHidden')} /> : null}
       {tree.folders.map(folder => (
         <FolderBranch
           key={folder.path}
