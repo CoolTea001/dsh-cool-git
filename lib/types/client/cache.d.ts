@@ -31,13 +31,21 @@
  * routes key a Workspace's saved choices by it; the repository root is the
  * fallback for a deployment whose Workspace registry cannot name one.
  *
+ * One choice lives beside the answers on that same identity: the commit form's
+ * scope — whether the button commits the index or stages and commits the whole
+ * worktree. It is a statement about the Workspace rather than about one
+ * conversation, so it is stored under the repository key and read through the
+ * same alias, which is what lets a reload open the form the way it was left
+ * before the Host has answered. It sits outside the snapshot entry so that
+ * evicting an old answer cannot take the reader's choice with it.
+ *
  * Nothing here throws. `localStorage` may be refused (quota, a sandboxed frame,
  * a browser that will not store) and a persisted value may be damaged or written
  * by another version of this plugin, so every read is treated as data rather
  * than trusted, and every write is allowed to fail: persistence is a
  * convenience, never a precondition.
  */
-import type { LogPayload, StatusPayload } from '../shared/contract.js';
+import type { CommitScope, LogPayload, StatusPayload } from '../shared/contract.js';
 /** One repository's last answer, as a mount reads it back. */
 export interface RepositorySnapshot {
     /** The last `status` answer, or null when that read never answered. */
@@ -47,6 +55,37 @@ export interface RepositorySnapshot {
     /** Wall-clock milliseconds when the snapshot was written, from `Date.now()`. */
     readonly savedAt: number;
 }
+/**
+ * The commit scope the reader left a Workspace set to, if there is one.
+ *
+ * The answer is available before the Host's first read: a reload resolves the
+ * repository through the session's alias, which earlier mounts wrote to
+ * `localStorage`, so the commit form opens in the saved scope rather than the
+ * default. A session opening this tab for the first time has no alias yet;
+ * {@link readCommitScope} can then be called again with the `status` answer
+ * that named the repository, and the page adopts what that Workspace saved.
+ *
+ * @param sessionId - the session the page belongs to, when it named one.
+ * @param status - the answer that names the repository now being shown, when one
+ *   has arrived; it takes precedence over the session's last-known repository.
+ * @returns the saved scope, or undefined when this repository has none.
+ */
+export declare function readCommitScope(sessionId: string | undefined, status?: StatusPayload | null): CommitScope | undefined;
+/**
+ * Record the commit scope for the repository a session is showing.
+ *
+ * The repository is named by the answer on screen when it can be, and by the
+ * session's alias otherwise, exactly as a snapshot write names it: a scope
+ * change while the page still shows the cached answer must land on the same
+ * Workspace key that read will use. A write that fails is not reported — the
+ * page keeps the choice for as long as it is open, and persistence is a
+ * convenience rather than a precondition.
+ *
+ * @param sessionId - the session the page belongs to, when it named one.
+ * @param status - the answer the page is showing, or null before one arrives.
+ * @param scope - the scope the reader picked.
+ */
+export declare function writeCommitScope(sessionId: string | undefined, status: StatusPayload | null, scope: CommitScope): void;
 /**
  * The saved snapshot for the repository this session last read, if there is one.
  *

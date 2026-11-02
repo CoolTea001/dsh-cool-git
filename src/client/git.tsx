@@ -20,16 +20,18 @@
  * answer is current, which failure the dialog is stating, which operation is in
  * flight — a checkout, one half of a remote round trip, or the commit the
  * changed-path list asks for — each of which is what disables the other
- * controls, and where the two boundaries were left. That keeps a manual refresh
- * honest — it re-reads `status` and `log`, and the diff pane re-reads whatever
- * it is showing.
+ * controls, the commit form's scope, and where the two boundaries were left.
+ * That keeps a manual refresh honest — it re-reads `status` and `log`, and the
+ * diff pane re-reads whatever it is showing.
  *
  * One consequence of that ownership is `cache.ts`'s business: the shell renders
  * one View at a time, so switching tabs unmounts this page and its answers with
- * it. The last repository answer is therefore cached per Workspace, and the
- * reading position the reader left is kept per session below, so a return to
- * this tab paints what they left and re-reads the repository behind it instead
- * of starting again from its loading rows.
+ * it. The last repository answer is therefore cached per Workspace, the commit
+ * form's scope is kept there too — it is a Workspace preference rather than a
+ * conversation's, so a reload and every session in that Workspace open the form
+ * the way it was left — and the reading position the reader chose is kept per
+ * session below, so a return to this tab paints what they left and re-reads the
+ * repository behind it instead of starting again from its loading rows.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
@@ -98,7 +100,13 @@ import {
   unstageFolder,
   unstagePath,
 } from './api.js'
-import { isSnapshotFresh, readRepositorySnapshot, writeRepositorySnapshot } from './cache.js'
+import {
+  isSnapshotFresh,
+  readCommitScope,
+  readRepositorySnapshot,
+  writeCommitScope,
+  writeRepositorySnapshot,
+} from './cache.js'
 import { suppressComposerSeat } from './chrome.js'
 import { displayPath, parsePatch, type DiffDoc, type DiffFile, type DiffLine } from './diff.js'
 import {
@@ -159,6 +167,16 @@ const MAX_DIFF_ROWS = 6000
 const COPY_FEEDBACK_MS = 1200
 
 /**
+ * The commit scope a Workspace nobody has chosen one for opens on.
+ *
+ * Staged is the narrower commitment: the index already holds what the page's own
+ * `+` actions put there, and committing it is the decision the changed-path list
+ * exists to support. A reader who wants the whole worktree staged and committed
+ * says so once, and that Workspace remembers it (see `cache.ts`).
+ */
+const DEFAULT_COMMIT_SCOPE: CommitScope = 'staged'
+
+/**
  * The width cap this plugin puts on every hover bubble.
  *
  * The primitive's own cap is half the viewport, which makes a bubble's shape a
@@ -168,6 +186,16 @@ const COPY_FEEDBACK_MS = 1200
  * label long enough to need it — a short one still shrink-wraps its text.
  */
 const TOOLTIP_MAX_WIDTH = 500
+
+/**
+ * How long every hover bubble on this page waits before it appears.
+ *
+ * Three quarters of a second keeps a pointer passing over a row or a toolbar
+ * control from raising a bubble, while still reading as a direct answer to a
+ * settled hover. The page keeps one constant so no control can drift to a
+ * different pace.
+ */
+const TOOLTIP_DELAY_MS = 750
 
 /**
  * How fast a hovered decoration row walks itself to the right, in pixels per
@@ -935,8 +963,25 @@ export function GitView(props: {
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   /** Whether the changed-path pane's commit is in flight. */
   const [committing, setCommitting] = useState(false)
-  /** The scope the commit form's button is set to; staged is the default. */
-  const [commitScope, setCommitScope] = useState<CommitScope>('staged')
+  /**
+   * The scope the commit form's button is set to.
+   *
+   * Read before the first paint through this session's alias, because the scope
+   * is the Workspace's choice rather than this mount's: a reload must open the
+   * form the way the reader left it instead of asking them to switch again. A
+   * session whose first-ever read has not landed yet has no alias, so it starts
+   * on the default and adopts the Workspace's saved scope with `status` below.
+   */
+  const [commitScope, setCommitScope] = useState<CommitScope>(
+    () => readCommitScope(sessionId) ?? DEFAULT_COMMIT_SCOPE,
+  )
+  /**
+   * Whether the reader has chosen a scope on this mount.
+   *
+   * Adoption from `status` must not overwrite that: a choice made on screen is a
+   * newer statement than the one a background re-read found on disk.
+   */
+  const scopeChosen = useRef(false)
   /**
    * The row whose index write is in flight, as `side:path`, or null at rest.
    *
@@ -1168,6 +1213,34 @@ export function GitView(props: {
     if (cached !== null && isSnapshotFresh(cached)) return
     void refresh()
   }, [cached, pruneSelection, refresh])
+
+  // The scope state belongs to the Workspace this View is showing. A different
+  // session names a different Workspace, so a choice made here must not carry
+  // over: the effect below then opens the new Workspace's saved scope. Declared
+  // first so the reset has landed before that adoption reads the new answer.
+  useEffect(() => {
+    scopeChosen.current = false
+  }, [sessionId])
+
+  // Adopt the scope this Workspace was left at once an answer names it. A reload
+  // has it already — the initial state read it through the session's alias — but
+  // a session opening this tab for the first time has no alias until its first
+  // read lands, and only then can the form join the scope its Workspace shares.
+  // A choice the reader made on this mount wins: it is newer than the one on
+  // disk, and a background re-read must not put the form back.
+  useEffect(() => {
+    if (scopeChosen.current) return
+    setCommitScope(readCommitScope(sessionId, status) ?? DEFAULT_COMMIT_SCOPE)
+  }, [sessionId, status])
+
+  // Record a choice the reader made on this mount — and only that kind: a scope
+  // adopted from storage is already saved. An effect rather than a write in the
+  // click handler because the click can land before the first `status` answer
+  // names the repository, and this runs again when one arrives.
+  useEffect(() => {
+    if (!scopeChosen.current) return
+    writeCommitScope(sessionId, status, commitScope)
+  }, [commitScope, sessionId, status])
 
   // A checkout replaces the working tree, so everything this page is showing is
   // stale at once: the branch, the changed paths, the history, and any patch the
@@ -1474,6 +1547,23 @@ export function GitView(props: {
       return true
     })
   }, [commitScope, sessionId, handleSynced, handleSwitched, reportError, t])
+
+  /**
+   * Switch the commit form's scope.
+   *
+   * Recorded for the Workspace by the persistence effect above rather than
+   * written here: a click can land before the first `status` answer names a
+   * repository, and that effect re-runs when one does, so the choice reaches the
+   * key the next mount reads. The ref makes this choice final for the mount —
+   * the adoption effect watches `status`, and a background re-read landing after
+   * a click must not put the form back where it was.
+   *
+   * @param next - the scope the reader picked.
+   */
+  const handleScopeChange = useCallback((next: CommitScope): void => {
+    scopeChosen.current = true
+    setCommitScope(next)
+  }, [])
 
   /**
    * Move one row's path between the index and the worktree.
@@ -1810,7 +1900,7 @@ export function GitView(props: {
           scope={commitScope}
           stagedCount={stagedCount}
           allCount={files.length}
-          onScopeChange={setCommitScope}
+          onScopeChange={handleScopeChange}
           onCommit={handleCommit}
           onGenerate={handleGenerateMessage}
         />
@@ -3085,7 +3175,7 @@ function SideHead(props: {
           controls below state: a disabled button emits no pointer events, and a
           pill that has lost its name is exactly the one whose hover has the most to
           say. */}
-      <Tooltip label={label} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+      <Tooltip label={label} side="bottom" delayMs={TOOLTIP_DELAY_MS} portal maxWidth={TOOLTIP_MAX_WIDTH}>
         <span className="dsh-cg-tip dsh-cg-branch-tip">
           <button
             type="button"
@@ -3147,7 +3237,7 @@ function SideHead(props: {
         <Menu
           open={menuOpen}
           anchor={(
-            <Tooltip label={t('head.more')} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+            <Tooltip label={t('head.more')} side="bottom" delayMs={TOOLTIP_DELAY_MS} portal maxWidth={TOOLTIP_MAX_WIDTH}>
               <span className="dsh-cg-tip">
                 <button
                   type="button"
@@ -3302,7 +3392,7 @@ function PublishControl(props: {
   // The bubble hangs off the span rather than the button: a disabled button emits
   // no pointer events of its own.
   return (
-    <Tooltip label={t('remote.publish')} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+    <Tooltip label={t('remote.publish')} side="bottom" delayMs={TOOLTIP_DELAY_MS} portal maxWidth={TOOLTIP_MAX_WIDTH}>
       <span className="dsh-cg-tip">
         <button
           type="button"
@@ -3355,7 +3445,7 @@ function SyncControl(props: {
   // spun by the button itself: a disabled button emits no pointer events, and one
   // `data-busy` on the button would turn both halves of the round trip.
   return (
-    <Tooltip label={label} side="bottom" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+    <Tooltip label={label} side="bottom" delayMs={TOOLTIP_DELAY_MS} portal maxWidth={TOOLTIP_MAX_WIDTH}>
       <span className="dsh-cg-tip">
         <button
           type="button"
@@ -4164,6 +4254,7 @@ function BranchDeleteDialog(props: {
                                   label={tip}
                                   side="top"
                                   align="end"
+                                  delayMs={TOOLTIP_DELAY_MS}
                                   portal
                                   maxWidth={TOOLTIP_MAX_WIDTH}
                                 >
@@ -4775,7 +4866,13 @@ function FolderBranch(props: {
   return (
     <>
       <div className="dsh-cg-folder-wrap" data-actions={actions} style={treeDepth(depth)}>
-        <Tooltip label={folder.path} side="right" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+        <Tooltip
+          label={folder.path}
+          side="right"
+          delayMs={TOOLTIP_DELAY_MS}
+          portal
+          maxWidth={TOOLTIP_MAX_WIDTH}
+        >
           <button
             type="button"
             className="dsh-cg-folder"
@@ -4800,7 +4897,13 @@ function FolderBranch(props: {
             <span className="dsh-cg-row-actions">
               {side === 'unstaged'
                 ? (
-                  <Tooltip label={t('stage.discard')} side="top" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+                  <Tooltip
+                    label={t('stage.discard')}
+                    side="top"
+                    delayMs={TOOLTIP_DELAY_MS}
+                    portal
+                    maxWidth={TOOLTIP_MAX_WIDTH}
+                  >
                     <button
                       type="button"
                       className="dsh-cg-row-action"
@@ -4817,6 +4920,7 @@ function FolderBranch(props: {
               <Tooltip
                 label={t(side === 'staged' ? 'stage.unstage' : 'stage.stage')}
                 side="top"
+                delayMs={TOOLTIP_DELAY_MS}
                 portal
                 maxWidth={TOOLTIP_MAX_WIDTH}
               >
@@ -4965,6 +5069,7 @@ function ChangeRow(props: {
       <Tooltip
         label={rowLabel(t, file)}
         side="right"
+        delayMs={TOOLTIP_DELAY_MS}
         portal
         maxWidth={TOOLTIP_MAX_WIDTH}
       >
@@ -5002,6 +5107,7 @@ function ChangeRow(props: {
                 <Tooltip
                   label={t('stage.discard')}
                   side="top"
+                  delayMs={TOOLTIP_DELAY_MS}
                   portal
                   maxWidth={TOOLTIP_MAX_WIDTH}
                 >
@@ -5018,7 +5124,13 @@ function ChangeRow(props: {
                 </Tooltip>
               )
               : null}
-            <Tooltip label={actionTip} side="top" portal maxWidth={TOOLTIP_MAX_WIDTH}>
+            <Tooltip
+              label={actionTip}
+              side="top"
+              delayMs={TOOLTIP_DELAY_MS}
+              portal
+              maxWidth={TOOLTIP_MAX_WIDTH}
+            >
               <button
                 type="button"
                 className="dsh-cg-row-action"

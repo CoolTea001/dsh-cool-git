@@ -20,16 +20,18 @@
  * answer is current, which failure the dialog is stating, which operation is in
  * flight — a checkout, one half of a remote round trip, or the commit the
  * changed-path list asks for — each of which is what disables the other
- * controls, and where the two boundaries were left. That keeps a manual refresh
- * honest — it re-reads `status` and `log`, and the diff pane re-reads whatever
- * it is showing.
+ * controls, the commit form's scope, and where the two boundaries were left.
+ * That keeps a manual refresh honest — it re-reads `status` and `log`, and the
+ * diff pane re-reads whatever it is showing.
  *
  * One consequence of that ownership is `cache.ts`'s business: the shell renders
  * one View at a time, so switching tabs unmounts this page and its answers with
- * it. The last repository answer is therefore cached per Workspace, and the
- * reading position the reader left is kept per session below, so a return to
- * this tab paints what they left and re-reads the repository behind it instead
- * of starting again from its loading rows.
+ * it. The last repository answer is therefore cached per Workspace, the commit
+ * form's scope is kept there too — it is a Workspace preference rather than a
+ * conversation's, so a reload and every session in that Workspace open the form
+ * the way it was left — and the reading position the reader chose is kept per
+ * session below, so a return to this tab paints what they left and re-reads the
+ * repository behind it instead of starting again from its loading rows.
  *
  * Every failure the page can meet is reported in one place: the error dialog. A
  * refused branch switch, a pull or push the remote turned down, a read the Host
