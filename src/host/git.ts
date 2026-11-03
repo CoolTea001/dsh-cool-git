@@ -178,6 +178,21 @@ const CREDENTIAL_HELPER_UNAVAILABLE =
   /couldn't create signal pipe|failed to execute prompt script|unable to start the credential helper/i
 
 /**
+ * What Git's POSIX-emulation helpers print when the sandbox kept them from
+ * starting at all.
+ *
+ * Git for Windows ships its shell, hooks, merge drivers and SSH as MSYS2
+ * programs, and a restricted-token sandbox denies that runtime the signal pipe
+ * it creates while initializing — the process dies before it can exec, with
+ * `STATUS_DLL_INIT_FAILED` (`0xC0000142`) as its exit and this line on stderr.
+ * The failure is not about credentials even when a credential helper is what
+ * triggered it, so a route that is not a network hand-off words it as the
+ * sandbox's answer rather than passing the MSYS line through.
+ */
+const SANDBOX_HELPER_BLOCKED =
+  /couldn't create signal pipe|failed to execute prompt script|unable to start the credential helper|status_dll_init_failed|0xc0000142/i
+
+/**
  * What Git prints when the remote refused the credentials this machine holds.
  *
  * Each transport words it differently — HTTPS asks for a username a
@@ -314,6 +329,21 @@ export interface GitTarget {
    * confines. Absent for an unconfined executor, or a request with no session.
    */
   readonly sandboxPolicy?: unknown
+  /**
+   * The process substrate to run Git on directly, present only when the
+   * resolved policy confines nothing.
+   *
+   * A confined call must go through the shell seam: that is the only path
+   * through which the sandbox is applied. When the session is unconfined — the
+   * executor does not sandbox at all, or the session resolved to
+   * `danger-full-access` — the seam would only wrap the command in a shell that
+   * confines nothing, and the wrapper is what costs a full process launch per
+   * Git command (see `invoke`). `routes.ts` decides this per request and passes
+   * the substrate it read from the Host; it is the same substrate the seam
+   * spawns on, so a remote-execution composition keeps running Git where the
+   * shell runs.
+   */
+  readonly subprocess?: any
 }
 
 /**
@@ -393,6 +423,11 @@ function quote(value: string, flavor: ShellFlavor): string {
 /**
  * Build one shell line from literal words, quoted for the parser that reads it.
  *
+ * The words are the whole command — executable first — exactly as the direct
+ * path would spawn them, so the two paths can never disagree about what is
+ * being run. The Git defaults are part of the argv `runGit` builds, not
+ * something this layer adds.
+ *
  * @param words - the executable and its arguments, unquoted.
  * @param flavor - the parser that will read the line.
  * @returns the command string handed to `shell.resolve`.
@@ -405,23 +440,167 @@ function shellCommand(words: readonly string[], flavor: ShellFlavor): string {
   return flavor === 'powershell' ? `& ${quoted.join(' ')}` : quoted.join(' ')
 }
 
-/**
- * Build the full command line for one Git invocation.
- *
- * @param args - the subcommand and its arguments, each quoted individually.
- * @param flavor - the parser that will read the line.
- * @returns the command string handed to `shell.resolve`.
- */
-function command(args: readonly string[], flavor: ShellFlavor): string {
-  return shellCommand(['git', '--no-pager', '-c', 'core.quotePath=false', ...args], flavor)
-}
-
 /** How one shell invocation is bounded and fed, beyond its command line. */
 interface InvocationOptions {
   readonly timeoutMs?: number
   readonly stdin?: string
   /** Extra environment on top of the Git defaults. */
   readonly env?: Readonly<Record<string, string>>
+}
+
+/**
+ * How long one direct invocation may spend being terminated before its result
+ * is read as killed. The direct path owns the same graceful-then-forced
+ * escalation the seam's subprocess provider performs, so a Git process that
+ * ignores the first signal still cannot hold a route open.
+ */
+const DIRECT_GRACE_MS = 2_000
+
+/**
+ * Environment the direct path adds beside the Git defaults.
+ *
+ * The shell seams pin these for every command they run; a direct spawn is
+ * outside that seam, so it must pin them itself or the one path would ask Git
+ * for a pager and colours while the other does not. `TERM` is the POSIX seam's
+ * own answer and is absent on Windows, matching that platform's executor, which
+ * documents `TERM=dumb` as a POSIX concept.
+ */
+const DIRECT_ENV: Readonly<Record<string, string>> = {
+  NO_COLOR: '1',
+  PAGER: 'cat',
+  ...(process.platform === 'win32' ? {} : { TERM: 'dumb' }),
+}
+
+/** Largest stderr the direct path retains; a diagnosis is one short line. */
+const MAX_STDERR_BYTES = 64 * 1024
+
+/** Largest spill file one direct stream may leave behind, when truncated. */
+const MAX_SPILL_BYTES = 8 * 1024 * 1024
+
+/**
+ * Read one collected stream without letting a provider fault escape.
+ *
+ * The seam's readers answer `readFrom(0)` for the whole collected stream, and a
+ * provider that cannot produce it must read as "no output" rather than as a
+ * rejected route: the command itself may already have succeeded.
+ *
+ * @param reader - the collected reader, as the substrate exposed it.
+ * @returns the stream's text and whether it was truncated.
+ */
+function collectedText(reader: any): { text: string; lossy: boolean } {
+  try {
+    const read = typeof reader?.readFrom === 'function' ? reader.readFrom(0) : undefined
+    return { text: typeof read?.text === 'string' ? read.text : '', lossy: read?.lossy === true }
+  } catch {
+    return { text: '', lossy: false }
+  }
+}
+
+/**
+ * Run one argv directly on the request's process substrate.
+ *
+ * This is the unconfined fast path: no shell parses the line, no sandbox wraps
+ * the process, and the executable is Git itself. On Windows that removes the
+ * `pwsh` and runner launches from every command — measured as the difference
+ * between roughly 600 ms per invocation through the seam and a few tens of
+ * milliseconds here — while on POSIX it only removes the shell the seam would
+ * have started.
+ *
+ * Only `routes.ts` puts a substrate on the target, and only when nothing
+ * confines the call, so a sandboxed session never reaches this function.
+ *
+ * @param target - the substrate, the directory, and the Git environment.
+ * @param words - the executable and its arguments, already unquoted.
+ * @param options - the bound, standard input, and environment for it.
+ * @returns the invocation's outcome, or undefined when the substrate cannot run
+ *   it and the shell seam should (the process was never created then).
+ */
+async function invokeDirect(
+  target: GitTarget,
+  words: readonly string[],
+  options: InvocationOptions,
+): Promise<GitRun | undefined> {
+  const subprocess = target.subprocess
+  if (subprocess === undefined || typeof subprocess.spawn !== 'function') return undefined
+
+  let handle: any
+  try {
+    handle = subprocess.spawn({
+      argv: [...words],
+      cwd: target.workdir,
+      stdio: {
+        stdin: options.stdin === undefined ? 'ignore' : { data: options.stdin },
+        stdout: { maxBytes: MAX_STDOUT_BYTES, spill: { maxBytes: MAX_SPILL_BYTES } },
+        stderr: { maxBytes: MAX_STDERR_BYTES, spill: { maxBytes: MAX_SPILL_BYTES } },
+      },
+      graceMs: DIRECT_GRACE_MS,
+      env: { ...DIRECT_ENV, ...GIT_ENV, ...options.env },
+    })
+  } catch {
+    // No process was created, so the seam is free to run the command instead.
+    return undefined
+  }
+
+  const readers = handle?.collected
+  if (typeof handle?.done?.then !== 'function' || readers === undefined) {
+    // A handle without readers cannot be reported on, and rerunning the command
+    // could apply a write twice, so this is a failure rather than a fallback.
+    try { handle?.terminate?.() } catch { /* the range is already gone */ }
+    return failureRun('direct Git execution returned no readable process handle')
+  }
+
+  const timeoutMs = options.timeoutMs ?? GIT_TIMEOUT_MS
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    try { handle.terminate() } catch { /* the range is already gone */ }
+  }, Math.max(1, timeoutMs))
+
+  try {
+    const outcome = await handle.done
+    const stdout = collectedText(readers.stdout)
+    const stderr = collectedText(readers.stderr)
+    return {
+      code: typeof outcome?.exitCode === 'number' ? outcome.exitCode : null,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      truncated: stdout.lossy,
+    }
+  } catch (error) {
+    // A rejection after this call's own deadline is the kill it asked for, not
+    // a provider failure; its collected output is still the answer to report.
+    if (timedOut) {
+      const stdout = collectedText(readers.stdout)
+      const stderr = collectedText(readers.stderr)
+      return { code: null, stdout: stdout.text, stderr: stderr.text, truncated: stdout.lossy }
+    }
+    return failureRun(errorMessage(error))
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Run one command line and collect its result.
+ *
+ * The direct substrate is tried first and only exists for an unconfined call;
+ * everything else — the confined session, the cold request with no policy to
+ * resolve — goes through the shell seam, which is the only path that applies
+ * the sandbox.
+ *
+ * @param target - the execution substrate, the directory, and the file policy.
+ * @param words - the executable and its arguments, already unquoted.
+ * @param options - the bound, standard input, and environment for it.
+ * @returns the invocation's outcome; never rejects.
+ */
+async function invoke(
+  target: GitTarget,
+  words: readonly string[],
+  options: InvocationOptions = {},
+): Promise<GitRun> {
+  const direct = await invokeDirect(target, words, options)
+  if (direct !== undefined) return direct
+  return invokeThroughShell(target, shellCommand(words, shellFlavor(target.shell)), options)
 }
 
 /**
@@ -432,7 +611,7 @@ interface InvocationOptions {
  * @param options - the bound, standard input, and environment for it.
  * @returns the invocation's outcome; never rejects.
  */
-async function invoke(
+async function invokeThroughShell(
   target: GitTarget,
   line: string,
   options: InvocationOptions = {},
@@ -488,7 +667,7 @@ async function runGit(
   args: readonly string[],
   options: InvocationOptions = {},
 ): Promise<GitRun> {
-  return invoke(target, command(args, shellFlavor(target.shell)), options)
+  return invoke(target, ['git', '--no-pager', '-c', 'core.quotePath=false', ...args], options)
 }
 
 /** An outcome that never reached Git, so the caller reports it as infrastructure. */
@@ -527,6 +706,7 @@ function refusalOf(run: GitRun): Refusal {
   if (run.denied === true) return coded('git-denied')
   const text = diagnosticText(run)
   if (text === '') return coded('git-exit', { code: run.code ?? 'null' })
+  if (SANDBOX_HELPER_BLOCKED.test(text)) return coded('git-sandbox-helper')
   return { error: text.split('\n')[0] ?? text }
 }
 
@@ -549,6 +729,83 @@ function authRefusal(text: string): Refusal | null {
 }
 
 /**
+ * How long a resolved repository is reused before it is asked again.
+ *
+ * Locating the repository costs two Git invocations — the toplevel and the HEAD
+ * probe — and every route repeats them, so on a host where one invocation costs
+ * the better part of a second those two are the dominant part of merely opening
+ * the tab. The root a session names does not move, and a HEAD appears only when
+ * the first commit lands (which `commitAll`/`commitStaged` report by dropping
+ * the entry), so a short lifetime is enough to answer every read of one page
+ * load without ever hiding a repository that was just created or deleted.
+ */
+const REPO_CACHE_TTL_MS = 20_000
+
+/** One resolved repository, shared by every route reading the same directory. */
+interface CachedRepo {
+  /** The root Git itself named, relative to which every later path is built. */
+  readonly root: string
+  /** Whether HEAD resolves to a commit; an unborn branch answers false. */
+  readonly hasHead: boolean
+  /** Wall-clock instant after which the entry stops answering. */
+  readonly expiresAt: number
+}
+
+/**
+ * Resolved repositories keyed by the directory the request named.
+ *
+ * Keyed by the session's own directory rather than by the repository root: that
+ * is the only directory a request knows before Git answers, and a session
+ * opened from a subdirectory keeps its own key while sharing the root it
+ * resolves to. Entries are dropped on write, so the cache never outlives a
+ * repository change this half performed itself.
+ */
+const repoCache = new Map<string, CachedRepo>()
+
+/**
+ * The cached repository for one directory, when it is still fresh.
+ *
+ * @param workdir - the directory the request named.
+ * @returns the cached answer, or undefined when there is none to trust.
+ */
+function cachedRepo(workdir: string): CachedRepo | undefined {
+  const entry = repoCache.get(workdir)
+  if (entry === undefined) return undefined
+  if (entry.expiresAt <= Date.now()) {
+    repoCache.delete(workdir)
+    return undefined
+  }
+  return entry
+}
+
+/**
+ * Remember one directory's resolved repository.
+ *
+ * @param workdir - the directory the request named.
+ * @param root - the root Git answered with.
+ * @param hasHead - whether the repository has a commit.
+ */
+function rememberRepo(workdir: string, root: string, hasHead: boolean): void {
+  repoCache.set(workdir, { root, hasHead, expiresAt: Date.now() + REPO_CACHE_TTL_MS })
+}
+
+/**
+ * Drop every entry that described one repository root.
+ *
+ * A write can make the cached answer wrong in the only two ways it can be:
+ * the first commit turns an unborn HEAD into a resolvable one, and a checkout
+ * or merge can leave the directory naming a different root. Dropping by root
+ * covers the sessions that reached it through a subdirectory as well.
+ *
+ * @param root - the repository root a write just changed.
+ */
+function forgetRepoRoot(root: string): void {
+  for (const [workdir, entry] of repoCache) {
+    if (entry.root === root || workdir === root) repoCache.delete(workdir)
+  }
+}
+
+/**
  * Resolve the repository that owns `workdir` and whether it has any commit.
  *
  * `--show-toplevel` is what makes the rest of the module simple: every later
@@ -560,9 +817,15 @@ function authRefusal(text: string): Refusal | null {
  * @returns the root and HEAD state, or the reason it cannot be used.
  */
 async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
+  const cached = cachedRepo(target.workdir)
+  if (cached !== undefined) return { root: cached.root, hasHead: cached.hasHead }
+
   const top = await runGit(target, ['rev-parse', '--show-toplevel'])
   if (top.failure !== undefined) return { refusal: { error: top.failure }, reason: 'error' }
   if (top.code !== 0) {
+    // A directory that is not a repository is not remembered: the reader may
+    // run `git init` in it at any moment, and the next request must see that.
+    repoCache.delete(target.workdir)
     // Git's own "no repository here" answer — a fatal exit on POSIX, and the
     // same sentence on Windows, whose PowerShell 5.1 executor reports every
     // failed native command as exit 1. Any other nonzero exit is a failure to
@@ -573,12 +836,17 @@ async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
     return { refusal: refusalOf(top), reason: noRepo ? 'no-repo' : 'error' }
   }
   const root = top.stdout.trim()
-  if (root === '') return { refusal: coded('no-root'), reason: 'no-repo' }
+  if (root === '') {
+    repoCache.delete(target.workdir)
+    return { refusal: coded('no-root'), reason: 'no-repo' }
+  }
 
   // `--quiet` keeps an unborn branch from writing "fatal: Needed a single
   // revision" to stderr, and exit code 1 is then a normal "no commits yet".
   const head = await runGit(inDir(target, root), ['rev-parse', '--verify', '--quiet', 'HEAD'])
-  return { root, hasHead: head.code === 0 }
+  const hasHead = head.code === 0
+  rememberRepo(target.workdir, root, hasHead)
+  return { root, hasHead }
 }
 
 /** The repository root one request answers for, or why there is none. */
@@ -615,18 +883,22 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  const status = await runGit(root, STATUS_ARGS)
+  // The two reads answer different questions and neither depends on the other,
+  // so they are asked at once: on a host where a Git invocation means starting
+  // a whole process, the page load is then the slower of the two rather than
+  // their sum.
+  const [status, log] = await Promise.all([
+    runGit(root, STATUS_ARGS),
+    repo.hasHead ? runGit(root, ['log', '-1', `--pretty=format:${HEAD_FORMAT}`]) : Promise.resolve(undefined),
+  ])
   if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
   const parsed = parseStatus(status.stdout)
 
   let head: StatusPayload['head'] = null
-  if (repo.hasHead) {
-    const log = await runGit(root, ['log', '-1', `--pretty=format:${HEAD_FORMAT}`])
-    if (log.code === 0) {
-      const [hash = '', short = '', date = '', subject = ''] = log.stdout.split(FIELD)
-      head = { hash, short, date, subject }
-    }
+  if (log !== undefined && log.code === 0) {
+    const [hash = '', short = '', date = '', subject = ''] = log.stdout.split(FIELD)
+    head = { hash, short, date, subject }
   }
 
   return {
@@ -1308,12 +1580,16 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  const locals = await readRefNames(root, 'refs/heads/')
+  // Three independent questions about the ref tables: the local names, the
+  // remote-tracking names, and which branch HEAD points at. Asking them in
+  // parallel keeps one menu opening from paying their process starts in a row.
+  const [locals, remotes, current] = await Promise.all([
+    readRefNames(root, 'refs/heads/'),
+    readRefNames(root, 'refs/remotes/'),
+    currentBranch(root),
+  ])
   if (!locals.ok) return { ok: false, ...locals.refusal, reason: 'error' }
-  const remotes = await readRefNames(root, 'refs/remotes/')
   if (!remotes.ok) return { ok: false, ...remotes.refusal, reason: 'error' }
-
-  const current = await currentBranch(root)
 
   return {
     ok: true,
@@ -2276,7 +2552,14 @@ export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  const run = await runGit(root, ['fetch', '--all'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  let run = await runGit(root, ['fetch', '--all'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+  if (run.code !== 0 && authRefusal(diagnosticText(run)) !== null) {
+    // The helper could not start; the same fetch with the saved credential as
+    // a header is the one answer this half can supply without a shell.
+    const retried = await retryFetchWithStoredCredentials(root, ['fetch', '--all'], await remotesOf(root))
+    if (retried !== undefined) run = retried
+  }
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
   if (run.code !== 0) return fetchFailure(run)
   return { ok: true }
@@ -2340,7 +2623,12 @@ export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPay
   const split = splitRemote(await remotesOf(root), upstream)
   if (split === null) return { ok: true, skipped: true }
 
-  const run = await runGit(root, ['fetch', split.remote], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  let run = await runGit(root, ['fetch', split.remote], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+  if (run.code !== 0 && authRefusal(diagnosticText(run)) !== null) {
+    const retried = await retryFetchWithStoredCredentials(root, ['fetch', split.remote], [split.remote])
+    if (retried !== undefined) run = retried
+  }
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
   if (run.code !== 0) return fetchFailure(run)
   return { ok: true }
@@ -2614,10 +2902,8 @@ async function storedCredential(
   target: GitTarget,
   host: string,
 ): Promise<StoredCredential | undefined> {
-  const flavor = shellFlavor(target.shell)
   for (const helper of await credentialHelpers(target)) {
-    const line = shellCommand([helper.executable, ...helper.args, 'get'], flavor)
-    const run = await invoke(target, line, {
+    const run = await invoke(target, [helper.executable, ...helper.args, 'get'], {
       timeoutMs: CREDENTIAL_TIMEOUT_MS,
       stdin: `protocol=https\nhost=${host}\n\n`,
       env: { GCM_INTERACTIVE: 'never' },
@@ -2691,6 +2977,43 @@ function syncSuccess(run: GitRun, action: 'pull' | 'push', label: string): SyncP
 }
 
 /**
+ * The Git configuration environment that supplies saved credentials as headers.
+ *
+ * Each host with a readable credential becomes one `http.<url>.extraHeader`
+ * entry, expressed through Git's environment-configuration channel so nothing
+ * is written to a file and no helper is started again. Multiple hosts share one
+ * invocation: `GIT_CONFIG_COUNT` is exactly the number of entries, and a URL
+ * prefix scopes each header to its own host, so a `fetch --all` can carry the
+ * credential for every HTTPS remote at once.
+ *
+ * @param target - the shell seam and the directory to run in.
+ * @param hosts - the HTTPS hosts to collect credentials for.
+ * @returns the environment entries, or undefined when no host yields a credential.
+ */
+async function credentialHeaderEnv(
+  target: GitTarget,
+  hosts: readonly string[],
+): Promise<Record<string, string> | undefined> {
+  const entries: [key: string, value: string][] = []
+  for (const host of hosts) {
+    const credential = await storedCredential(target, host)
+    if (credential === undefined) continue
+    const pair = `${credential.username}:${credential.password}`
+    entries.push([
+      `http.https://${host}/.extraHeader`,
+      `Authorization: Basic ${Buffer.from(pair).toString('base64')}`,
+    ])
+  }
+  if (entries.length === 0) return undefined
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(entries.length) }
+  entries.forEach(([key, value], index) => {
+    env[`GIT_CONFIG_KEY_${index}`] = key
+    env[`GIT_CONFIG_VALUE_${index}`] = value
+  })
+  return env
+}
+
+/**
  * Retry one network hand-off with the credential the machine already holds.
  *
  * Git for Windows starts every credential helper through its bundled MSYS
@@ -2727,21 +3050,44 @@ async function retryWithStoredCredential(
   const host = httpsHost(url)
   if (host === undefined) return undefined
 
-  const credential = await storedCredential(target, host)
-  if (credential === undefined) return undefined
-  const pair = `${credential.username}:${credential.password}`
-  const header = `Authorization: Basic ${Buffer.from(pair).toString('base64')}`
-  const run = await runGit(target, args, {
-    timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-    env: {
-      GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: `http.https://${host}/.extraHeader`,
-      GIT_CONFIG_VALUE_0: header,
-    },
-  })
+  const env = await credentialHeaderEnv(target, [host])
+  if (env === undefined) return undefined
+  const run = await runGit(target, args, { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action }
   if (run.code !== 0) return syncFailure(run, action)
   return syncSuccess(run, action, label)
+}
+
+/**
+ * Retry one fetch with the credentials the machine already holds.
+ *
+ * A fetch has no branch or label to shape a payload around, but it fails for
+ * the same sandbox reason a push does — and until now it was the one network
+ * route with no second attempt, so a reader whose HTTPS remote needs a saved
+ * credential saw an authentication refusal on Fetch while Pull and Push went
+ * through. Every remote's host is consulted, because `fetch --all` crosses all
+ * of them.
+ *
+ * @param target - the repository root, with the session's file policy.
+ * @param args - the fetch command to repeat.
+ * @param remotes - the remotes that command reaches.
+ * @returns the retried invocation, or undefined when no credential could be read.
+ */
+async function retryFetchWithStoredCredentials(
+  target: GitTarget,
+  args: readonly string[],
+  remotes: readonly string[],
+): Promise<GitRun | undefined> {
+  const hosts: string[] = []
+  for (const remote of remotes) {
+    const url = await remoteUrlOf(target, remote)
+    const host = url === undefined ? undefined : httpsHost(url)
+    if (host !== undefined && !hosts.includes(host)) hosts.push(host)
+  }
+  if (hosts.length === 0) return undefined
+  const env = await credentialHeaderEnv(target, hosts)
+  if (env === undefined) return undefined
+  return runGit(target, args, { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env })
 }
 
 /**
@@ -2768,6 +3114,9 @@ const writeQueues = new Map<string, Promise<unknown>>()
  * @returns whatever the write answered.
  */
 async function withRepoWrite<T>(root: string, run: () => Promise<T>): Promise<T> {
+  // A write is exactly what invalidates the resolved-repository cache: the next
+  // read must ask Git again rather than paint the state this write replaced.
+  forgetRepoRoot(root)
   const previous = writeQueues.get(root) ?? Promise.resolve()
   const next = previous.catch(() => undefined).then(run)
   writeQueues.set(root, next)

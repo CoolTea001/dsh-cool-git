@@ -43,6 +43,7 @@ export type FailureCode =
   | 'missing-name'
   // Reading the repository.
   | 'git-denied'
+  | 'git-sandbox-helper'
   | 'git-exit'
   | 'no-root'
   | 'no-commits'

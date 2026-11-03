@@ -65,6 +65,21 @@ export interface GitTarget {
      * confines. Absent for an unconfined executor, or a request with no session.
      */
     readonly sandboxPolicy?: unknown;
+    /**
+     * The process substrate to run Git on directly, present only when the
+     * resolved policy confines nothing.
+     *
+     * A confined call must go through the shell seam: that is the only path
+     * through which the sandbox is applied. When the session is unconfined — the
+     * executor does not sandbox at all, or the session resolved to
+     * `danger-full-access` — the seam would only wrap the command in a shell that
+     * confines nothing, and the wrapper is what costs a full process launch per
+     * Git command (see `invoke`). `routes.ts` decides this per request and passes
+     * the substrate it read from the Host; it is the same substrate the seam
+     * spawns on, so a remote-execution composition keeps running Git where the
+     * shell runs.
+     */
+    readonly subprocess?: any;
 }
 /** The repository root one request answers for, or why there is none. */
 export type RepositoryRoot = {

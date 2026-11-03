@@ -168,6 +168,48 @@ function sameOrigin(req: any): boolean {
 type RouteEffect = 'read' | 'write'
 
 /**
+ * The directory, file policy, and direct substrate one request runs Git with.
+ *
+ * `sandboxPolicy` is absent when there is nothing to confine; `subprocess` is
+ * present only when the request may skip the shell seam entirely.
+ */
+interface ResolvedTarget {
+  readonly workdir: string
+  readonly sandboxPolicy?: unknown
+  readonly subprocess?: unknown
+}
+
+/**
+ * The process substrate a request may run Git on directly, when nothing confines it.
+ *
+ * The shell seam is the only path that applies a sandbox, so a confined request
+ * must keep using it. When nothing is confined — the mounted executor does not
+ * sandbox at all, or the session's resolved policy is `danger-full-access` — the
+ * seam would only add a shell (and, on Windows, a fresh `pwsh` and a sandbox
+ * runner) around a command that is not being restricted anyway, and skipping
+ * that wrapper is what turns a several-hundred-millisecond invocation into a few
+ * tens of milliseconds.
+ *
+ * The substrate is the Host's own `subprocess` service, the same one the shell
+ * executor spawns on, so a composition that runs commands on another machine
+ * keeps running Git there instead of quietly running it in the Host.
+ *
+ * @param ctx - the Host plugin context.
+ * @param shell - the mounted shell capability.
+ * @param sandboxPolicy - the calling session's resolved policy, when it has one.
+ * @returns the substrate, or undefined when the request must go through the seam.
+ */
+function directSubprocess(ctx: any, shell: any, sandboxPolicy: unknown): any | undefined {
+  if (shell?.sandboxMode !== undefined) {
+    const mode = (sandboxPolicy as { readonly mode?: unknown } | undefined)?.mode
+    if (mode !== 'danger-full-access') return undefined
+  }
+  const subprocess = ctx.get('subprocess')
+  if (subprocess === undefined || typeof subprocess.spawn !== 'function') return undefined
+  return subprocess
+}
+
+/**
  * The directory and file policy of a session the Host already holds in store.
  *
  * @param ctx - the Host plugin context.
@@ -177,7 +219,7 @@ type RouteEffect = 'read' | 'write'
 function liveTarget(
   ctx: any,
   sessionId: string,
-): { workdir: string; sandboxPolicy?: unknown } | undefined {
+): ResolvedTarget | undefined {
   const sessions = ctx.get('sessions')
   if (sessions === undefined) return undefined
   try {
@@ -185,7 +227,12 @@ function liveTarget(
     const cwd = session?.header?.cwd
     if (session === undefined || typeof cwd !== 'string' || cwd === '') return undefined
     const sandboxPolicy = filePolicyFor(ctx, session)
-    return { workdir: cwd, ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }) }
+    const subprocess = directSubprocess(ctx, ctx.get('shell'), sandboxPolicy)
+    return {
+      workdir: cwd,
+      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+      ...(subprocess === undefined ? {} : { subprocess }),
+    }
   } catch {
     /* an unreadable store falls through to persistence, then to the default */
     return undefined
@@ -249,7 +296,7 @@ async function resolveTarget(
   ctx: any,
   sessionId: unknown,
   effect: RouteEffect,
-): Promise<{ workdir: string; sandboxPolicy?: unknown } | Refusal> {
+): Promise<ResolvedTarget | Refusal> {
   if (typeof sessionId === 'string' && sessionId !== '') {
     const live = liveTarget(ctx, sessionId)
     if (live !== undefined) return live
@@ -377,6 +424,7 @@ async function handle(
     shell: capability.shell,
     workdir: resolved.workdir,
     ...(resolved.sandboxPolicy === undefined ? {} : { sandboxPolicy: resolved.sandboxPolicy }),
+    ...(resolved.subprocess === undefined ? {} : { subprocess: resolved.subprocess }),
   }
 
   try {

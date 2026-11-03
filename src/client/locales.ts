@@ -488,6 +488,7 @@ export const en = {
   'error.missing-name': 'Missing branch name to create',
 
   'error.git-denied': 'The current permission mode does not allow running Git commands',
+  'error.git-sandbox-helper': 'The sandbox kept one of Git\'s helper processes (its shell, a hook, SSH, or the credential helper) from starting, so this operation cannot run under the current permission mode; use full-access mode or run it outside this session',
   'error.git-exit': 'git exited with code {code}',
   'error.no-root': 'git returned no repository root',
   'error.no-commits': 'This repository has no commits yet',
@@ -787,6 +788,7 @@ export const zh: typeof en = {
   'error.missing-name': '缺少要创建的分支名',
 
   'error.git-denied': '当前权限模式不允许执行 Git 命令',
+  'error.git-sandbox-helper': '沙箱阻止了 Git 的辅助进程（shell、钩子、SSH 或凭据助手）启动，当前权限模式下无法完成该操作；请改用完全访问模式，或在会话之外执行',
   'error.git-exit': 'git 退出码 {code}',
   'error.no-root': 'git 未返回仓库根目录',
   'error.no-commits': '该仓库还没有任何提交',

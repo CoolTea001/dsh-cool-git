@@ -304,6 +304,7 @@ export declare const en: {
     'error.missing-branch': string;
     'error.missing-name': string;
     'error.git-denied': string;
+    'error.git-sandbox-helper': string;
     'error.git-exit': string;
     'error.no-root': string;
     'error.no-commits': string;
