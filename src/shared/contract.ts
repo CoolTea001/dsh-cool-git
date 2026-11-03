@@ -35,15 +35,13 @@ export type FailureCode =
   // The route's own guards, before a repository is ever resolved.
   | 'not-ready'
   | 'no-workdir'
-  | 'no-shell'
+  | 'no-subprocess'
   | 'missing-path'
   | 'bad-hash'
   | 'missing-message'
   | 'missing-branch'
   | 'missing-name'
   // Reading the repository.
-  | 'git-denied'
-  | 'git-sandbox-helper'
   | 'git-exit'
   | 'no-root'
   | 'no-commits'
@@ -51,18 +49,14 @@ export type FailureCode =
   // Switching branches.
   | 'unknown-branch'
   | 'remote-local-name'
-  | 'checkout-denied'
   | 'checkout-dirty'
   | 'checkout-dirty-paths'
   // Creating and deleting branches.
   | 'branch-exists'
-  | 'create-denied'
-  | 'delete-denied'
   | 'branch-not-merged'
   | 'branch-in-use'
   | 'unknown-remote'
   // Merging one branch into another.
-  | 'merge-denied'
   | 'merge-dirty'
   | 'merge-conflict'
   | 'merge-same-branch'
@@ -74,28 +68,18 @@ export type FailureCode =
   | 'pull-detached'
   | 'push-detached'
   | 'pull-no-upstream'
-  | 'pull-denied'
-  | 'push-denied'
-  | 'fetch-denied'
   | 'pull-dirty'
   | 'push-dirty'
   | 'auth'
-  | 'auth-helper'
   | 'pull-diverged'
   | 'push-behind'
   | 'push-no-remote'
   | 'push-ambiguous-remote'
-  // Moving one path between the worktree and the index, or discarding its
-  // worktree half.
-  | 'stage-denied'
-  | 'unstage-denied'
-  | 'discard-denied'
   // Committing.
   | 'commit-clean'
   | 'commit-nothing-staged'
   | 'commit-conflict'
   | 'commit-identity'
-  | 'commit-denied'
   // Writing a commit message with the default model.
   | 'no-llm'
   | 'no-model'
@@ -302,7 +286,7 @@ export interface CreateBranchPayload {
   readonly error?: string
   /** The coded refusal, which the page words in the active locale. */
   readonly failure?: Failure
-  readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'exists' | 'denied' | 'dirty'
+  readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'exists' | 'dirty'
   /** The branch HEAD is on after a successful create, which is the new one. */
   readonly branch?: string
 }
@@ -351,7 +335,7 @@ export interface DeleteBranchesPayload {
   readonly error?: string
   /** The coded refusal, which the page words in the active locale. */
   readonly failure?: Failure
-  readonly reason?: 'no-repo' | 'error' | 'denied'
+  readonly reason?: 'no-repo' | 'error'
   /** One entry per branch the request named, in the order it named them. */
   readonly results?: readonly BranchDeletion[]
 }
@@ -368,7 +352,7 @@ export interface CheckoutPayload {
    * repository, the named branch does not exist, the session may not write, or
    * local changes are in the way.
    */
-  readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'denied' | 'dirty'
+  readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'dirty'
   /** The branch HEAD is on after a successful switch. */
   readonly branch?: string
 }
@@ -393,7 +377,6 @@ export interface MergePayload {
     | 'same-branch'
     | 'detached'
     | 'no-commits'
-    | 'denied'
     | 'dirty'
     | 'conflict'
   /**
@@ -433,7 +416,7 @@ export interface FetchPayload {
    * repository, the session may not write, or the remote refused the
    * credentials.
    */
-  readonly reason?: 'no-repo' | 'error' | 'denied' | 'auth'
+  readonly reason?: 'no-repo' | 'error' | 'auth'
 }
 
 /**
@@ -471,7 +454,6 @@ export interface SyncPayload {
   readonly reason?:
     | 'no-repo'
     | 'error'
-    | 'denied'
     | 'detached'
     | 'no-upstream'
     | 'no-remote'
@@ -588,7 +570,7 @@ export interface CommitAllPayload {
    * unresolved conflict — which `git add -A` would otherwise stage, markers and
    * all.
    */
-  readonly reason?: 'no-repo' | 'error' | 'denied' | 'clean' | 'conflict'
+  readonly reason?: 'no-repo' | 'error' | 'clean' | 'conflict'
   /** The commit that was just created, once it succeeded. */
   readonly commit?: CommitSummary
 }
@@ -613,7 +595,7 @@ export interface IndexPayload {
   /** The coded refusal, which the page words in the active locale. */
   readonly failure?: Failure
   /** Why no move happened, when the page can act on it. */
-  readonly reason?: 'no-repo' | 'error' | 'denied'
+  readonly reason?: 'no-repo' | 'error'
   /** The repository state after the move, when the move was made. */
   readonly status?: StatusPayload
 }

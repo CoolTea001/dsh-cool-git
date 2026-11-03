@@ -3,9 +3,8 @@
  *
  * The browser half has no Cordis context and no remote namespace of its own, so
  * every question it asks the Host crosses a same-origin route registered on the
- * `webServer` carrier. Each route answers JSON and never rejects: a transport or
- * sandbox failure becomes an `{ ok: false }` result the page reports in its error
- * dialog.
+ * `webServer` carrier. Each route answers JSON and never rejects: a transport
+ * failure becomes an `{ ok: false }` result the page reports in its error dialog.
  *
  * The Host stays authoritative about *where* Git runs. A request may name the
  * session it belongs to, but never a directory: the directory is read from that
@@ -13,14 +12,11 @@
  * the session's durable header when it does not yet — so a page cannot point the
  * plugin at a repository the session does not own. The durable read is what lets
  * a reopened page's Git tab answer for its own repository on the first request,
- * which arrives while the session is still being resumed (see `resolveTarget`).
+ * which arrives while the session is still being resumed (see `resolveWorkdir`).
  *
- * It is equally authoritative about *how much* Git may write. Each request's
- * file policy is resolved from the same session and carried on every command, so
- * a write route runs under exactly the mode and workspace root that session
- * already has — never under a deployment fallback that would refuse it. A session
- * that is not live yet has no such policy to resolve, so its routes may read but
- * never write.
+ * It is equally authoritative about *what* Git may write: a route marked `write`
+ * is refused for a session the Host has not resumed yet, so a page cannot change
+ * a repository nothing is holding.
  */
 
 import {
@@ -168,49 +164,36 @@ function sameOrigin(req: any): boolean {
 type RouteEffect = 'read' | 'write'
 
 /**
- * The directory, file policy, and direct substrate one request runs Git with.
+ * The directory one request runs Git in, and the substrate it runs on.
  *
- * `sandboxPolicy` is absent when there is nothing to confine; `subprocess` is
- * present only when the request may skip the shell seam entirely.
+ * There is one execution path: Git is spawned on the Host's `subprocess`
+ * service, as an argv, with no shell and no sandbox in between. The session's
+ * file policy therefore does not reach Git — a deliberate, documented trade for
+ * the several hundred milliseconds a sandboxed invocation costs on Windows.
+ * Every path a command carries comes from Git's own output, and every command
+ * runs inside the repository this layer resolved.
  */
 interface ResolvedTarget {
   readonly workdir: string
-  readonly sandboxPolicy?: unknown
-  readonly subprocess?: unknown
+  readonly subprocess: unknown
 }
 
 /**
- * The process substrate a request may run Git on directly, when nothing confines it.
- *
- * The shell seam is the only path that applies a sandbox, so a confined request
- * must keep using it. When nothing is confined — the mounted executor does not
- * sandbox at all, or the session's resolved policy is `danger-full-access` — the
- * seam would only add a shell (and, on Windows, a fresh `pwsh` and a sandbox
- * runner) around a command that is not being restricted anyway, and skipping
- * that wrapper is what turns a several-hundred-millisecond invocation into a few
- * tens of milliseconds.
- *
- * The substrate is the Host's own `subprocess` service, the same one the shell
- * executor spawns on, so a composition that runs commands on another machine
- * keeps running Git there instead of quietly running it in the Host.
+ * The Host's process substrate, or the reason Git cannot run at all.
  *
  * @param ctx - the Host plugin context.
- * @param shell - the mounted shell capability.
- * @param sandboxPolicy - the calling session's resolved policy, when it has one.
- * @returns the substrate, or undefined when the request must go through the seam.
+ * @returns the substrate, or the coded refusal.
  */
-function directSubprocess(ctx: any, shell: any, sandboxPolicy: unknown): any | undefined {
-  if (shell?.sandboxMode !== undefined) {
-    const mode = (sandboxPolicy as { readonly mode?: unknown } | undefined)?.mode
-    if (mode !== 'danger-full-access') return undefined
-  }
+function resolveSubprocess(ctx: any): { subprocess: any } | Refusal {
   const subprocess = ctx.get('subprocess')
-  if (subprocess === undefined || typeof subprocess.spawn !== 'function') return undefined
-  return subprocess
+  if (subprocess === undefined || typeof subprocess.spawn !== 'function') {
+    return coded('no-subprocess')
+  }
+  return { subprocess }
 }
 
 /**
- * The directory and file policy of a session the Host already holds in store.
+ * The directory of a session the Host already holds in store.
  *
  * @param ctx - the Host plugin context.
  * @param sessionId - the session the page belongs to.
@@ -219,20 +202,14 @@ function directSubprocess(ctx: any, shell: any, sandboxPolicy: unknown): any | u
 function liveTarget(
   ctx: any,
   sessionId: string,
-): ResolvedTarget | undefined {
+): { workdir: string } | undefined {
   const sessions = ctx.get('sessions')
   if (sessions === undefined) return undefined
   try {
     const session = sessions.get(sessionId)
     const cwd = session?.header?.cwd
     if (session === undefined || typeof cwd !== 'string' || cwd === '') return undefined
-    const sandboxPolicy = filePolicyFor(ctx, session)
-    const subprocess = directSubprocess(ctx, ctx.get('shell'), sandboxPolicy)
-    return {
-      workdir: cwd,
-      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
-      ...(subprocess === undefined ? {} : { subprocess }),
-    }
+    return { workdir: cwd }
   } catch {
     /* an unreadable store falls through to persistence, then to the default */
     return undefined
@@ -279,24 +256,22 @@ async function persistedWorkdir(ctx: any, sessionId: string): Promise<string | u
  * The session's own header is the only source — live if the Host holds the
  * session, durable if it does not yet, and never a directory the page named. A
  * session the Host cannot read at all (an archived or foreign id) falls back to
- * the executor's default directory, which is at least a directory that exists.
+ * the Host's own working directory, which is at least a directory that exists.
  *
- * A cold session has no resolved file policy, because the policy folds the
- * session's own live log. Only a reading route may therefore run in a directory
- * taken from the durable header: a route that writes waits for the session
- * itself rather than borrowing the deployment's mode and root for a repository
- * that is not the one the deployment describes.
+ * A cold session is answered from its durable header only for a reading route: a
+ * route that writes waits for the session itself rather than acting on a
+ * repository that may not be the one the page is showing.
  *
  * @param ctx - the Host plugin context.
  * @param sessionId - the session the page belongs to, if it named one.
  * @param effect - whether this request may change the repository.
- * @returns the directory and the session's file policy, or the reason there is none.
+ * @returns the directory, or the reason there is none.
  */
-async function resolveTarget(
+async function resolveWorkdir(
   ctx: any,
   sessionId: unknown,
   effect: RouteEffect,
-): Promise<ResolvedTarget | Refusal> {
+): Promise<{ workdir: string } | Refusal> {
   if (typeof sessionId === 'string' && sessionId !== '') {
     const live = liveTarget(ctx, sessionId)
     if (live !== undefined) return live
@@ -305,46 +280,7 @@ async function resolveTarget(
       return effect === 'write' ? coded('not-ready') : { workdir: persisted }
     }
   }
-
-  const shell = ctx.get('shell')
-  if (shell !== undefined) {
-    try {
-      const spec = shell.resolve({ command: 'pwd' })
-      if (typeof spec?.workdir === 'string' && spec.workdir !== '') return { workdir: spec.workdir }
-    } catch {
-      /* fall through to the process directory */
-    }
-  }
-  return coded('no-workdir')
-}
-
-/**
- * The calling session's resolved file policy, when the mounted executor confines.
- *
- * `shell.sandboxMode` is how a confining executor advertises itself; a local,
- * unconfined one answers `undefined` and takes no policy. The policy is what
- * makes a write route inherit the session's own mode and workspace root instead
- * of the deployment's fallback — without it a `workspace-write` session would be
- * refused the checkout, pull or push it is allowed to run.
- *
- * @param ctx - the Host plugin context.
- * @param session - the live session the request named.
- * @returns the policy, or undefined when there is nothing to confine.
- */
-function filePolicyFor(ctx: any, session: any): unknown {
-  if (ctx.get('shell')?.sandboxMode === undefined) return undefined
-  const policy = ctx.get('sandboxPolicy')
-  if (policy === undefined || typeof policy.resolve !== 'function') return undefined
-  return policy.resolve({ session })
-}
-
-/** The `shell` capability, or the reason Git cannot run at all. */
-function resolveShell(ctx: any): { shell: any } | Refusal {
-  const shell = ctx.get('shell')
-  if (shell === undefined || typeof shell.execute !== 'function') {
-    return coded('no-shell')
-  }
-  return { shell }
+  return process.cwd() === '' ? coded('no-workdir') : { workdir: process.cwd() }
 }
 
 /** The Workspace key a settings request belongs to, or why there is none. */
@@ -364,7 +300,7 @@ type SettingsTarget =
  *
  * @param ctx - the Host plugin context.
  * @param sessionId - the session the request named.
- * @param target - the shell seam and the session's directory.
+ * @param target - the process substrate and the session's directory.
  * @returns the key and the Workspace, or the refusal to report.
  */
 async function resolveSettingsTarget(
@@ -385,8 +321,8 @@ async function resolveSettingsTarget(
 /**
  * Run one JSON route body against Git.
  *
- * Every route repeats the same four steps — method, body, target, shell — so
- * they are taken once here and the route only supplies its own arguments. A
+ * Every route repeats the same four steps — method, body, directory, substrate —
+ * so they are taken once here and the route only supplies its own arguments. A
  * malformed body is a 400; everything later is a 200 carrying `ok: false`,
  * because Git's own refusals are answers the page should show, not HTTP errors.
  *
@@ -408,24 +344,19 @@ async function handle(
   const body = await readJsonBody(req, res)
   if (body === undefined) return
 
-  const resolved = await resolveTarget(ctx, body.sessionId, effect)
+  const resolved = await resolveWorkdir(ctx, body.sessionId, effect)
   if (!('workdir' in resolved)) {
     sendJson(res, 200, { ok: false, ...resolved })
     return
   }
 
-  const capability = resolveShell(ctx)
-  if (!('shell' in capability)) {
+  const capability = resolveSubprocess(ctx)
+  if (!('subprocess' in capability)) {
     sendJson(res, 200, { ok: false, ...capability })
     return
   }
 
-  const target: GitTarget = {
-    shell: capability.shell,
-    workdir: resolved.workdir,
-    ...(resolved.sandboxPolicy === undefined ? {} : { sandboxPolicy: resolved.sandboxPolicy }),
-    ...(resolved.subprocess === undefined ? {} : { subprocess: resolved.subprocess }),
-  }
+  const target: GitTarget = { subprocess: capability.subprocess, workdir: resolved.workdir }
 
   try {
     sendJson(res, 200, await run(body, target))
@@ -437,8 +368,8 @@ async function handle(
 /**
  * Read one request's changed-path argument.
  *
- * NUL is the one byte that cannot survive the shell line the seam runs, so a
- * path carrying one is refused rather than silently truncated.
+ * NUL is the one byte an argv cannot carry, so a path holding one is refused
+ * rather than silently truncated.
  *
  * @param body - the parsed request body.
  * @returns the path, or undefined when the body does not name a usable one.
@@ -527,7 +458,7 @@ function readIdentifier(value: unknown): string | undefined {
 /**
  * Read one ref name out of a request, under whatever key the caller read it from.
  *
- * The shape checked here is only about what can be handed to the shell at all:
+ * The shape checked here is only about what can be handed to Git at all:
  * a ref name cannot be empty, cannot be longer than Git's own ceiling, cannot
  * carry a NUL, and cannot begin with a dash — the last one because the commands
  * this half runs take some of their arguments positionally, where a name that
@@ -666,9 +597,9 @@ export function registerRoutes(ctx: any): () => void {
     route(ROUTES.branches, (req, res) => handle(ctx, req, res, 'read', (_body, target) =>
       readBranches(target))),
 
-    // One path into the index. A write, so it is refused before Git runs when the
-    // session's own file policy does not allow one; the answer carries the fresh
-    // status, so the page repaints both lists from the state this write produced.
+    // One path into the index. A write, so it is refused before Git runs for a
+    // session the Host has not resumed; the answer carries the fresh status, so
+    // the page repaints both lists from the state this write produced.
     route(ROUTES.stage, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const path = readPath(body)
       if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
@@ -839,9 +770,9 @@ export function registerRoutes(ctx: any): () => void {
       readBranchReport(target))),
 
     // Creating a branch is the switch with a ref made first, so it is the same
-    // write effect and the same file policy: the two names are a new branch and
-    // the branch it starts at, and which of Git's rules each has to satisfy is
-    // Git's answer rather than a shape checked here.
+    // write effect: the two names are a new branch and the branch it starts at,
+    // and which of Git's rules each has to satisfy is Git's answer rather than a
+    // shape checked here.
     route(ROUTES.branchCreate, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const name = readRefName(body.name)
       if (name === undefined) return Promise.resolve({ ok: false, ...coded('missing-name') })

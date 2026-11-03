@@ -8,19 +8,16 @@
  * generate a `ctx.remote` namespace and its Client half never sees the Host
  * Cordis context.
  *
- * The `shell` and `sandboxPolicy` capabilities are read per request rather than
- * declared as hard dependencies: a composition without them still loads the
- * plugin and answers one clear error line instead of failing to mount the tab,
- * and a request resolves the calling session's own file policy so a write route
- * runs under it rather than under the deployment's fallback.
+ * The `subprocess` capability is a hard dependency too: it is the only way this
+ * half runs Git, so a composition without it has no Git tab to offer.
  */
 
 import { registerRoutes } from './routes.js'
 
 export const name = 'dsh-cool-git'
 
-/** The web carrier is a hard dependency: without it there is no route to serve. */
-export const inject = ['webServer']
+/** The web carrier and the process substrate: without either there is no tab. */
+export const inject = ['webServer', 'subprocess']
 
 /** The route table, exported so a probe or test can address the routes by name. */
 export { ROUTES } from './routes.js'

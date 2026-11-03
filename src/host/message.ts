@@ -331,7 +331,7 @@ function splitAnswer(raw: string): { readonly message: string; readonly warnings
  * otherwise.
  *
  * @param ctx - the Host plugin context.
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param sessionId - the session the request named, for the model call's own
  * attribution; the repository is resolved from it already, never from a path.
  * @param scope - whether the message describes the index alone or the whole

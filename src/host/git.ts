@@ -1,32 +1,31 @@
 /**
  * The Host half's Git reader, and its four writers.
  *
- * Every fact about the repository is produced by running the real `git` binary
- * through the `shell` capability seam — never by reading `.git` by hand. That
- * keeps this plugin honest about the things Git is authoritative for (the index,
- * renames, merge state, `core.*` configuration, `.gitignore`) and inherits the
- * session's own file policy: `routes.ts` resolves the calling session's mode and
- * workspace root, every command carries that policy on its request, and the Git
- * tab can therefore never exceed what the session may already do. Without it the
- * seam would fall back to the deployment's mode and root — a `read-only` default
- * under a `workspace-write` session — and refuse the very writes the session
- * allows.
+ * Every fact about the repository is produced by running the real `git` binary —
+ * never by reading `.git` by hand. That keeps this plugin honest about the things
+ * Git is authoritative for (the index, renames, merge state, `core.*`
+ * configuration, `.gitignore`).
+ *
+ * Git runs as an argv on the Host's `subprocess` service: no shell, no
+ * interpreter, and no sandbox between this module and the process. That is a
+ * deliberate trade — Git runs with the Host's own rights, so the session's file
+ * policy does not apply to it — made because a sandboxed invocation costs most of
+ * a second on Windows, while every path a command carries comes from Git's own
+ * output and every command runs inside the repository `routes.ts` resolved.
  *
  * Reading is the bulk of this module. Six commands change something — the
  * branch switch, the merge, the fetch, the fast-forward pull, the push, and the
- * commit — and each reports a sandbox refusal as such rather than as a Git
- * error, because under a `read-only` mode that refusal is the whole answer. The
- * commit is the one that writes the index as well as the history, which is why
- * it is a single call rather than a stage the page could leave half-finished.
+ * commit — and each reports Git's own refusal. The commit is the one that writes
+ * the index as well as the history, which is why it is a single call rather than
+ * a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
  *   - `--no-pager` on every command: without it a pager would hold the pipe open
  *     and the command would sit there until its timeout.
  *   - `GIT_OPTIONAL_LOCKS=0`: `git status` otherwise refreshes the index, which
- *     is a write. Every read must also work in a `read-only` sandbox — and taking
- *     a lock it does not need would fight the agent's own `git` calls in the same
- *     repository.
+ *     is a write, and taking a lock it does not need would fight the agent's own
+ *     `git` calls in the same repository.
  *   - `-c core.quotePath=false`: Git otherwise C-quotes any path holding a
  *     non-ASCII byte (`"\346\226\207.md"`), and those paths then cannot be
  *     matched back to the ones `status` reported.
@@ -77,9 +76,8 @@ const GIT_TIMEOUT_MS = 20_000
  *
  * `git rev-parse --show-toplevel` outside a repository is one of them, and it is
  * the answer `resolveRepo` reads as "this directory has no repository". A
- * command that never reached Git — no `git` on `PATH`, a sandbox denial, a shell
- * that could not parse the line — exits with something else on POSIX, so the
- * code is how the two are told apart there.
+ * command that never reached Git — no `git` on `PATH` — fails to spawn at all,
+ * so an exit code is always Git's own answer here.
  */
 const GIT_FATAL_EXIT = 128
 
@@ -96,19 +94,11 @@ const NOT_A_REPO = /not a git repository/i
 /**
  * Wall-clock bound for the two invocations that cross the network.
  *
- * A fetch or a push legitimately takes longer than a local read — a slow remote
- * or a large pack is not a hung command — so the local bound would kill a
+ * A fetch or a push legitimately takes longer than a local read —a slow remote
+ * or a large pack is not a hung command —so the local bound would kill a
  * transfer that was still making progress.
  */
 const GIT_NETWORK_TIMEOUT_MS = 180_000
-
-/**
- * Wall-clock bound for one credential helper's answer.
- *
- * A helper that reads a store answers at once; the bound is here so a helper
- * that decides to wait for an interactive sign-in cannot hold the page.
- */
-const CREDENTIAL_TIMEOUT_MS = 30_000
 
 /** Largest patch the Host collects; beyond this the answer is flagged truncated. */
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024
@@ -166,37 +156,10 @@ const MISSING_IDENTITY =
   /Author identity unknown|Committer identity unknown|Please tell me who you are|unable to auto-detect email address/i
 
 /**
- * What Git prints when the credential helper itself could not start.
- *
- * Git for Windows runs every credential helper through its bundled MSYS `sh`,
- * and a confined sandbox can deny that runtime the pipe it creates at startup —
- * the helper then never reads the saved credential, and Git falls back to a
- * terminal prompt this plugin has disabled. That is a different failure from a
- * remote that rejected a credential, and the page words it differently.
- */
-const CREDENTIAL_HELPER_UNAVAILABLE =
-  /couldn't create signal pipe|failed to execute prompt script|unable to start the credential helper/i
-
-/**
- * What Git's POSIX-emulation helpers print when the sandbox kept them from
- * starting at all.
- *
- * Git for Windows ships its shell, hooks, merge drivers and SSH as MSYS2
- * programs, and a restricted-token sandbox denies that runtime the signal pipe
- * it creates while initializing — the process dies before it can exec, with
- * `STATUS_DLL_INIT_FAILED` (`0xC0000142`) as its exit and this line on stderr.
- * The failure is not about credentials even when a credential helper is what
- * triggered it, so a route that is not a network hand-off words it as the
- * sandbox's answer rather than passing the MSYS line through.
- */
-const SANDBOX_HELPER_BLOCKED =
-  /couldn't create signal pipe|failed to execute prompt script|unable to start the credential helper|status_dll_init_failed|0xc0000142/i
-
-/**
  * What Git prints when the remote refused the credentials this machine holds.
  *
- * Each transport words it differently — HTTPS asks for a username a
- * non-interactive session cannot supply, SSH names the key it could not use —
+ * Each transport words it differently —HTTPS asks for a username a
+ * non-interactive session cannot supply, SSH names the key it could not use —?
  * and every one of them is the same authentication failure to the page, which
  * never prompts for credentials of its own.
  */
@@ -226,7 +189,7 @@ const BRANCH_EXISTS = /already exists/i
  *
  * This is the one refusal the delete dialog's marks predict, so it is the one
  * the page words itself: Git's own sentence ends in a `-D` hint, and this plugin
- * has no force to offer — restating it is what keeps the page from advertising a
+ * has no force to offer —restating it is what keeps the page from advertising a
  * command it will not run.
  */
 const BRANCH_NOT_MERGED = /not fully merged/i
@@ -274,13 +237,6 @@ const BODY_FIELD = SUMMARY_FIELDS.length
 /** Commit detail: the summary fields plus the message body. */
 const DETAIL_FORMAT = `${LOG_FORMAT}%x1f%b%x1e`
 
-/** Environment every invocation shares: no pager, no prompt, no index write. */
-const GIT_ENV: Readonly<Record<string, string>> = {
-  GIT_OPTIONAL_LOCKS: '0',
-  GIT_TERMINAL_PROMPT: '0',
-  GIT_PAGER: 'cat',
-}
-
 /**
  * The status invocation both the sidebar and the message generator start from.
  *
@@ -299,10 +255,8 @@ interface GitRun {
   readonly stderr: string
   /** The collected stdout hit the Host's bound; the text is incomplete. */
   readonly truncated: boolean
-  /** Infrastructure failure (missing service, spawn error) — not a Git failure. */
+  /** Infrastructure failure (missing service, spawn error) —not a Git failure. */
   readonly failure?: string
-  /** The sandbox refused the command instead of running it. */
-  readonly denied?: boolean
 }
 
 /** A resolved repository, or the reason it cannot be used. */
@@ -311,39 +265,20 @@ type RepoResolution =
   | { readonly refusal: Refusal; readonly reason: 'no-repo' | 'error' }
 
 /**
- * Everything one request needs to run Git.
+ * Everything one request needs to run Git: the process substrate and the
+ * directory it runs in.
  *
- * The file policy travels with the shell rather than being re-derived per
- * command: the seam applies the policy a request carries, and an agentless call
- * would otherwise fall back to the deployment's own mode and root — which is
- * how a `workspace-write` session ends up refused a write it is allowed to make.
- * See `routes.ts` for where the policy is resolved from the session.
+ * Git is spawned as an argv on `subprocess` —never through `ctx.shell` —so no
+ * sandbox, interpreter, or shell quoting sits between this module and the
+ * process. That also means the session's file policy does not apply here: Git
+ * runs with the Host's own rights, inside the repository this module resolved,
+ * with every path taken from Git's own output.
  */
 export interface GitTarget {
-  /** The `shell` capability service. */
-  readonly shell: any
+  /** The `subprocess` capability service. */
+  readonly subprocess: any
   /** The directory the command runs in. */
   readonly workdir: string
-  /**
-   * The calling session's resolved file policy, when the mounted executor
-   * confines. Absent for an unconfined executor, or a request with no session.
-   */
-  readonly sandboxPolicy?: unknown
-  /**
-   * The process substrate to run Git on directly, present only when the
-   * resolved policy confines nothing.
-   *
-   * A confined call must go through the shell seam: that is the only path
-   * through which the sandbox is applied. When the session is unconfined — the
-   * executor does not sandbox at all, or the session resolved to
-   * `danger-full-access` — the seam would only wrap the command in a shell that
-   * confines nothing, and the wrapper is what costs a full process launch per
-   * Git command (see `invoke`). `routes.ts` decides this per request and passes
-   * the substrate it read from the Host; it is the same substrate the seam
-   * spawns on, so a remote-execution composition keeps running Git where the
-   * shell runs.
-   */
-  readonly subprocess?: any
 }
 
 /**
@@ -361,7 +296,7 @@ function inDir(target: GitTarget, workdir: string): GitTarget {
  * A path as a pathspec that cannot be read as a pattern.
  *
  * Git pathspecs treat `*`, `?`, and `[` as wildcards, so a path that really
- * contains one — a file named `a*.txt` — would otherwise name every file the
+ * contains one —a file named `a*.txt` —would otherwise name every file the
  * pattern matches. `:(literal)` turns the rest of the word into a literal path,
  * which is the only reading a path from `git status` should ever get: it is a
  * name, not a pattern the page composed.
@@ -373,74 +308,7 @@ function literalPath(path: string): string {
   return `:(literal)${path}`
 }
 
-/**
- * Which text domain the mounted shell executor parses the command string in.
- *
- * `ctx.shell` is one seam over two domains: the POSIX providers run the string
- * through `bash -c`, and the Windows providers hand it to `pwsh -Command`, which
- * parses PowerShell itself. A command line is therefore written for the parser
- * that will read it — quoting is a property of the executor, not of Git.
- */
-type ShellFlavor = 'posix' | 'powershell'
-
-/**
- * Which domain the shell service in this composition speaks.
- *
- * The PowerShell executor publishes the `pwshPath` it resolved (see
- * `@deepseek-ai/dsh-pwsh-local`), so its presence is the executor's own answer
- * to this question — the seam itself carries no platform fact. A provider that
- * announces nothing falls back to the host platform, which is where every
- * shipped executor runs; the POSIX providers were the only ones before Windows
- * had a counterpart.
- *
- * @param shell - the `shell` capability service.
- * @returns the parser that will read this plugin's command strings.
- */
-function shellFlavor(shell: any): ShellFlavor {
-  if (typeof shell?.pwshPath === 'string') return 'powershell'
-  return process.platform === 'win32' ? 'powershell' : 'posix'
-}
-
-/**
- * Quote one value for the shell line the seam runs.
- *
- * Every argument that is not a literal this module wrote must survive as a
- * single word, and both parsers take a single-quoted word literally — no
- * expansion, no backslash processing — so the only character that can end such
- * a word is a single quote itself. Each domain closes and reopens that word its
- * own way: POSIX escapes the quote outside the word, PowerShell doubles it
- * inside.
- *
- * @param value - the raw argument.
- * @param flavor - the parser that will read the line.
- * @returns a single quoted shell word.
- */
-function quote(value: string, flavor: ShellFlavor): string {
-  if (flavor === 'powershell') return `'${value.replace(/'/g, "''")}'`
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-/**
- * Build one shell line from literal words, quoted for the parser that reads it.
- *
- * The words are the whole command — executable first — exactly as the direct
- * path would spawn them, so the two paths can never disagree about what is
- * being run. The Git defaults are part of the argv `runGit` builds, not
- * something this layer adds.
- *
- * @param words - the executable and its arguments, unquoted.
- * @param flavor - the parser that will read the line.
- * @returns the command string handed to `shell.resolve`.
- */
-function shellCommand(words: readonly string[], flavor: ShellFlavor): string {
-  const quoted = words.map((word) => quote(word, flavor))
-  // PowerShell reads a quoted word in command position as a string expression,
-  // and only the call operator runs it as a command; POSIX already runs a
-  // quoted first word (and `&` there would background it instead).
-  return flavor === 'powershell' ? `& ${quoted.join(' ')}` : quoted.join(' ')
-}
-
-/** How one shell invocation is bounded and fed, beyond its command line. */
+/** How one invocation is bounded and fed, beyond its argv. */
 interface InvocationOptions {
   readonly timeoutMs?: number
   readonly stdin?: string
@@ -449,25 +317,29 @@ interface InvocationOptions {
 }
 
 /**
- * How long one direct invocation may spend being terminated before its result
- * is read as killed. The direct path owns the same graceful-then-forced
- * escalation the seam's subprocess provider performs, so a Git process that
- * ignores the first signal still cannot hold a route open.
+ * How long a killed Git process may take to settle before its result is read as
+ * killed. The substrate performs the same graceful-then-forced escalation, so a
+ * Git process that ignores the first signal still cannot hold a route open.
  */
-const DIRECT_GRACE_MS = 2_000
+const GRACE_MS = 2_000
 
 /**
- * Environment the direct path adds beside the Git defaults.
+ * Environment every invocation runs with.
  *
- * The shell seams pin these for every command they run; a direct spawn is
- * outside that seam, so it must pin them itself or the one path would ask Git
- * for a pager and colours while the other does not. `TERM` is the POSIX seam's
- * own answer and is absent on Windows, matching that platform's executor, which
- * documents `TERM=dumb` as a POSIX concept.
+ * `GIT_OPTIONAL_LOCKS` keeps read-only commands from rewriting `.git/index`
+ * behind an `index.lock`, so a `status` or `diff` this plugin runs can never
+ * fail an Agent's own `git add` that happens to overlap it. `GIT_TERMINAL_PROMPT`
+ * turns a credential prompt into a failed fetch instead of a hung process, since
+ * nothing here can answer one. The colour and pager pins keep the parsed output
+ * free of escape sequences and make a `PAGER` inherited from the environment
+ * irrelevant. `TERM` is a POSIX concept: Windows does not read it.
  */
-const DIRECT_ENV: Readonly<Record<string, string>> = {
+const GIT_ENV: Readonly<Record<string, string>> = {
   NO_COLOR: '1',
   PAGER: 'cat',
+  GIT_PAGER: 'cat',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_TERMINAL_PROMPT: '0',
   ...(process.platform === 'win32' ? {} : { TERM: 'dumb' }),
 }
 
@@ -497,31 +369,27 @@ function collectedText(reader: any): { text: string; lossy: boolean } {
 }
 
 /**
- * Run one argv directly on the request's process substrate.
+ * Run one argv on the request's process substrate and collect its result.
  *
- * This is the unconfined fast path: no shell parses the line, no sandbox wraps
- * the process, and the executable is Git itself. On Windows that removes the
- * `pwsh` and runner launches from every command — measured as the difference
- * between roughly 600 ms per invocation through the seam and a few tens of
- * milliseconds here — while on POSIX it only removes the shell the seam would
- * have started.
+ * There is exactly one way to run Git: spawn it as an argv. No shell parses the
+ * line, no sandbox wraps the process, and no interpreter sits in front of the
+ * executable —which is what makes a command cost a few tens of milliseconds
+ * rather than most of a second on Windows.
  *
- * Only `routes.ts` puts a substrate on the target, and only when nothing
- * confines the call, so a sandboxed session never reaches this function.
- *
- * @param target - the substrate, the directory, and the Git environment.
- * @param words - the executable and its arguments, already unquoted.
+ * @param target - the substrate and the directory.
+ * @param words - the executable and its arguments.
  * @param options - the bound, standard input, and environment for it.
- * @returns the invocation's outcome, or undefined when the substrate cannot run
- *   it and the shell seam should (the process was never created then).
+ * @returns the invocation's outcome; never rejects.
  */
-async function invokeDirect(
+async function invoke(
   target: GitTarget,
   words: readonly string[],
-  options: InvocationOptions,
-): Promise<GitRun | undefined> {
+  options: InvocationOptions = {},
+): Promise<GitRun> {
   const subprocess = target.subprocess
-  if (subprocess === undefined || typeof subprocess.spawn !== 'function') return undefined
+  if (subprocess === undefined || typeof subprocess.spawn !== 'function') {
+    return failureRun('the subprocess service is unavailable, so Git cannot run')
+  }
 
   let handle: any
   try {
@@ -533,20 +401,18 @@ async function invokeDirect(
         stdout: { maxBytes: MAX_STDOUT_BYTES, spill: { maxBytes: MAX_SPILL_BYTES } },
         stderr: { maxBytes: MAX_STDERR_BYTES, spill: { maxBytes: MAX_SPILL_BYTES } },
       },
-      graceMs: DIRECT_GRACE_MS,
-      env: { ...DIRECT_ENV, ...GIT_ENV, ...options.env },
+      graceMs: GRACE_MS,
+      env: { ...GIT_ENV, ...options.env },
     })
-  } catch {
-    // No process was created, so the seam is free to run the command instead.
-    return undefined
+  } catch (error) {
+    // No process was created, so nothing ran and nothing was written.
+    return failureRun(errorMessage(error))
   }
 
   const readers = handle?.collected
   if (typeof handle?.done?.then !== 'function' || readers === undefined) {
-    // A handle without readers cannot be reported on, and rerunning the command
-    // could apply a write twice, so this is a failure rather than a fallback.
     try { handle?.terminate?.() } catch { /* the range is already gone */ }
-    return failureRun('direct Git execution returned no readable process handle')
+    return failureRun('the subprocess service returned no readable process handle')
   }
 
   const timeoutMs = options.timeoutMs ?? GIT_TIMEOUT_MS
@@ -581,84 +447,14 @@ async function invokeDirect(
 }
 
 /**
- * Run one command line and collect its result.
- *
- * The direct substrate is tried first and only exists for an unconfined call;
- * everything else — the confined session, the cold request with no policy to
- * resolve — goes through the shell seam, which is the only path that applies
- * the sandbox.
- *
- * @param target - the execution substrate, the directory, and the file policy.
- * @param words - the executable and its arguments, already unquoted.
- * @param options - the bound, standard input, and environment for it.
- * @returns the invocation's outcome; never rejects.
- */
-async function invoke(
-  target: GitTarget,
-  words: readonly string[],
-  options: InvocationOptions = {},
-): Promise<GitRun> {
-  const direct = await invokeDirect(target, words, options)
-  if (direct !== undefined) return direct
-  return invokeThroughShell(target, shellCommand(words, shellFlavor(target.shell)), options)
-}
-
-/**
- * Run one command line through the shell seam and collect its result.
- *
- * @param target - the shell seam, the directory, and the file policy to run under.
- * @param line - the full shell line, already quoted.
- * @param options - the bound, standard input, and environment for it.
- * @returns the invocation's outcome; never rejects.
- */
-async function invokeThroughShell(
-  target: GitTarget,
-  line: string,
-  options: InvocationOptions = {},
-): Promise<GitRun> {
-  const { shell, sandboxPolicy } = target
-  const request = {
-    command: line,
-    workdir: target.workdir,
-    timeoutMs: options.timeoutMs ?? GIT_TIMEOUT_MS,
-    onExpiry: 'kill' as const,
-    stdoutMaxBytes: MAX_STDOUT_BYTES,
-    env: { ...GIT_ENV, ...options.env },
-    // Carried only when there is one: an unconfined executor takes no policy,
-    // and the seam stays free to apply its own fallback then.
-    ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
-    ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
-  }
-
-  // resolve → execute → result is the seam's three-step protocol, and a throw at
-  // any of the three is the same kind of failure: the command never reached Git,
-  // so it is reported as infrastructure rather than as a Git answer.
-  try {
-    const spec = shell.resolve(request)
-    const execution = await shell.execute(spec)
-    const result = await execution.result()
-    const code: number | null = typeof result?.exitCode === 'number' ? result.exitCode : null
-    return {
-      code,
-      stdout: typeof result?.stdout?.text === 'string' ? result.stdout.text : '',
-      stderr: typeof result?.stderr?.text === 'string' ? result.stderr.text : '',
-      truncated: result?.stdout?.truncated === true,
-      denied: result?.sandbox?.denied === true,
-    }
-  } catch (error) {
-    return failureRun(errorMessage(error))
-  }
-}
-
-/**
  * Run one Git command and collect its result.
  *
  * The outcome is returned as it came back rather than judged here: which exit
  * codes are a normal answer differs per command, and every caller reads them
  * itself.
  *
- * @param target - the shell seam, the directory, and the file policy to run under.
- * @param args - subcommand and arguments, before quoting.
+ * @param target - the substrate and the directory.
+ * @param args - subcommand and arguments.
  * @param options - the bound, standard input, and environment for it.
  * @returns the invocation's outcome; never rejects.
  */
@@ -679,8 +475,8 @@ function failureRun(error: string): GitRun {
  * Git's own diagnosis of a failed command, as one block of text.
  *
  * Git reports a refusal on stderr and leaves stdout for the case where it has
- * nothing to say there — a `pull` that refuses a divergence prints its advice on
- * stdout — so the two are read in that order.
+ * nothing to say there —a `pull` that refuses a divergence prints its advice on
+ * stdout —so the two are read in that order.
  *
  * @param run - the failed invocation.
  * @returns the trimmed diagnosis; empty when the command said nothing at all.
@@ -693,116 +489,31 @@ function diagnosticText(run: GitRun): string {
 /**
  * The one-line refusal a failed command amounts to, for the page to render.
  *
- * Git writes its diagnosis to stderr; a sandbox denial is reported by the seam
- * instead and would otherwise read as an empty message. Only the two cases the
- * page words itself are coded — a denial, and a command that said nothing at
- * all — because every other refusal is Git's own first line, which is more
+ * Git writes its diagnosis to stderr; only a command that said nothing at all is
+ * coded, because every other refusal is Git's own first line, which is more
  * specific than anything this half could invent and cannot be translated.
  *
  * @param run - the failed invocation.
  * @returns the coded refusal, or the text Git printed.
  */
 function refusalOf(run: GitRun): Refusal {
-  if (run.denied === true) return coded('git-denied')
   const text = diagnosticText(run)
   if (text === '') return coded('git-exit', { code: run.code ?? 'null' })
-  if (SANDBOX_HELPER_BLOCKED.test(text)) return coded('git-sandbox-helper')
   return { error: text.split('\n')[0] ?? text }
 }
 
 /**
  * The refusal a credential problem amounts to, when the diagnosis is one.
  *
- * The helper case is tested first on purpose: a helper a confined sandbox kept
- * from starting leaves Git with nobody to ask for a credential, which reads like
- * an authentication failure but is the sandbox's answer. Every route that can
- * cross the network shares this, because Git words the same two failures for a
- * fetch, a pull, a push, and a remote delete.
+ * Every route that can cross the network shares this, because Git words the same
+ * failure for a fetch, a pull, a push, and a remote delete.
  *
  * @param text - Git's own diagnosis of the failed invocation.
  * @returns the coded refusal, or null when the failure is not about credentials.
  */
 function authRefusal(text: string): Refusal | null {
-  if (CREDENTIAL_HELPER_UNAVAILABLE.test(text)) return coded('auth-helper')
   if (AUTH_FAILURE.test(text)) return coded('auth')
   return null
-}
-
-/**
- * How long a resolved repository is reused before it is asked again.
- *
- * Locating the repository costs two Git invocations — the toplevel and the HEAD
- * probe — and every route repeats them, so on a host where one invocation costs
- * the better part of a second those two are the dominant part of merely opening
- * the tab. The root a session names does not move, and a HEAD appears only when
- * the first commit lands (which `commitAll`/`commitStaged` report by dropping
- * the entry), so a short lifetime is enough to answer every read of one page
- * load without ever hiding a repository that was just created or deleted.
- */
-const REPO_CACHE_TTL_MS = 20_000
-
-/** One resolved repository, shared by every route reading the same directory. */
-interface CachedRepo {
-  /** The root Git itself named, relative to which every later path is built. */
-  readonly root: string
-  /** Whether HEAD resolves to a commit; an unborn branch answers false. */
-  readonly hasHead: boolean
-  /** Wall-clock instant after which the entry stops answering. */
-  readonly expiresAt: number
-}
-
-/**
- * Resolved repositories keyed by the directory the request named.
- *
- * Keyed by the session's own directory rather than by the repository root: that
- * is the only directory a request knows before Git answers, and a session
- * opened from a subdirectory keeps its own key while sharing the root it
- * resolves to. Entries are dropped on write, so the cache never outlives a
- * repository change this half performed itself.
- */
-const repoCache = new Map<string, CachedRepo>()
-
-/**
- * The cached repository for one directory, when it is still fresh.
- *
- * @param workdir - the directory the request named.
- * @returns the cached answer, or undefined when there is none to trust.
- */
-function cachedRepo(workdir: string): CachedRepo | undefined {
-  const entry = repoCache.get(workdir)
-  if (entry === undefined) return undefined
-  if (entry.expiresAt <= Date.now()) {
-    repoCache.delete(workdir)
-    return undefined
-  }
-  return entry
-}
-
-/**
- * Remember one directory's resolved repository.
- *
- * @param workdir - the directory the request named.
- * @param root - the root Git answered with.
- * @param hasHead - whether the repository has a commit.
- */
-function rememberRepo(workdir: string, root: string, hasHead: boolean): void {
-  repoCache.set(workdir, { root, hasHead, expiresAt: Date.now() + REPO_CACHE_TTL_MS })
-}
-
-/**
- * Drop every entry that described one repository root.
- *
- * A write can make the cached answer wrong in the only two ways it can be:
- * the first commit turns an unborn HEAD into a resolvable one, and a checkout
- * or merge can leave the directory naming a different root. Dropping by root
- * covers the sessions that reached it through a subdirectory as well.
- *
- * @param root - the repository root a write just changed.
- */
-function forgetRepoRoot(root: string): void {
-  for (const [workdir, entry] of repoCache) {
-    if (entry.root === root || workdir === root) repoCache.delete(workdir)
-  }
 }
 
 /**
@@ -813,40 +524,27 @@ function forgetRepoRoot(root: string): void {
  * guessed, and a directory with no repository is answered as such instead of
  * surfacing `fatal: not a git repository` as an error.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the substrate and the session's directory.
  * @returns the root and HEAD state, or the reason it cannot be used.
  */
 async function resolveRepo(target: GitTarget): Promise<RepoResolution> {
-  const cached = cachedRepo(target.workdir)
-  if (cached !== undefined) return { root: cached.root, hasHead: cached.hasHead }
-
   const top = await runGit(target, ['rev-parse', '--show-toplevel'])
   if (top.failure !== undefined) return { refusal: { error: top.failure }, reason: 'error' }
   if (top.code !== 0) {
-    // A directory that is not a repository is not remembered: the reader may
-    // run `git init` in it at any moment, and the next request must see that.
-    repoCache.delete(target.workdir)
-    // Git's own "no repository here" answer — a fatal exit on POSIX, and the
-    // same sentence on Windows, whose PowerShell 5.1 executor reports every
-    // failed native command as exit 1. Any other nonzero exit is a failure to
-    // state as such: reporting every one of them as an empty directory is how a
-    // shell that could not run the command read as a directory holding no
+    // Git's own "no repository here" answer. Any other nonzero exit is a
+    // failure to state as such: reporting every one of them as an empty
+    // directory is how a broken shell read as a directory holding no
     // repository.
     const noRepo = top.code === GIT_FATAL_EXIT || NOT_A_REPO.test(diagnosticText(top))
     return { refusal: refusalOf(top), reason: noRepo ? 'no-repo' : 'error' }
   }
   const root = top.stdout.trim()
-  if (root === '') {
-    repoCache.delete(target.workdir)
-    return { refusal: coded('no-root'), reason: 'no-repo' }
-  }
+  if (root === '') return { refusal: coded('no-root'), reason: 'no-repo' }
 
   // `--quiet` keeps an unborn branch from writing "fatal: Needed a single
   // revision" to stderr, and exit code 1 is then a normal "no commits yet".
   const head = await runGit(inDir(target, root), ['rev-parse', '--verify', '--quiet', 'HEAD'])
-  const hasHead = head.code === 0
-  rememberRepo(target.workdir, root, hasHead)
-  return { root, hasHead }
+  return { root, hasHead: head.code === 0 }
 }
 
 /** The repository root one request answers for, or why there is none. */
@@ -863,7 +561,7 @@ export type RepositoryRoot =
  * is about to make. This is the same `rev-parse` every other route starts
  * with, so the root it names is the same root they use.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the root, or the coded refusal and its reason.
  */
 export async function readRepositoryRoot(target: GitTarget): Promise<RepositoryRoot> {
@@ -875,7 +573,7 @@ export async function readRepositoryRoot(target: GitTarget): Promise<RepositoryR
 /**
  * Read the current branch, its upstream, and every changed path.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the status payload the page renders its sidebar from.
  */
 export async function readStatus(target: GitTarget): Promise<StatusPayload> {
@@ -1071,7 +769,7 @@ function changedFile(path: string, origPath: string | undefined, x: string, y: s
  * page shows its empty state instead of `fatal: your current branch ... does
  * not have any commits yet`.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param limit - how many commits to return; clamped to {@link MAX_LOG_LIMIT}.
  * @returns the log payload.
  */
@@ -1109,7 +807,7 @@ export async function readLog(target: GitTarget, limit: number): Promise<LogPayl
  * parent to diff against, so it keeps `show`, which prints the whole tree as an
  * addition.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param hash - a hexadecimal object name, already validated by the route.
  * @returns the commit payload, including the raw patch for the page's parser.
  */
@@ -1155,8 +853,8 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
  * The request names the side because the page lists a path once per half it
  * holds: a file staged and then edited again is two rows, and the patch under
  * each must be the one that row stands for. `staged` compares the index against
- * HEAD — what committing the index would record — and `unstaged` compares the
- * worktree against the index — what `git add` would capture. A conflicted path
+ * HEAD —what committing the index would record —and `unstaged` compares the
+ * worktree against the index —what `git add` would capture. A conflicted path
  * has no meaningful side, so its request reads the combined diff Git prints for
  * an unmerged path.
  *
@@ -1165,7 +863,7 @@ export async function readCommit(target: GitTarget, hash: string): Promise<Commi
  * no HEAD to compare against either, and `--cached` then compares the index
  * against the empty tree, which is the honest answer for the staged side there.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param file - the changed path and the side of it to diff.
  * @returns the unified diff, or the reason there is none.
  */
@@ -1239,8 +937,8 @@ const MAX_PREVIEW_FILES = 20
  * How many recent commit messages the prompt reads as its style sample.
  *
  * The generator writes in the style this repository already commits in, and the
- * sample is the evidence for that style: ten messages are enough for a pattern —
- * a tag, a language, a body — to show, and few enough to stay a footnote beside
+ * sample is the evidence for that style: ten messages are enough for a pattern —?
+ * a tag, a language, a body —to show, and few enough to stay a footnote beside
  * the patch.
  */
 const STYLE_SAMPLE_COMMITS = 10
@@ -1249,7 +947,7 @@ const STYLE_SAMPLE_COMMITS = 10
  * Longest one sampled message may be, in characters.
  *
  * A message is a subject and usually a few lines; the bound is here so that one
- * enormous body — a squashed release note, a template nobody trimmed — cannot
+ * enormous body —a squashed release note, a template nobody trimmed —cannot
  * crowd the diff out of the request. A message over the bound is stored cut and
  * marked as such, because half a message otherwise reads as all of it.
  */
@@ -1268,8 +966,8 @@ export interface UntrackedPreview {
   /** Worktree-relative path. */
   readonly path: string
   /**
-   * What Git printed for this path against `/dev/null`: its `--stat` line —
-   * which is where a binary file's byte size appears — and then its patch, cut
+   * What Git printed for this path against `/dev/null`: its `--stat` line —?
+   * which is where a binary file's byte size appears —and then its patch, cut
    * at the Host's bound.
    */
   readonly text: string
@@ -1293,7 +991,7 @@ export type ChangeDigest =
      *
      * The commit-message writer keys a Workspace's saved choices by this path
      * when the Workspace registry cannot name one, and the digest is already
-     * the request that resolved it — a second `rev-parse` would only repeat a
+     * the request that resolved it —a second `rev-parse` would only repeat a
      * question this answer already holds.
      */
     readonly root: string
@@ -1303,7 +1001,7 @@ export type ChangeDigest =
     readonly files: readonly ChangedFile[]
     /**
      * `git diff --stat` of the tracked changes: one line per path, following the
-     * patch's own shape but carrying the file's magnitude — the only place a
+     * patch's own shape but carrying the file's magnitude —the only place a
      * binary file's size appears at all.
      */
     readonly stat: string
@@ -1328,12 +1026,12 @@ export type ChangeDigest =
  * `git diff HEAD` is the whole of it when the branch has a commit: index and
  * worktree are both compared against HEAD, so a staged edit and a further
  * unstaged one appear under the path they belong to. An unborn branch has no
- * HEAD to compare against, so the staged half is asked for by name — the index
- * against the empty tree — and the unstaged half follows; the two are
+ * HEAD to compare against, so the staged half is asked for by name —the index
+ * against the empty tree —and the unstaged half follows; the two are
  * concatenated rather than merged because both are already in the same format
  * and neither can name a path the other does not.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param hasHead - HEAD resolves to a commit.
  * @param format - the diff's own switches, e.g. `--stat`.
  * @returns the invocation's outcome; never rejects.
@@ -1381,17 +1079,17 @@ function cutAtLine(text: string, limit: number): { readonly text: string; readon
  * `--no-index` is the one place Git compares two paths instead of a path against
  * a tree, which is the only way an untracked file's content is reachable at all:
  * it is in no tree, so no `diff HEAD` can name it. Exit code 1 is the normal
- * answer here — the two sides always differ, an empty file included — and the
+ * answer here —the two sides always differ, an empty file included —and the
  * `--stat` line is asked for in the same invocation as the patch, because it is
  * where a binary file's size appears and a second command would only repeat the
  * same walk.
  *
  * A path whose read fails is left out of the previews: it stays on the list the
- * prompt opens with, because `git status` named it, and the alternative — one
- * unreadable file failing the whole request — would take the message away over a
+ * prompt opens with, because `git status` named it, and the alternative —one
+ * unreadable file failing the whole request —would take the message away over a
  * file the model was only ever going to look at.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param files - every changed path; the untracked ones are the subject here.
  * @returns one bounded preview per untracked path, in status order.
  */
@@ -1425,11 +1123,11 @@ async function readUntrackedPreviews(
  * same rule the patch is cut by.
  *
  * Nothing here is fatal: a branch with no commits, or a `log` that fails for any
- * other reason, reads as no sample — the generator then falls back to the commit
+ * other reason, reads as no sample —the generator then falls back to the commit
  * rules, which is a better answer than taking the message away over a style it
  * could not read.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param hasHead - HEAD resolves to a commit, so there is history to read.
  * @returns the sampled messages, newest first.
  */
@@ -1457,8 +1155,8 @@ async function readRecentMessages(root: GitTarget, hasHead: boolean): Promise<re
  * This is the reader `readStatus` and `readDiff` would give if they were asked
  * together and once: the changed paths, the tracked patch with its `--stat`, and
  * the untracked files a patch against HEAD cannot reach. It exists as one read
- * because the prompt is one request — a message generator that walked the tree
- * path by path would run three commands per changed file — and because the model
+ * because the prompt is one request —a message generator that walked the tree
+ * path by path would run three commands per changed file —and because the model
  * is meant to see the changes as one change set rather than as an answer per
  * row.
  *
@@ -1471,7 +1169,7 @@ async function readRecentMessages(root: GitTarget, hasHead: boolean): Promise<re
  * The one thing here that is not a change is the style sample: the branch's own
  * recent messages, which the prompt asks the model to write in the manner of.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param scope - whether to describe the index alone or the whole working tree.
  * @returns the digest, or why the repository could not be read.
  */
@@ -1552,7 +1250,7 @@ type RefNames =
  * symbolic aliases are not branches, so they read the same records and only this
  * reader narrows them to names.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param namespace - the ref namespace to read, e.g. `refs/heads/`.
  * @returns the short names, or why the read failed.
  */
@@ -1568,11 +1266,11 @@ async function readRefNames(root: GitTarget, namespace: string): Promise<RefName
  *
  * The two lists are read the same way and sorted by commit date, so either one
  * opens on the branches someone is actually working on. Whether a remote branch
- * is switchable is not a filter applied here: a remote branch is a real choice —
- * checking it out is what creates the local branch that tracks it — so the page
+ * is switchable is not a filter applied here: a remote branch is a real choice —?
+ * checking it out is what creates the local branch that tracks it —so the page
  * shows both and the switch decides what to do with each.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the two branch lists and which branch HEAD is on.
  */
 export async function readBranches(target: GitTarget): Promise<BranchesPayload> {
@@ -1611,14 +1309,14 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
  * ambiguous-argument error. The remote case is the same decision answered by
  * today's Git: checking out `origin/main` is how the local `main` that tracks it
  * comes into being, so the name is checked against `refs/remotes/` and the local
- * branch that tracks it is created — or, when it already exists, switched to,
+ * branch that tracks it is created —or, when it already exists, switched to,
  * because that is what the pick meant. The local name is derived here rather
  * than left to Git's own guess so the exists-check and the branch Git is told to
  * create can never disagree.
  *
  * What a ref name may look like is Git's rule and is not restated here: a name
  * that no ref answers to is already an unknown branch, so a second, weaker
- * pattern would only turn names Git accepts — non-ASCII ones among them — into a
+ * pattern would only turn names Git accepts —non-ASCII ones among them —into a
  * refusal of this plugin's own invention.
  *
  * The switch itself runs as `git switch`, whose argument is unambiguously a
@@ -1626,10 +1324,9 @@ export async function readBranches(target: GitTarget): Promise<BranchesPayload> 
  * and the retry with `checkout` is what keeps those installations working.
  *
  * This is the one route that writes: a checkout replaces files in the working
- * tree. It is therefore also the one place the session's file policy is
- * load-bearing, and a refusal is reported as such rather than as a Git error.
+ * tree, so a working tree in the way is a refusal the page words itself.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param name - the local or remote-tracking branch to check out.
  * @returns the outcome, including the reason a switch was refused.
  */
@@ -1672,9 +1369,9 @@ export async function switchBranch(target: GitTarget, name: string): Promise<Che
  *
  * The raw run is returned rather than a payload because the caller words its own
  * failure: a switch reads the refusal as a checkout, with the paths that are in
- * the way and the sandbox's answer told apart from Git's.
+ * the way named.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param attempt - the `switch` invocation, subcommand first.
  * @param fallback - the same invocation for a Git without `switch`.
  * @returns the invocation's outcome.
@@ -1692,7 +1389,7 @@ async function runSwitch(
 /**
  * Run one switch and report it.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param attempt - the `switch` invocation, subcommand first.
  * @param fallback - the same invocation for a Git without `switch`.
  * @param branch - the local branch this switch lands on.
@@ -1716,7 +1413,7 @@ async function switchTo(
  * question asked here: a name that resolves to nothing and a name that is not a
  * valid ref at all are the same answer to "may this be switched to".
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param ref - the full ref name to resolve.
  * @returns true when the ref exists.
  */
@@ -1731,10 +1428,10 @@ async function refExists(root: GitTarget, ref: string): Promise<boolean> {
  * Git's rule is to strip the remote name, and the remote names are the
  * configured ones rather than a guess cut out of the ref: a remote may itself
  * contain a slash, so the longest matching remote is the only correct answer.
- * No match means no configured remote owns the ref — a stale directory left by a
- * removed remote — and the caller states that rather than inventing a name.
+ * No match means no configured remote owns the ref —a stale directory left by a
+ * removed remote —and the caller states that rather than inventing a name.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param ref - the remote-tracking ref, e.g. `origin/feature/x`.
  * @returns the local name, or null when no configured remote prefixes the ref.
  */
@@ -1749,7 +1446,7 @@ async function localNameForRemote(root: GitTarget, ref: string): Promise<string 
  * The remote names are the configured ones rather than a guess cut out of the
  * ref: a remote may itself contain a slash, so the longest matching remote is
  * the only correct answer, and no match means no configured remote owns the ref
- * — a stale directory left by a removed remote — which the caller states rather
+ * —a stale directory left by a removed remote —which the caller states rather
  * than inventing a name.
  *
  * The split is resolved here rather than by the page because a local branch may
@@ -1786,10 +1483,6 @@ function splitRemote(
  * @returns the payload the page renders.
  */
 function checkoutFailure(run: GitRun): CheckoutPayload {
-  if (run.denied === true) {
-    return { ok: false, ...coded('checkout-denied'), reason: 'denied' }
-  }
-
   const dirty = dirtyRefusal(diagnosticText(run))
   if (dirty !== null) return { ok: false, ...dirty, reason: 'dirty' }
 
@@ -1834,16 +1527,15 @@ function dirtyRefusal(text: string): Refusal | null {
  *
  * The name itself is left to Git's rule. A name Git will not take is answered
  * with Git's own sentence rather than a pattern of this half's invention, which
- * is what keeps a name Git accepts — non-ASCII ones among them — from being
+ * is what keeps a name Git accepts —non-ASCII ones among them —from being
  * refused by a rule that does not exist. The one check made here is the one Git
  * cannot make cheaply: whether the name is already taken, which is a refusal the
  * page words rather than a bare `fatal` from a race.
  *
  * Creating at another point is a switch, so a working tree in the way refuses it
- * in the switch's own words, and the session's file policy is as load-bearing
- * here as it is there.
+ * in the switch's own words.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param name - the local branch to create.
  * @param start - the local or remote-tracking branch it starts at.
  * @returns the outcome, including the reason the create was refused.
@@ -1883,7 +1575,7 @@ export async function createBranch(
  * half invents a meaning for. A remote-tracking start is what sets the new
  * branch's upstream, which is Git's own answer to branching off `origin/main`.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param name - the local or remote-tracking branch to start at.
  * @returns the full ref, or null when no branch answers to the name.
  */
@@ -1896,8 +1588,8 @@ async function startRef(root: GitTarget, name: string): Promise<string | null> {
 /**
  * Describe why starting a branch was refused.
  *
- * A dirty working tree is worded with the switch's own sentence — the operation
- * is a switch, and the paths Git named are the same paths — while the other two
+ * A dirty working tree is worded with the switch's own sentence —the operation
+ * is a switch, and the paths Git named are the same paths —while the other two
  * cases are this operation's own: a name taken between the check and the call,
  * and a session that may not write.
  *
@@ -1906,13 +1598,7 @@ async function startRef(root: GitTarget, name: string): Promise<string | null> {
  * @returns the payload the page renders.
  */
 function createFailure(run: GitRun, name: string): CreateBranchPayload {
-  if (run.denied === true) {
-    return { ok: false, ...coded('create-denied'), reason: 'denied' }
-  }
-
   const text = diagnosticText(run)
-  const dirty = dirtyRefusal(text)
-  if (dirty !== null) return { ok: false, ...dirty, reason: 'dirty' }
   if (BRANCH_EXISTS.test(text)) {
     return { ok: false, ...coded('branch-exists', { branch: name }), reason: 'exists' }
   }
@@ -1959,7 +1645,7 @@ type RefRecords =
  * This is the one walk both branch readers use: the switch list takes the
  * names, and the delete dialog takes the whole records.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param namespace - the ref namespace to read, e.g. `refs/heads/`.
  * @returns the records, or why the read failed.
  */
@@ -1993,8 +1679,8 @@ type MergedNames =
 /**
  * The branches in one namespace whose tip HEAD already reaches.
  *
- * This is half of `git branch -d`'s own rule — the other half is the branch's
- * upstream — and it is asked as one walk rather than one `merge-base` per branch
+ * This is half of `git branch -d`'s own rule —the other half is the branch's
+ * upstream —and it is asked as one walk rather than one `merge-base` per branch
  * because the dialog's marks have to be drawn from a fixed number of calls.
  *
  * The answer is deliberately not cut at the list's own bound. A branch the page
@@ -2003,7 +1689,7 @@ type MergedNames =
  * mark an arbitrary branch as unmerged. What comes back is one short name per
  * line, which is the smallest answer this question has.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param namespace - the ref namespace to walk, e.g. `refs/heads/`.
  * @returns the merged names, or why the walk failed.
  */
@@ -2063,7 +1749,7 @@ function aheadBehindOf(track: string): { ahead?: number; behind?: number } {
  * A read of its own rather than a second half of `POST /branches`, because the
  * two dialogs ask different questions: a switch wants names and nothing else,
  * while this one wants each branch's upstream, its tracking state, and whether
- * HEAD reaches it — three answers that cost walks the switch dialog would pay
+ * HEAD reaches it —three answers that cost walks the switch dialog would pay
  * for on every open and never read.
  *
  * A remote-tracking branch is marked by the same rule as a local one, and the
@@ -2073,7 +1759,7 @@ function aheadBehindOf(track: string): { ahead?: number; behind?: number } {
  * owns the ref is resolved against the configured names rather than cut out of
  * the ref, because a local branch may itself be called `origin/main`.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the two lists, each with its marks, and which branch HEAD is on.
  */
 export async function readBranchReport(target: GitTarget): Promise<BranchReportPayload> {
@@ -2139,7 +1825,7 @@ export async function readBranchReport(target: GitTarget): Promise<BranchReportP
  * One at a time rather than one `git branch -d a b c`, because the answer the
  * dialog needs is per branch: Git reports a mixed batch by exiting nonzero and
  * naming the branch it refused, and telling which of the others went through
- * would mean reading Git's own prose back — text that is translated, and whose
+ * would mean reading Git's own prose back —text that is translated, and whose
  * misreading would mark a branch deleted that is still there. The exit code of
  * one call per branch is an answer no locale can change.
  *
@@ -2147,7 +1833,7 @@ export async function readBranchReport(target: GitTarget): Promise<BranchReportP
  * it refuses exactly the branches whose commits would be left reachable from
  * nothing, which is the promise every mark in the dialog is making.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param wanted - the branches to delete, in the order the page listed them.
  * @returns one outcome per branch, and whether all of them succeeded.
  */
@@ -2175,11 +1861,11 @@ export async function deleteBranches(
  * The name is checked against `refs/heads/` first so a name that is not a branch
  * is stated as such rather than surfacing Git's wording, and the one shape Git
  * would read as an option is refused here: `branch -d` takes a short name and
- * cannot be handed a full ref — a fully-qualified name is answered with "branch
- * not found" — so this is the one place a name this half passes on is not
+ * cannot be handed a full ref —a fully-qualified name is answered with "branch
+ * not found" —so this is the one place a name this half passes on is not
  * already unambiguous.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param name - the local branch to delete.
  * @returns what became of it.
  */
@@ -2206,7 +1892,7 @@ async function deleteLocalBranch(root: GitTarget, name: string): Promise<BranchD
  * that names a remote the repository does not have is a refusal to state rather
  * than a push to attempt.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param configured - the configured remote names.
  * @param item - the remote-tracking branch to delete.
  * @returns what became of it.
@@ -2238,7 +1924,7 @@ async function deleteRemoteBranch(
  * The two refusals the dialog can predict are worded here, because it is the
  * dialog that predicted them: a branch Git will not delete for want of a merge
  * is the case every mark but `safe` is warning about, and a branch some worktree
- * is standing on — the current one included — is the case the dialog disables.
+ * is standing on —the current one included —is the case the dialog disables.
  * Both sentences name the branch, because a batch's answer is read one line at a
  * time and a line that does not say which branch it is about is not an answer.
  *
@@ -2247,8 +1933,6 @@ async function deleteRemoteBranch(
  * @returns the coded refusal, or Git's own first line.
  */
 function deleteFailure(run: GitRun, name: string): Refusal {
-  if (run.denied === true) return coded('delete-denied')
-
   const text = diagnosticText(run)
   if (BRANCH_NOT_MERGED.test(text)) return coded('branch-not-merged', { branch: name })
   if (BRANCH_IN_USE.test(text)) return coded('branch-in-use', { branch: name })
@@ -2260,16 +1944,14 @@ function deleteFailure(run: GitRun, name: string): Refusal {
  *
  * The credential answers are the ones `fetch` already words, because a delete is
  * a push and fails the same way when there is nothing to authenticate with;
- * everything else is Git's own first line — a missing ref, an unreachable host,
- * a rejected hook — which is more specific than anything this half could invent.
+ * everything else is Git's own first line —a missing ref, an unreachable host,
+ * a rejected hook —which is more specific than anything this half could invent.
  *
  * @param run - the failed push invocation.
  * @param branch - the branch name on the remote, for the one refusal that names it.
  * @returns the coded refusal, or Git's own first line.
  */
 function remoteDeleteFailure(run: GitRun, branch: string): Refusal {
-  if (run.denied === true) return coded('delete-denied')
-
   const text = diagnosticText(run)
   const auth = authRefusal(text)
   if (auth !== null) return auth
@@ -2283,18 +1965,18 @@ function remoteDeleteFailure(run: GitRun, branch: string): Refusal {
  * That is a plain `git merge`, and it is the only shape this page offers: Git
  * merges into the branch it is on, and the branch it is on is the one the reader
  * is looking at, so the operation stated is the operation Git has. The other
- * direction — the current branch into a branch nobody is standing on — would be a
+ * direction —the current branch into a branch nobody is standing on —would be a
  * checkout, a merge, and a checkout back: three working-tree moves for one
  * intention, buying two saved clicks at the price of a commit made on a branch
  * the page is not showing, where nothing on screen would show it happen.
  *
  * A conflicting merge is aborted rather than left in the tree. The page has no
- * way to finish one — the commit form refuses while unmerged paths exist — so an
+ * way to finish one —the commit form refuses while unmerged paths exist —so an
  * unfinished merge is exactly the state the fast-forward-only pull was shaped to
  * avoid. Aborting puts the working tree back where it was and words the refusal;
  * the branch is then merged by hand, with Git's own tools and markers.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param name - the branch to merge in, local or remote-tracking.
  * @returns the outcome, including the reason a merge was refused.
  */
@@ -2324,11 +2006,11 @@ export async function mergeBranch(
  *
  * Both a local branch and a remote-tracking ref can be merged in, and the answer
  * is `rev-parse` on the fully-qualified name rather than a pattern of this
- * half's own — which is also what keeps a name Git accepts from being refused by
+ * half's own —which is also what keeps a name Git accepts from being refused by
  * a rule that does not exist. A new branch's starting point is resolved by the
  * same rule, so that resolution is reused here rather than restated.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param name - the branch to judge.
  * @returns true when a merge may name it as its source.
  */
@@ -2342,7 +2024,7 @@ async function mergeableRef(root: GitTarget, name: string): Promise<boolean> {
  * `--no-edit` is what keeps this non-interactive: without it Git opens an editor
  * for the merge commit's message, and no editor exists behind this seam.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param source - the branch to merge in.
  * @returns the outcome, including the reason a merge was refused.
  */
@@ -2362,11 +2044,11 @@ async function mergeIn(root: GitTarget, source: string): Promise<MergePayload> {
  * Whether a failed merge left conflicts behind, or never started one.
  *
  * The pattern is Git's own summary sentence, and the fallback asks the index:
- * a merge that failed before touching the tree — a refused fast-forward, an
- * unrelated history — has no unmerged paths and must not be aborted, because
+ * a merge that failed before touching the tree —a refused fast-forward, an
+ * unrelated history —has no unmerged paths and must not be aborted, because
  * there is nothing to abort.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param run - the failed merge invocation.
  * @returns true when the merge is in progress with conflicts.
  */
@@ -2379,16 +2061,15 @@ async function conflictedMerge(root: GitTarget, run: GitRun): Promise<boolean> {
 /**
  * Describe why a merge was refused.
  *
- * The two coded cases are the ones the page can act on: a sandbox that forbids
- * writing at all, and a working tree with local changes in the way. Everything
- * else is Git's own first line — `refusing to merge unrelated histories` and
- * friends — which is more specific than anything this half could invent.
+ * The one coded case is the one the page can act on: a working tree with local
+ * changes in the way. Everything
+ * else is Git's own first line —`refusing to merge unrelated histories` and
+ * friends —which is more specific than anything this half could invent.
  *
  * @param run - the failed merge invocation.
  * @returns the payload the page renders.
  */
 function mergeFailure(run: GitRun): MergePayload {
-  if (run.denied === true) return { ok: false, ...coded('merge-denied'), reason: 'denied' }
   if (DIRTY_WORKTREE.test(diagnosticText(run))) {
     return { ok: false, ...coded('merge-dirty'), reason: 'dirty' }
   }
@@ -2398,9 +2079,8 @@ function mergeFailure(run: GitRun): MergePayload {
 /**
  * The Host's own one-line account of a merge that ran.
  *
- * Git says which of the three things happened in its own words — the two sides
- * were already equal, one moved up to the other, or a commit joined them — and
- * the account is built from that rather than from a guess.
+ * Git says which of the three things happened in its own words —the two sides
+ * were already equal, one moved up to the other, or a commit joined them —and
  *
  * @param run - the successful merge invocation.
  * @param source - the branch that was merged in.
@@ -2420,7 +2100,7 @@ function mergeSummary(run: GitRun, source: string): string {
  * "detached": `status --branch` spells the latter `HEAD (no branch)`, which this
  * half would then have to pattern-match. Exit code 1 is a detached HEAD.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @returns the short branch name.
  */
 async function currentBranch(root: GitTarget): Promise<string | null> {
@@ -2434,10 +2114,10 @@ async function currentBranch(root: GitTarget): Promise<string | null> {
  * The full name of the current branch's upstream, e.g. `origin/main`.
  *
  * `@{upstream}` is the only reader that answers this the way Git's own push and
- * pull do — including a renamed or unusually configured remote — instead of
+ * pull do —including a renamed or unusually configured remote —instead of
  * this half re-deriving `remote` + `merge` from the configuration.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @returns the upstream, or undefined when the branch has none.
  */
 async function upstreamOf(root: GitTarget): Promise<string | undefined> {
@@ -2450,7 +2130,7 @@ async function upstreamOf(root: GitTarget): Promise<string | undefined> {
 /**
  * The configured remote names, in configuration order.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @returns the remote names; empty when the repository has none.
  */
 async function remotesOf(root: GitTarget): Promise<readonly string[]> {
@@ -2463,26 +2143,23 @@ async function remotesOf(root: GitTarget): Promise<readonly string[]> {
  * The refusal each half of the round trip reports for a state it cannot move.
  *
  * Both halves ask the same three questions before either touches the network,
- * so the answers differ only in which operation they name — and that name is
+ * so the answers differ only in which operation they name —and that name is
  * the first word of a code, because the sentences belong to the page and read
  * differently in each language.
  */
 const ACTION_REFUSAL: Readonly<Record<'pull' | 'push', {
   readonly noCommits: FailureCode
   readonly detached: FailureCode
-  readonly denied: FailureCode
   readonly dirty: FailureCode
 }>> = {
   pull: {
     noCommits: 'pull-no-commits',
     detached: 'pull-detached',
-    denied: 'pull-denied',
     dirty: 'pull-dirty',
   },
   push: {
     noCommits: 'push-no-commits',
     detached: 'push-detached',
-    denied: 'push-denied',
     dirty: 'push-dirty',
   },
 }
@@ -2495,13 +2172,13 @@ type Handoff =
 /**
  * Resolve the repository and the branch a remote hand-off runs against.
  *
- * Pull and push ask the same three questions before either touches the network —
- * is there a repository, does it have a commit, and is HEAD on a branch — and
+ * Pull and push ask the same three questions before either touches the network —?
+ * is there a repository, does it have a commit, and is HEAD on a branch —and
  * must answer them in the same order, so the guard is taken once here and each
  * operation then names only itself. Without a branch there is nothing to hand
  * off, which is why the guard, not the caller, states that refusal.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param action - which operation is asking, for its own refusal messages.
  * @returns the repository root and its branch, or the payload to answer with.
  */
@@ -2533,7 +2210,7 @@ async function resolveHandoff(target: GitTarget, action: 'pull' | 'push'): Promi
  *
  * This is the one network operation with nothing to decide. It moves no branch,
  * no HEAD, and no working tree, so it cannot conflict, cannot be blocked by
- * uncommitted work, and cannot be refused by a detached or unborn HEAD — it is
+ * uncommitted work, and cannot be refused by a detached or unborn HEAD —it is
  * asked for by a reader who wants the page's idea of the remotes to be current,
  * and the answer is either "done" or why the network would not answer.
  *
@@ -2544,7 +2221,7 @@ async function resolveHandoff(target: GitTarget, action: 'pull' | 'push'): Promi
  * repository configured with `fetch.prune` gets it anyway, because this runs
  * Git's own defaults for everything it does not name.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a fetch was refused.
  */
 export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
@@ -2552,14 +2229,7 @@ export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  let run = await runGit(root, ['fetch', '--all'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
-  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
-  if (run.code !== 0 && authRefusal(diagnosticText(run)) !== null) {
-    // The helper could not start; the same fetch with the saved credential as
-    // a header is the one answer this half can supply without a shell.
-    const retried = await retryFetchWithStoredCredentials(root, ['fetch', '--all'], await remotesOf(root))
-    if (retried !== undefined) run = retried
-  }
+  const run = await runGit(root, ['fetch', '--all'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
   if (run.code !== 0) return fetchFailure(run)
   return { ok: true }
@@ -2568,20 +2238,17 @@ export async function fetchRemotes(target: GitTarget): Promise<FetchPayload> {
 /**
  * Describe why a fetch was refused.
  *
- * Two cases, and the second is the one worth separating: a sandbox that forbids
- * writing at all, and credentials the remote rejected. Everything else is Git's
- * own first line — `Could not resolve host` and friends — which is more specific
+ * One case is worth separating: credentials the remote rejected. Everything
+ * else is Git's
+ * own first line —`Could not resolve host` and friends —which is more specific
  * than anything this half could invent.
  *
  * @param run - the failed fetch invocation.
  * @returns the payload the page renders.
  */
 function fetchFailure(run: GitRun): FetchPayload {
-  if (run.denied === true) return { ok: false, ...coded('fetch-denied'), reason: 'denied' }
-
   const auth = authRefusal(diagnosticText(run))
   if (auth !== null) return { ok: false, ...auth, reason: 'auth' }
-
   return { ok: false, ...refusalOf(run), reason: 'error' }
 }
 
@@ -2602,12 +2269,12 @@ function fetchFailure(run: GitRun): FetchPayload {
  * `@{upstream}` resolves to. Every other ref of that remote comes along, which is
  * the same trade `fetchRemotes` makes for the whole repository.
  *
- * A repository with nothing to refresh — no commit, a detached HEAD, or a branch
- * that tracks nothing — answers `skipped` rather than an error: this runs after a
+ * A repository with nothing to refresh —no commit, a detached HEAD, or a branch
+ * that tracks nothing —answers `skipped` rather than an error: this runs after a
  * switch that has already been reported, and none of the three leaves the reader
  * anything to act on.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including `skipped` when there was nothing to fetch.
  */
 export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPayload> {
@@ -2623,12 +2290,7 @@ export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPay
   const split = splitRemote(await remotesOf(root), upstream)
   if (split === null) return { ok: true, skipped: true }
 
-  let run = await runGit(root, ['fetch', split.remote], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
-  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
-  if (run.code !== 0 && authRefusal(diagnosticText(run)) !== null) {
-    const retried = await retryFetchWithStoredCredentials(root, ['fetch', split.remote], [split.remote])
-    if (retried !== undefined) run = retried
-  }
+  const run = await runGit(root, ['fetch', split.remote], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
   if (run.code !== 0) return fetchFailure(run)
   return { ok: true }
@@ -2641,10 +2303,10 @@ export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPay
  * `git pull` would invent a merge commit (a commit nobody wrote a message for)
  * and, when the two sides conflict, would leave the working tree in a merge this
  * page has no way to finish or abort. A fast-forward either applies cleanly or
- * is refused with the one thing the user can act on — that the branches have
+ * is refused with the one thing the user can act on —that the branches have
  * diverged.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a pull was refused.
  */
 export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
@@ -2663,16 +2325,7 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
 
   const run = await runGit(handoff.root, ['pull', '--ff-only'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'pull' }
-  if (run.code !== 0) {
-    const failure = syncFailure(run, 'pull')
-    if (failure.failure?.code === 'auth-helper') {
-      const retried = await retryWithStoredCredential(
-        handoff.root, ['pull', '--ff-only'], 'pull', handoff.branch, upstream,
-      )
-      if (retried !== undefined) return retried
-    }
-    return failure
-  }
+  if (run.code !== 0) return syncFailure(run, 'pull')
 
   return syncSuccess(run, 'pull', upstream)
 }
@@ -2686,7 +2339,7 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
  * upstream is what the user meant; with none or several, the answer is a
  * question this page cannot answer, and it says so.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a push was refused.
  */
 export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
@@ -2696,7 +2349,6 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
   const { root, branch } = handoff
   let ref = await upstreamOf(root)
   let args: readonly string[] = ['push']
-  let remoteName: string | undefined
   if (ref === undefined) {
     const remotes = await remotesOf(root)
     const remote = remotes[0]
@@ -2711,51 +2363,60 @@ export async function pushToRemote(target: GitTarget): Promise<SyncPayload> {
         action: 'push',
       }
     }
-    remoteName = remote
     ref = `${remote}/${branch}`
     args = ['push', '--set-upstream', remote, branch]
   }
 
   const run = await runGit(root, args, { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'push' }
-  if (run.code !== 0) {
-    const failure = syncFailure(run, 'push')
-    if (failure.failure?.code === 'auth-helper') {
-      const retried = await retryWithStoredCredential(
-        root, args, 'push', branch, ref, remoteName,
-      )
-      if (retried !== undefined) return retried
-    }
-    return failure
-  }
+  if (run.code !== 0) return syncFailure(run, 'push')
 
   return syncSuccess(run, 'push', ref)
 }
 
 /**
+ * The Host's own one-line account of a pull or a push that ran.
+ *
+ * Git words the three outcomes itself — already in step, moved forward, or
+ * updated — and the page has one sentence per operation, so the interesting
+ * half is only whether anything moved.
+ *
+ * @param run - the successful invocation.
+ * @param action - which operation ran.
+ * @param label - what the summary calls the other side.
+ * @returns the payload the page renders.
+ */
+function syncSuccess(run: GitRun, action: 'pull' | 'push', label: string): SyncPayload {
+  const output = `${run.stdout}\n${run.stderr}`
+  if (action === 'pull') {
+    return {
+      ok: true,
+      action,
+      summary: /Already up[ -]to[ -]date/i.test(output) ? `Already up to date with ${label}` : `Pulled from ${label}`,
+    }
+  }
+  return {
+    ok: true,
+    action,
+    summary: /Everything up[ -]to[ -]date/i.test(output) ? `Everything up to date with ${label}` : `Pushed to ${label}`,
+  }
+}
+
+/**
  * Describe why a pull or a push was refused.
  *
- * The five cases worth separating are the ones the user can act on: a sandbox
- * that forbids writing at all, a divergent history, a dirty working tree,
- * credentials the remote rejected, and a credential helper that a confined
- * sandbox kept from starting at all. Everything else is Git's own first line,
- * which is more specific than anything this half could invent.
+ * The cases worth separating are the ones the user can act on: a divergent
+ * history, a dirty working tree, and credentials the remote rejected.
+ * Everything else is Git's own first line, which is more specific than anything
+ * this half could invent.
  *
  * @param run - the failed invocation.
  * @param action - which operation failed, for the message.
  * @returns the payload the page renders.
  */
 function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
-  if (run.denied === true) {
-    return { ok: false, ...coded(ACTION_REFUSAL[action].denied), reason: 'denied', action }
-  }
-
   // Git's own words, for every case below.
   const text = diagnosticText(run)
-
-  const auth = authRefusal(text)
-  if (auth !== null) return { ok: false, ...auth, reason: 'auth', action }
-
   if (DIRTY_WORKTREE.test(text)) {
     return { ok: false, ...coded(ACTION_REFUSAL[action].dirty), reason: 'dirty', action }
   }
@@ -2771,323 +2432,6 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
   }
 
   return { ok: false, ...refusalOf(run), reason: 'error', action }
-}
-
-/** One configured credential helper, invoked without Git's shell bridge. */
-interface CredentialHelper {
-  /** The helper executable, as a path the OS can start directly. */
-  readonly executable: string
-  /** Arguments configured beside it. */
-  readonly args: readonly string[]
-}
-
-/** One credential a helper handed back. */
-interface StoredCredential {
-  readonly username: string
-  readonly password: string
-}
-
-/**
- * Split one `credential.helper` value into an executable and its arguments.
- *
- * Git starts a helper through the shell, which is exactly what a confined
- * Windows sandbox can deny. This reader starts the executable directly, so a
- * value that needs the shell — a `!` snippet, a variable, a glob, redirection —
- * is not one it can honor and is skipped.
- *
- * @param value - one configured helper value.
- * @returns the executable and arguments, or undefined when it needs a shell.
- */
-function helperInvocation(value: string): { executable: string; args: string[] } | undefined {
-  const trimmed = value.trim()
-  if (trimmed === '' || trimmed.startsWith('!')) return undefined
-  if (/['"`$~%;&|<>()]/.test(trimmed)) return undefined
-  const [executable, ...args] = trimmed.split(/\s+/)
-  if (executable === undefined || executable === '') return undefined
-  return { executable, args }
-}
-
-/**
- * Where a bare helper name's executable lives.
- *
- * Git looks for `git-credential-<name>` on its exec path, and the Windows
- * helpers (Git Credential Manager among them) also sit in the directory beside
- * it; a PATH entry is the last resort, for an install that put it there.
- *
- * @param executable - the configured value's first word.
- * @param execPath - `git --exec-path`, when the repository answered it.
- * @returns the existing executable path, or undefined.
- */
-function helperExecutable(executable: string, execPath: string | undefined): string | undefined {
-  const absolute = /^(?:[A-Za-z]:[\\/]|[\\/])/.test(executable)
-  if (absolute) return existsSync(executable) ? executable : undefined
-
-  const name = `git-credential-${executable}`
-  const fileNames = process.platform === 'win32' ? [`${name}.exe`, name] : [name]
-  const directories: string[] = []
-  if (execPath !== undefined && execPath !== '') {
-    directories.push(execPath, join(execPath, '..', '..', 'bin'))
-  }
-  directories.push(...(process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':'))
-  for (const directory of directories) {
-    if (directory === '') continue
-    for (const fileName of fileNames) {
-      const candidate = join(directory, fileName)
-      if (existsSync(candidate)) return candidate
-    }
-  }
-  return undefined
-}
-
-/**
- * The credential helpers this repository's configuration names, in order.
- *
- * `git config --get-all` reads every level (system, global, local), which is the
- * same order Git would ask them in; helpers that need a shell are dropped
- * because the point of reading them here is to avoid one.
- *
- * @param target - the shell seam and the directory to ask.
- * @returns the helpers that can be started directly.
- */
-async function credentialHelpers(target: GitTarget): Promise<readonly CredentialHelper[]> {
-  const configured = await runGit(target, ['config', '--get-all', 'credential.helper'])
-  if (configured.code !== 0) return []
-
-  const execPathRun = await runGit(target, ['--exec-path'])
-  const execPath = execPathRun.code === 0 ? execPathRun.stdout.trim() : undefined
-
-  const helpers: CredentialHelper[] = []
-  const seen = new Set<string>()
-  for (const line of configured.stdout.split('\n')) {
-    const invocation = helperInvocation(line)
-    if (invocation === undefined) continue
-    const executable = helperExecutable(invocation.executable, execPath)
-    if (executable === undefined || seen.has(executable)) continue
-    seen.add(executable)
-    helpers.push({ executable, args: invocation.args })
-  }
-  return helpers
-}
-
-/**
- * Read the username and password out of one helper's answer.
- *
- * @param text - the helper's standard output.
- * @returns the pair, or undefined when the helper supplied no credential.
- */
-function parseCredential(text: string): StoredCredential | undefined {
-  let username = ''
-  let password = ''
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (line.startsWith('username=')) username = line.slice('username='.length)
-    else if (line.startsWith('password=')) password = line.slice('password='.length)
-  }
-  return username === '' || password === '' ? undefined : { username, password }
-}
-
-/**
- * Ask this machine's credential helpers for one host's stored credential.
- *
- * The helpers are started directly, so this works where Git's own helper
- * invocation cannot: Git for Windows starts every helper through its bundled
- * MSYS shell, and a sandbox that denies that shell its pipe leaves the helper
- * unreachable even though the credential is on the machine.
- *
- * @param target - the shell seam and the directory to run in.
- * @param host - the HTTPS host the credential belongs to.
- * @returns the credential, or undefined when no helper holds one.
- */
-async function storedCredential(
-  target: GitTarget,
-  host: string,
-): Promise<StoredCredential | undefined> {
-  for (const helper of await credentialHelpers(target)) {
-    const run = await invoke(target, [helper.executable, ...helper.args, 'get'], {
-      timeoutMs: CREDENTIAL_TIMEOUT_MS,
-      stdin: `protocol=https\nhost=${host}\n\n`,
-      env: { GCM_INTERACTIVE: 'never' },
-    })
-    if (run.code !== 0) continue
-    const credential = parseCredential(run.stdout)
-    if (credential !== undefined) return credential
-  }
-  return undefined
-}
-
-/**
- * The remote a branch hands off to, as its configuration names it.
- *
- * @param root - the repository root, with the session's file policy.
- * @param branch - the branch being handed off.
- * @returns the remote name, or undefined when the branch tracks the local tree.
- */
-async function remoteOfBranch(root: GitTarget, branch: string): Promise<string | undefined> {
-  const run = await runGit(root, ['config', '--get', `branch.${branch}.remote`])
-  if (run.code !== 0) return undefined
-  const name = run.stdout.trim()
-  return name === '' || name === '.' ? undefined : name
-}
-
-/**
- * The URL one configured remote hands off to.
- *
- * @param root - the repository root, with the session's file policy.
- * @param remote - the remote's name.
- * @returns the URL, or undefined when it cannot be read.
- */
-async function remoteUrlOf(root: GitTarget, remote: string): Promise<string | undefined> {
-  const run = await runGit(root, ['remote', 'get-url', remote])
-  if (run.code !== 0) return undefined
-  const url = run.stdout.trim()
-  return url === '' ? undefined : url
-}
-
-/**
- * The host of an HTTPS remote URL.
- *
- * @param url - the remote's configured URL.
- * @returns the host, or undefined for any transport a header cannot answer.
- */
-function httpsHost(url: string): string | undefined {
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' ? parsed.host : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * The payload for a hand-off that completed.
- *
- * @param run - the successful invocation.
- * @param action - which operation completed.
- * @param label - what the summary calls the other side.
- * @returns the payload the page renders.
- */
-function syncSuccess(run: GitRun, action: 'pull' | 'push', label: string): SyncPayload {
-  const output = `${run.stdout}\n${run.stderr}`
-  if (action === 'pull') {
-    const upToDate = /Already up[ -]to[ -]date/i.test(output)
-    return { ok: true, action, summary: upToDate ? `Already up to date with ${label}` : `Pulled from ${label}` }
-  }
-  const upToDate = /Everything up[ -]to[ -]date/i.test(output)
-  return { ok: true, action, summary: upToDate ? `Everything up to date with ${label}` : `Pushed to ${label}` }
-}
-
-/**
- * The Git configuration environment that supplies saved credentials as headers.
- *
- * Each host with a readable credential becomes one `http.<url>.extraHeader`
- * entry, expressed through Git's environment-configuration channel so nothing
- * is written to a file and no helper is started again. Multiple hosts share one
- * invocation: `GIT_CONFIG_COUNT` is exactly the number of entries, and a URL
- * prefix scopes each header to its own host, so a `fetch --all` can carry the
- * credential for every HTTPS remote at once.
- *
- * @param target - the shell seam and the directory to run in.
- * @param hosts - the HTTPS hosts to collect credentials for.
- * @returns the environment entries, or undefined when no host yields a credential.
- */
-async function credentialHeaderEnv(
-  target: GitTarget,
-  hosts: readonly string[],
-): Promise<Record<string, string> | undefined> {
-  const entries: [key: string, value: string][] = []
-  for (const host of hosts) {
-    const credential = await storedCredential(target, host)
-    if (credential === undefined) continue
-    const pair = `${credential.username}:${credential.password}`
-    entries.push([
-      `http.https://${host}/.extraHeader`,
-      `Authorization: Basic ${Buffer.from(pair).toString('base64')}`,
-    ])
-  }
-  if (entries.length === 0) return undefined
-  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(entries.length) }
-  entries.forEach(([key, value], index) => {
-    env[`GIT_CONFIG_KEY_${index}`] = key
-    env[`GIT_CONFIG_VALUE_${index}`] = value
-  })
-  return env
-}
-
-/**
- * Retry one network hand-off with the credential the machine already holds.
- *
- * Git for Windows starts every credential helper through its bundled MSYS
- * shell, and the Windows sandbox can deny that shell the pipe it creates at
- * startup — the helper then never runs even though a credential is stored. The
- * helper executable can be asked directly, and its answer can travel to Git as
- * an HTTP header: `http.extraHeader` needs no helper and no shell, and the
- * transport process itself is a plain Windows executable.
- *
- * Only the `auth-helper` refusal reaches this path, and only an HTTPS remote
- * can be answered this way; the credential itself is never persisted, never
- * printed, and travels only in the child's environment.
- *
- * @param target - the repository root, with the session's file policy.
- * @param args - the network command to repeat.
- * @param action - which operation is retried, for the payload.
- * @param branch - the branch being handed off.
- * @param label - what the summary calls the other side.
- * @param knownRemote - the remote an upstream-less branch would push to.
- * @returns the retried outcome, or undefined when no credential could be read.
- */
-async function retryWithStoredCredential(
-  target: GitTarget,
-  args: readonly string[],
-  action: 'pull' | 'push',
-  branch: string,
-  label: string,
-  knownRemote?: string,
-): Promise<SyncPayload | undefined> {
-  const remote = knownRemote ?? (await remoteOfBranch(target, branch))
-  if (remote === undefined) return undefined
-  const url = await remoteUrlOf(target, remote)
-  if (url === undefined) return undefined
-  const host = httpsHost(url)
-  if (host === undefined) return undefined
-
-  const env = await credentialHeaderEnv(target, [host])
-  if (env === undefined) return undefined
-  const run = await runGit(target, args, { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env })
-  if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action }
-  if (run.code !== 0) return syncFailure(run, action)
-  return syncSuccess(run, action, label)
-}
-
-/**
- * Retry one fetch with the credentials the machine already holds.
- *
- * A fetch has no branch or label to shape a payload around, but it fails for
- * the same sandbox reason a push does — and until now it was the one network
- * route with no second attempt, so a reader whose HTTPS remote needs a saved
- * credential saw an authentication refusal on Fetch while Pull and Push went
- * through. Every remote's host is consulted, because `fetch --all` crosses all
- * of them.
- *
- * @param target - the repository root, with the session's file policy.
- * @param args - the fetch command to repeat.
- * @param remotes - the remotes that command reaches.
- * @returns the retried invocation, or undefined when no credential could be read.
- */
-async function retryFetchWithStoredCredentials(
-  target: GitTarget,
-  args: readonly string[],
-  remotes: readonly string[],
-): Promise<GitRun | undefined> {
-  const hosts: string[] = []
-  for (const remote of remotes) {
-    const url = await remoteUrlOf(target, remote)
-    const host = url === undefined ? undefined : httpsHost(url)
-    if (host !== undefined && !hosts.includes(host)) hosts.push(host)
-  }
-  if (hosts.length === 0) return undefined
-  const env = await credentialHeaderEnv(target, hosts)
-  if (env === undefined) return undefined
-  return runGit(target, args, { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env })
 }
 
 /**
@@ -3114,9 +2458,6 @@ const writeQueues = new Map<string, Promise<unknown>>()
  * @returns whatever the write answered.
  */
 async function withRepoWrite<T>(root: string, run: () => Promise<T>): Promise<T> {
-  // A write is exactly what invalidates the resolved-repository cache: the next
-  // read must ask Git again rather than paint the state this write replaced.
-  forgetRepoRoot(root)
   const previous = writeQueues.get(root) ?? Promise.resolve()
   const next = previous.catch(() => undefined).then(run)
   writeQueues.set(root, next)
@@ -3135,7 +2476,7 @@ async function withRepoWrite<T>(root: string, run: () => Promise<T>): Promise<T>
  * The status is read inside the queue, after the write, so the lists the page
  * paints are the state that write produced rather than a read that raced it.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or why it could not be read.
  */
 async function indexAnswer(target: GitTarget): Promise<IndexPayload> {
@@ -3158,7 +2499,7 @@ async function indexAnswer(target: GitTarget): Promise<IndexPayload> {
  * call cover both without deciding from the row the page drew. `--` ends the
  * options so a path that begins with a dash is a path.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param path - the repository-relative path to stage.
  * @returns the fresh status, or the refusal.
  */
@@ -3170,7 +2511,6 @@ export async function stagePath(target: GitTarget, path: string): Promise<IndexP
   return withRepoWrite(repo.root, async () => {
     const add = await runGit(root, ['add', '-A', '--', literalPath(path)])
     if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
-    if (add.denied === true) return { ok: false, ...coded('stage-denied'), reason: 'denied' }
     if (add.code !== 0) return { ok: false, ...refusalOf(add), reason: 'error' }
     return indexAnswer(target)
   })
@@ -3181,15 +2521,14 @@ export async function stagePath(target: GitTarget, path: string): Promise<IndexP
  *
  * `git restore --staged` is the normal answer: it puts the index entry back to
  * HEAD and leaves the file on disk alone, which is exactly "unstage". An unborn
- * branch has no HEAD to restore from, so its index entries are removed instead —
+ * branch has no HEAD to restore from, so its index entries are removed instead —?
  * the file becomes untracked again, which is what it was before it was staged.
  *
- * A staged rename is two index entries — the new path added and the old one
- * removed — so the row's source path is restored in the same call. Restoring only
+ * A staged rename is two index entries —the new path added and the old one
+ * removed —so the row's source path is restored in the same call. Restoring only
  * the destination would leave the deletion of the source staged: half a rename,
  * which is not a state the row it came from can describe.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
  * @param path - the repository-relative path to unstage.
  * @param origPath - the rename/copy source, when the row has one.
  * @returns the fresh status, or the refusal.
@@ -3209,7 +2548,6 @@ export async function unstagePath(
       ? await runGit(root, ['restore', '--staged', '--', ...paths])
       : await runGit(root, ['rm', '--cached', '--', ...paths])
     if (restore.failure !== undefined) return { ok: false, error: restore.failure, reason: 'error' }
-    if (restore.denied === true) return { ok: false, ...coded('unstage-denied'), reason: 'denied' }
     if (restore.code !== 0) return { ok: false, ...refusalOf(restore), reason: 'error' }
     return indexAnswer(target)
   })
@@ -3218,13 +2556,13 @@ export async function unstagePath(
 /**
  * Discard one path's unstaged change.
  *
- * A tracked path is restored from the index — `git restore --worktree` — so a
+ * A tracked path is restored from the index —`git restore --worktree` —so a
  * file that is staged and then edited again keeps the staged half and loses only
  * the worktree half; the index is never touched. An untracked path has no index
  * entry to restore, so `git clean -f` deletes the file itself instead. Both are
  * destructive in the worktree, which is why the page asks before calling this.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param path - the repository-relative path to discard.
  * @param untracked - whether the path is untracked, which is deleted rather than restored.
  * @returns the fresh status, or the refusal.
@@ -3243,7 +2581,6 @@ export async function discardPath(
       ? await runGit(root, ['clean', '-f', '--', literalPath(path)])
       : await runGit(root, ['restore', '--worktree', '--', literalPath(path)])
     if (discard.failure !== undefined) return { ok: false, error: discard.failure, reason: 'error' }
-    if (discard.denied === true) return { ok: false, ...coded('discard-denied'), reason: 'denied' }
     if (discard.code !== 0) return { ok: false, ...refusalOf(discard), reason: 'error' }
     return indexAnswer(target)
   })
@@ -3264,13 +2601,12 @@ const PATHSPEC_STDIN = ['--pathspec-from-file=-', '--pathspec-file-nul'] as cons
 
 /**
  * The changed paths under one folder, or the refusal that stopped the read.
- *
  * The status is read inside the write queue, so a folder write acts on the paths
  * the repository holds when the write runs rather than on the page's possibly
  * older list. A folder route names a directory, never its files: a tree with
  * thousands of untracked paths would otherwise have to cross the request body.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @param folder - the repository-relative folder path, or null for every path.
  * @returns the files under the folder, or the failure payload to answer with.
  */
@@ -3285,9 +2621,6 @@ async function folderStatus(
   if (status.failure !== undefined) {
     return { ok: false, payload: { ok: false, error: status.failure, reason: 'error' } }
   }
-  if (status.denied === true) {
-    return { ok: false, payload: { ok: false, ...coded('git-denied'), reason: 'denied' } }
-  }
   if (status.code !== 0) {
     return { ok: false, payload: { ok: false, ...refusalOf(status), reason: 'error' } }
   }
@@ -3301,17 +2634,14 @@ async function folderStatus(
 /**
  * The failure one folder command amounts to, or null when it succeeded.
  *
- * Every folder write shares the same three checks — transport, sandbox denial,
- * and Git's own refusal — and differs only in the coded refusal a denial maps
- * to, so the check lives here once.
+ * Every folder write shares the same two checks — transport and Git's own
+ * refusal — so the check lives here once.
  *
  * @param run - the command's outcome.
- * @param denied - the coded refusal a sandbox denial becomes.
  * @returns the failure payload, or null when the command succeeded.
  */
-function writeFailure(run: GitRun, denied: FailureCode): IndexPayload | null {
+function writeFailure(run: GitRun): IndexPayload | null {
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
-  if (run.denied === true) return { ok: false, ...coded(denied), reason: 'denied' }
   if (run.code !== 0) return { ok: false, ...refusalOf(run), reason: 'error' }
   return null
 }
@@ -3321,11 +2651,11 @@ function writeFailure(run: GitRun, denied: FailureCode): IndexPayload | null {
  *
  * The paths come from the status the queue reads, not from the request: the page
  * names a folder, and the Host resolves which paths under it are still waiting
- * in the worktree. Conflicted paths are left out on purpose — `git add` on one
+ * in the worktree. Conflicted paths are left out on purpose —`git add` on one
  * means "resolved", and a folder action cannot know that the reader finished
  * editing every conflict it contains.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param folder - the repository-relative folder to stage, or null for every path.
  * @returns the fresh status, or the refusal.
  */
@@ -3342,7 +2672,7 @@ async function stageScope(target: GitTarget, folder: string | null): Promise<Ind
       .map(file => file.path)
     if (paths.length === 0) return indexAnswer(target)
     const add = await runGit(root, ['add', '-A', ...PATHSPEC_STDIN], { stdin: pathspecInput(paths) })
-    return writeFailure(add, 'stage-denied') ?? indexAnswer(target)
+    return writeFailure(add) ?? indexAnswer(target)
   })
 }
 
@@ -3354,7 +2684,7 @@ async function stageScope(target: GitTarget, folder: string | null): Promise<Ind
  * to restore from, so its index entries are removed instead and the files become
  * untracked again.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param folder - the repository-relative folder to unstage, or null for every path.
  * @returns the fresh status, or the refusal.
  */
@@ -3373,7 +2703,7 @@ async function unstageScope(target: GitTarget, folder: string | null): Promise<I
     const restore = repo.hasHead
       ? await runGit(root, ['restore', '--staged', ...PATHSPEC_STDIN], { stdin: pathspecInput(paths) })
       : await runGit(root, ['rm', '--cached', ...PATHSPEC_STDIN], { stdin: pathspecInput(paths) })
-    return writeFailure(restore, 'unstage-denied') ?? indexAnswer(target)
+    return writeFailure(restore) ?? indexAnswer(target)
   })
 }
 
@@ -3385,10 +2715,10 @@ async function unstageScope(target: GitTarget, folder: string | null): Promise<I
  * untracked path is deleted, and because `git clean` takes no pathspec-from-file
  * the folder itself is the pathspec: it removes exactly the untracked paths under
  * the folder the list was drawn from, while ignored files stay untouched unless
- * they were asked for (they never are). Conflicted paths are left alone — their
+ * they were asked for (they never are). Conflicted paths are left alone —their
  * worktree state is the reader's resolution in progress.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param folder - the repository-relative folder to discard, or null for every path.
  * @returns the fresh status, or the refusal.
  */
@@ -3411,14 +2741,14 @@ async function discardScope(target: GitTarget, folder: string | null): Promise<I
         ['restore', '--worktree', ...PATHSPEC_STDIN],
         { stdin: pathspecInput(tracked) },
       )
-      const failure = writeFailure(restore, 'discard-denied')
+      const failure = writeFailure(restore)
       if (failure !== null) return failure
     }
     if (untracked) {
       const clean = folder === null
         ? await runGit(root, ['clean', '-f', '-d'])
         : await runGit(root, ['clean', '-f', '-d', '--', literalPath(folder)])
-      const failure = writeFailure(clean, 'discard-denied')
+      const failure = writeFailure(clean)
       if (failure !== null) return failure
     }
     return indexAnswer(target)
@@ -3436,7 +2766,7 @@ export function stageFolder(target: GitTarget, folder: string): Promise<IndexPay
  * The page's header action names no directory: it stands for the whole worktree
  * list, and the Host resolves that list from the status it reads in the queue.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or the refusal.
  */
 export function stageAll(target: GitTarget): Promise<IndexPayload> {
@@ -3451,7 +2781,7 @@ export function unstageFolder(target: GitTarget, folder: string): Promise<IndexP
 /**
  * Move every staged change in the repository out of the index.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or the refusal.
  */
 export function unstageAll(target: GitTarget): Promise<IndexPayload> {
@@ -3470,7 +2800,7 @@ export function discardFolder(target: GitTarget, folder: string): Promise<IndexP
  * without a pathspec; ignored files are still left alone because the command is
  * never given `-x`.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or the refusal.
  */
 export function discardAll(target: GitTarget): Promise<IndexPayload> {
@@ -3480,10 +2810,10 @@ export function discardAll(target: GitTarget): Promise<IndexPayload> {
 /**
  * Read back the commit Git just wrote, the same way the history reads one.
  *
- * A failure here is not a failed commit — the commit is already made — so the
+ * A failure here is not a failed commit —the commit is already made —so the
  * answer stays a success and simply names nothing.
  *
- * @param root - the repository root, with the session's file policy.
+ * @param root - the repository root and the process substrate.
  * @returns the success payload, with the summary when it could be read.
  */
 async function readMadeCommit(root: GitTarget): Promise<CommitAllPayload> {
@@ -3498,18 +2828,18 @@ async function readMadeCommit(root: GitTarget): Promise<CommitAllPayload> {
  *
  * The tree is read before it is touched, and both refusals that matter come out
  * of that read. A tree with nothing in it is not a commit that Git would fail to
- * make — "nothing to commit" is a state, and the answer says so as one. And a
+ * make —?nothing to commit" is a state, and the answer says so as one. And a
  * tree holding an unmerged path is refused before `git add -A` runs: staging a
  * conflicted file resolves it as far as Git is concerned, so a commit made then
  * would record conflict markers as the resolution, which is a commit nobody can
  * mean and one this page has no way to take back.
  *
- * What is committed is deliberately everything the page is listing — tracked
- * edits, deletions, and untracked files alike — because that is the decision
+ * What is committed is deliberately everything the page is listing —tracked
+ * edits, deletions, and untracked files alike —because that is the decision
  * this route's button offers. The message is the route's to validate; by the
  * time it arrives here it is non-empty text.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param message - the commit message, already trimmed and checked by the route.
  * @returns the outcome, including the reason a commit did not happen.
  */
@@ -3557,7 +2887,7 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
  * remain are the ones Git would make anyway, worded so the page can say which
  * happened: an unfinished merge, or an index with nothing in it to record.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param message - the commit message, already trimmed and checked by the route.
  * @returns the outcome, including the reason a commit did not happen.
  */
@@ -3600,14 +2930,12 @@ function conflictedCommit(): CommitAllPayload {
 /**
  * Describe why a commit was refused.
  *
- * The sandbox is the refusal the user can act on: under a `read-only` mode Git
- * never ran at all, and the seam is what says so. The other cases worth
- * separating are races against the read above — a merge that was aborted after
- * it, and a tree another process emptied — and a missing author identity, which
- * Git reports as a state the user can fix rather than as a fault of this
- * repository. Everything else, a refusing hook and a signing failure among them,
- * is Git's own first line, which is more specific than anything this half could
- * invent.
+ * The cases worth separating are races against the read above — a merge that was
+ * aborted after it, and a tree another process emptied — and a missing author
+ * identity, which Git reports as a state the user can fix rather than as a fault
+ * of this repository. Everything else, a refusing hook and a signing failure
+ * among them, is Git's own first line, which is more specific than anything this
+ * half could invent.
  *
  * @param run - the failed invocation.
  * @param scope - which commit was asked for, so "nothing to commit" says which
@@ -3615,10 +2943,6 @@ function conflictedCommit(): CommitAllPayload {
  * @returns the payload the page renders.
  */
 function commitFailure(run: GitRun, scope: CommitScope = 'all'): CommitAllPayload {
-  if (run.denied === true) {
-    return { ok: false, ...coded('commit-denied'), reason: 'denied' }
-  }
-
   const text = diagnosticText(run)
   if (/unmerged|merging is not possible|you have unmerged files/i.test(text)) return conflictedCommit()
   if (/nothing to commit|nothing added to commit|no changes added to commit/i.test(text)) {

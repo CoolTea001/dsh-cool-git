@@ -1,32 +1,31 @@
 /**
  * The Host half's Git reader, and its four writers.
  *
- * Every fact about the repository is produced by running the real `git` binary
- * through the `shell` capability seam — never by reading `.git` by hand. That
- * keeps this plugin honest about the things Git is authoritative for (the index,
- * renames, merge state, `core.*` configuration, `.gitignore`) and inherits the
- * session's own file policy: `routes.ts` resolves the calling session's mode and
- * workspace root, every command carries that policy on its request, and the Git
- * tab can therefore never exceed what the session may already do. Without it the
- * seam would fall back to the deployment's mode and root — a `read-only` default
- * under a `workspace-write` session — and refuse the very writes the session
- * allows.
+ * Every fact about the repository is produced by running the real `git` binary —
+ * never by reading `.git` by hand. That keeps this plugin honest about the things
+ * Git is authoritative for (the index, renames, merge state, `core.*`
+ * configuration, `.gitignore`).
+ *
+ * Git runs as an argv on the Host's `subprocess` service: no shell, no
+ * interpreter, and no sandbox between this module and the process. That is a
+ * deliberate trade — Git runs with the Host's own rights, so the session's file
+ * policy does not apply to it — made because a sandboxed invocation costs most of
+ * a second on Windows, while every path a command carries comes from Git's own
+ * output and every command runs inside the repository `routes.ts` resolved.
  *
  * Reading is the bulk of this module. Six commands change something — the
  * branch switch, the merge, the fetch, the fast-forward pull, the push, and the
- * commit — and each reports a sandbox refusal as such rather than as a Git
- * error, because under a `read-only` mode that refusal is the whole answer. The
- * commit is the one that writes the index as well as the history, which is why
- * it is a single call rather than a stage the page could leave half-finished.
+ * commit — and each reports Git's own refusal. The commit is the one that writes
+ * the index as well as the history, which is why it is a single call rather than
+ * a stage the page could leave half-finished.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
  *   - `--no-pager` on every command: without it a pager would hold the pipe open
  *     and the command would sit there until its timeout.
  *   - `GIT_OPTIONAL_LOCKS=0`: `git status` otherwise refreshes the index, which
- *     is a write. Every read must also work in a `read-only` sandbox — and taking
- *     a lock it does not need would fight the agent's own `git` calls in the same
- *     repository.
+ *     is a write, and taking a lock it does not need would fight the agent's own
+ *     `git` calls in the same repository.
  *   - `-c core.quotePath=false`: Git otherwise C-quotes any path holding a
  *     non-ASCII byte (`"\346\226\207.md"`), and those paths then cannot be
  *     matched back to the ones `status` reported.
@@ -47,39 +46,20 @@ export declare const DEFAULT_LOG_LIMIT = 60;
  */
 export declare const MAX_BRANCHES = 200;
 /**
- * Everything one request needs to run Git.
+ * Everything one request needs to run Git: the process substrate and the
+ * directory it runs in.
  *
- * The file policy travels with the shell rather than being re-derived per
- * command: the seam applies the policy a request carries, and an agentless call
- * would otherwise fall back to the deployment's own mode and root — which is
- * how a `workspace-write` session ends up refused a write it is allowed to make.
- * See `routes.ts` for where the policy is resolved from the session.
+ * Git is spawned as an argv on `subprocess` —never through `ctx.shell` —so no
+ * sandbox, interpreter, or shell quoting sits between this module and the
+ * process. That also means the session's file policy does not apply here: Git
+ * runs with the Host's own rights, inside the repository this module resolved,
+ * with every path taken from Git's own output.
  */
 export interface GitTarget {
-    /** The `shell` capability service. */
-    readonly shell: any;
+    /** The `subprocess` capability service. */
+    readonly subprocess: any;
     /** The directory the command runs in. */
     readonly workdir: string;
-    /**
-     * The calling session's resolved file policy, when the mounted executor
-     * confines. Absent for an unconfined executor, or a request with no session.
-     */
-    readonly sandboxPolicy?: unknown;
-    /**
-     * The process substrate to run Git on directly, present only when the
-     * resolved policy confines nothing.
-     *
-     * A confined call must go through the shell seam: that is the only path
-     * through which the sandbox is applied. When the session is unconfined — the
-     * executor does not sandbox at all, or the session resolved to
-     * `danger-full-access` — the seam would only wrap the command in a shell that
-     * confines nothing, and the wrapper is what costs a full process launch per
-     * Git command (see `invoke`). `routes.ts` decides this per request and passes
-     * the substrate it read from the Host; it is the same substrate the seam
-     * spawns on, so a remote-execution composition keeps running Git where the
-     * shell runs.
-     */
-    readonly subprocess?: any;
 }
 /** The repository root one request answers for, or why there is none. */
 export type RepositoryRoot = {
@@ -97,14 +77,14 @@ export type RepositoryRoot = {
  * is about to make. This is the same `rev-parse` every other route starts
  * with, so the root it names is the same root they use.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the root, or the coded refusal and its reason.
  */
 export declare function readRepositoryRoot(target: GitTarget): Promise<RepositoryRoot>;
 /**
  * Read the current branch, its upstream, and every changed path.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the status payload the page renders its sidebar from.
  */
 export declare function readStatus(target: GitTarget): Promise<StatusPayload>;
@@ -115,7 +95,7 @@ export declare function readStatus(target: GitTarget): Promise<StatusPayload>;
  * page shows its empty state instead of `fatal: your current branch ... does
  * not have any commits yet`.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param limit - how many commits to return; clamped to {@link MAX_LOG_LIMIT}.
  * @returns the log payload.
  */
@@ -130,7 +110,7 @@ export declare function readLog(target: GitTarget, limit: number): Promise<LogPa
  * parent to diff against, so it keeps `show`, which prints the whole tree as an
  * addition.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param hash - a hexadecimal object name, already validated by the route.
  * @returns the commit payload, including the raw patch for the page's parser.
  */
@@ -141,8 +121,8 @@ export declare function readCommit(target: GitTarget, hash: string): Promise<Com
  * The request names the side because the page lists a path once per half it
  * holds: a file staged and then edited again is two rows, and the patch under
  * each must be the one that row stands for. `staged` compares the index against
- * HEAD — what committing the index would record — and `unstaged` compares the
- * worktree against the index — what `git add` would capture. A conflicted path
+ * HEAD —what committing the index would record —and `unstaged` compares the
+ * worktree against the index —what `git add` would capture. A conflicted path
  * has no meaningful side, so its request reads the combined diff Git prints for
  * an unmerged path.
  *
@@ -151,7 +131,7 @@ export declare function readCommit(target: GitTarget, hash: string): Promise<Com
  * no HEAD to compare against either, and `--cached` then compares the index
  * against the empty tree, which is the honest answer for the staged side there.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param file - the changed path and the side of it to diff.
  * @returns the unified diff, or the reason there is none.
  */
@@ -172,8 +152,8 @@ export interface UntrackedPreview {
     /** Worktree-relative path. */
     readonly path: string;
     /**
-     * What Git printed for this path against `/dev/null`: its `--stat` line —
-     * which is where a binary file's byte size appears — and then its patch, cut
+     * What Git printed for this path against `/dev/null`: its `--stat` line —?
+     * which is where a binary file's byte size appears —and then its patch, cut
      * at the Host's bound.
      */
     readonly text: string;
@@ -195,7 +175,7 @@ export type ChangeDigest = {
      *
      * The commit-message writer keys a Workspace's saved choices by this path
      * when the Workspace registry cannot name one, and the digest is already
-     * the request that resolved it — a second `rev-parse` would only repeat a
+     * the request that resolved it —a second `rev-parse` would only repeat a
      * question this answer already holds.
      */
     readonly root: string;
@@ -205,7 +185,7 @@ export type ChangeDigest = {
     readonly files: readonly ChangedFile[];
     /**
      * `git diff --stat` of the tracked changes: one line per path, following the
-     * patch's own shape but carrying the file's magnitude — the only place a
+     * patch's own shape but carrying the file's magnitude —the only place a
      * binary file's size appears at all.
      */
     readonly stat: string;
@@ -232,8 +212,8 @@ export type ChangeDigest = {
  * This is the reader `readStatus` and `readDiff` would give if they were asked
  * together and once: the changed paths, the tracked patch with its `--stat`, and
  * the untracked files a patch against HEAD cannot reach. It exists as one read
- * because the prompt is one request — a message generator that walked the tree
- * path by path would run three commands per changed file — and because the model
+ * because the prompt is one request —a message generator that walked the tree
+ * path by path would run three commands per changed file —and because the model
  * is meant to see the changes as one change set rather than as an answer per
  * row.
  *
@@ -246,7 +226,7 @@ export type ChangeDigest = {
  * The one thing here that is not a change is the style sample: the branch's own
  * recent messages, which the prompt asks the model to write in the manner of.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param scope - whether to describe the index alone or the whole working tree.
  * @returns the digest, or why the repository could not be read.
  */
@@ -257,11 +237,11 @@ export declare function readChangeDigest(target: GitTarget, scope?: CommitScope)
  *
  * The two lists are read the same way and sorted by commit date, so either one
  * opens on the branches someone is actually working on. Whether a remote branch
- * is switchable is not a filter applied here: a remote branch is a real choice —
- * checking it out is what creates the local branch that tracks it — so the page
+ * is switchable is not a filter applied here: a remote branch is a real choice —?
+ * checking it out is what creates the local branch that tracks it —so the page
  * shows both and the switch decides what to do with each.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the two branch lists and which branch HEAD is on.
  */
 export declare function readBranches(target: GitTarget): Promise<BranchesPayload>;
@@ -275,14 +255,14 @@ export declare function readBranches(target: GitTarget): Promise<BranchesPayload
  * ambiguous-argument error. The remote case is the same decision answered by
  * today's Git: checking out `origin/main` is how the local `main` that tracks it
  * comes into being, so the name is checked against `refs/remotes/` and the local
- * branch that tracks it is created — or, when it already exists, switched to,
+ * branch that tracks it is created —or, when it already exists, switched to,
  * because that is what the pick meant. The local name is derived here rather
  * than left to Git's own guess so the exists-check and the branch Git is told to
  * create can never disagree.
  *
  * What a ref name may look like is Git's rule and is not restated here: a name
  * that no ref answers to is already an unknown branch, so a second, weaker
- * pattern would only turn names Git accepts — non-ASCII ones among them — into a
+ * pattern would only turn names Git accepts —non-ASCII ones among them —into a
  * refusal of this plugin's own invention.
  *
  * The switch itself runs as `git switch`, whose argument is unambiguously a
@@ -290,10 +270,9 @@ export declare function readBranches(target: GitTarget): Promise<BranchesPayload
  * and the retry with `checkout` is what keeps those installations working.
  *
  * This is the one route that writes: a checkout replaces files in the working
- * tree. It is therefore also the one place the session's file policy is
- * load-bearing, and a refusal is reported as such rather than as a Git error.
+ * tree, so a working tree in the way is a refusal the page words itself.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param name - the local or remote-tracking branch to check out.
  * @returns the outcome, including the reason a switch was refused.
  */
@@ -309,16 +288,15 @@ export declare function switchBranch(target: GitTarget, name: string): Promise<C
  *
  * The name itself is left to Git's rule. A name Git will not take is answered
  * with Git's own sentence rather than a pattern of this half's invention, which
- * is what keeps a name Git accepts — non-ASCII ones among them — from being
+ * is what keeps a name Git accepts —non-ASCII ones among them —from being
  * refused by a rule that does not exist. The one check made here is the one Git
  * cannot make cheaply: whether the name is already taken, which is a refusal the
  * page words rather than a bare `fatal` from a race.
  *
  * Creating at another point is a switch, so a working tree in the way refuses it
- * in the switch's own words, and the session's file policy is as load-bearing
- * here as it is there.
+ * in the switch's own words.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param name - the local branch to create.
  * @param start - the local or remote-tracking branch it starts at.
  * @returns the outcome, including the reason the create was refused.
@@ -330,7 +308,7 @@ export declare function createBranch(target: GitTarget, name: string, start: str
  * A read of its own rather than a second half of `POST /branches`, because the
  * two dialogs ask different questions: a switch wants names and nothing else,
  * while this one wants each branch's upstream, its tracking state, and whether
- * HEAD reaches it — three answers that cost walks the switch dialog would pay
+ * HEAD reaches it —three answers that cost walks the switch dialog would pay
  * for on every open and never read.
  *
  * A remote-tracking branch is marked by the same rule as a local one, and the
@@ -340,7 +318,7 @@ export declare function createBranch(target: GitTarget, name: string, start: str
  * owns the ref is resolved against the configured names rather than cut out of
  * the ref, because a local branch may itself be called `origin/main`.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the two lists, each with its marks, and which branch HEAD is on.
  */
 export declare function readBranchReport(target: GitTarget): Promise<BranchReportPayload>;
@@ -350,7 +328,7 @@ export declare function readBranchReport(target: GitTarget): Promise<BranchRepor
  * One at a time rather than one `git branch -d a b c`, because the answer the
  * dialog needs is per branch: Git reports a mixed batch by exiting nonzero and
  * naming the branch it refused, and telling which of the others went through
- * would mean reading Git's own prose back — text that is translated, and whose
+ * would mean reading Git's own prose back —text that is translated, and whose
  * misreading would mark a branch deleted that is still there. The exit code of
  * one call per branch is an answer no locale can change.
  *
@@ -358,7 +336,7 @@ export declare function readBranchReport(target: GitTarget): Promise<BranchRepor
  * it refuses exactly the branches whose commits would be left reachable from
  * nothing, which is the promise every mark in the dialog is making.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param wanted - the branches to delete, in the order the page listed them.
  * @returns one outcome per branch, and whether all of them succeeded.
  */
@@ -369,18 +347,18 @@ export declare function deleteBranches(target: GitTarget, wanted: readonly Branc
  * That is a plain `git merge`, and it is the only shape this page offers: Git
  * merges into the branch it is on, and the branch it is on is the one the reader
  * is looking at, so the operation stated is the operation Git has. The other
- * direction — the current branch into a branch nobody is standing on — would be a
+ * direction —the current branch into a branch nobody is standing on —would be a
  * checkout, a merge, and a checkout back: three working-tree moves for one
  * intention, buying two saved clicks at the price of a commit made on a branch
  * the page is not showing, where nothing on screen would show it happen.
  *
  * A conflicting merge is aborted rather than left in the tree. The page has no
- * way to finish one — the commit form refuses while unmerged paths exist — so an
+ * way to finish one —the commit form refuses while unmerged paths exist —so an
  * unfinished merge is exactly the state the fast-forward-only pull was shaped to
  * avoid. Aborting puts the working tree back where it was and words the refusal;
  * the branch is then merged by hand, with Git's own tools and markers.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param name - the branch to merge in, local or remote-tracking.
  * @returns the outcome, including the reason a merge was refused.
  */
@@ -390,7 +368,7 @@ export declare function mergeBranch(target: GitTarget, name: string): Promise<Me
  *
  * This is the one network operation with nothing to decide. It moves no branch,
  * no HEAD, and no working tree, so it cannot conflict, cannot be blocked by
- * uncommitted work, and cannot be refused by a detached or unborn HEAD — it is
+ * uncommitted work, and cannot be refused by a detached or unborn HEAD —it is
  * asked for by a reader who wants the page's idea of the remotes to be current,
  * and the answer is either "done" or why the network would not answer.
  *
@@ -401,7 +379,7 @@ export declare function mergeBranch(target: GitTarget, name: string): Promise<Me
  * repository configured with `fetch.prune` gets it anyway, because this runs
  * Git's own defaults for everything it does not name.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a fetch was refused.
  */
 export declare function fetchRemotes(target: GitTarget): Promise<FetchPayload>;
@@ -422,12 +400,12 @@ export declare function fetchRemotes(target: GitTarget): Promise<FetchPayload>;
  * `@{upstream}` resolves to. Every other ref of that remote comes along, which is
  * the same trade `fetchRemotes` makes for the whole repository.
  *
- * A repository with nothing to refresh — no commit, a detached HEAD, or a branch
- * that tracks nothing — answers `skipped` rather than an error: this runs after a
+ * A repository with nothing to refresh —no commit, a detached HEAD, or a branch
+ * that tracks nothing —answers `skipped` rather than an error: this runs after a
  * switch that has already been reported, and none of the three leaves the reader
  * anything to act on.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including `skipped` when there was nothing to fetch.
  */
 export declare function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPayload>;
@@ -438,10 +416,10 @@ export declare function fetchUpstream(target: GitTarget): Promise<FetchUpstreamP
  * `git pull` would invent a merge commit (a commit nobody wrote a message for)
  * and, when the two sides conflict, would leave the working tree in a merge this
  * page has no way to finish or abort. A fast-forward either applies cleanly or
- * is refused with the one thing the user can act on — that the branches have
+ * is refused with the one thing the user can act on —that the branches have
  * diverged.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a pull was refused.
  */
 export declare function pullFromRemote(target: GitTarget): Promise<SyncPayload>;
@@ -454,7 +432,7 @@ export declare function pullFromRemote(target: GitTarget): Promise<SyncPayload>;
  * upstream is what the user meant; with none or several, the answer is a
  * question this page cannot answer, and it says so.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a push was refused.
  */
 export declare function pushToRemote(target: GitTarget): Promise<SyncPayload>;
@@ -466,7 +444,7 @@ export declare function pushToRemote(target: GitTarget): Promise<SyncPayload>;
  * call cover both without deciding from the row the page drew. `--` ends the
  * options so a path that begins with a dash is a path.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param path - the repository-relative path to stage.
  * @returns the fresh status, or the refusal.
  */
@@ -476,15 +454,14 @@ export declare function stagePath(target: GitTarget, path: string): Promise<Inde
  *
  * `git restore --staged` is the normal answer: it puts the index entry back to
  * HEAD and leaves the file on disk alone, which is exactly "unstage". An unborn
- * branch has no HEAD to restore from, so its index entries are removed instead —
+ * branch has no HEAD to restore from, so its index entries are removed instead —?
  * the file becomes untracked again, which is what it was before it was staged.
  *
- * A staged rename is two index entries — the new path added and the old one
- * removed — so the row's source path is restored in the same call. Restoring only
+ * A staged rename is two index entries —the new path added and the old one
+ * removed —so the row's source path is restored in the same call. Restoring only
  * the destination would leave the deletion of the source staged: half a rename,
  * which is not a state the row it came from can describe.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
  * @param path - the repository-relative path to unstage.
  * @param origPath - the rename/copy source, when the row has one.
  * @returns the fresh status, or the refusal.
@@ -493,13 +470,13 @@ export declare function unstagePath(target: GitTarget, path: string, origPath?: 
 /**
  * Discard one path's unstaged change.
  *
- * A tracked path is restored from the index — `git restore --worktree` — so a
+ * A tracked path is restored from the index —`git restore --worktree` —so a
  * file that is staged and then edited again keeps the staged half and loses only
  * the worktree half; the index is never touched. An untracked path has no index
  * entry to restore, so `git clean -f` deletes the file itself instead. Both are
  * destructive in the worktree, which is why the page asks before calling this.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param path - the repository-relative path to discard.
  * @param untracked - whether the path is untracked, which is deleted rather than restored.
  * @returns the fresh status, or the refusal.
@@ -513,7 +490,7 @@ export declare function stageFolder(target: GitTarget, folder: string): Promise<
  * The page's header action names no directory: it stands for the whole worktree
  * list, and the Host resolves that list from the status it reads in the queue.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or the refusal.
  */
 export declare function stageAll(target: GitTarget): Promise<IndexPayload>;
@@ -522,7 +499,7 @@ export declare function unstageFolder(target: GitTarget, folder: string): Promis
 /**
  * Move every staged change in the repository out of the index.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or the refusal.
  */
 export declare function unstageAll(target: GitTarget): Promise<IndexPayload>;
@@ -535,7 +512,7 @@ export declare function discardFolder(target: GitTarget, folder: string): Promis
  * without a pathspec; ignored files are still left alone because the command is
  * never given `-x`.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @returns the fresh status, or the refusal.
  */
 export declare function discardAll(target: GitTarget): Promise<IndexPayload>;
@@ -544,18 +521,18 @@ export declare function discardAll(target: GitTarget): Promise<IndexPayload>;
  *
  * The tree is read before it is touched, and both refusals that matter come out
  * of that read. A tree with nothing in it is not a commit that Git would fail to
- * make — "nothing to commit" is a state, and the answer says so as one. And a
+ * make —?nothing to commit" is a state, and the answer says so as one. And a
  * tree holding an unmerged path is refused before `git add -A` runs: staging a
  * conflicted file resolves it as far as Git is concerned, so a commit made then
  * would record conflict markers as the resolution, which is a commit nobody can
  * mean and one this page has no way to take back.
  *
- * What is committed is deliberately everything the page is listing — tracked
- * edits, deletions, and untracked files alike — because that is the decision
+ * What is committed is deliberately everything the page is listing —tracked
+ * edits, deletions, and untracked files alike —because that is the decision
  * this route's button offers. The message is the route's to validate; by the
  * time it arrives here it is non-empty text.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param message - the commit message, already trimmed and checked by the route.
  * @returns the outcome, including the reason a commit did not happen.
  */
@@ -569,7 +546,7 @@ export declare function commitAll(target: GitTarget, message: string): Promise<C
  * remain are the ones Git would make anyway, worded so the page can say which
  * happened: an unfinished merge, or an index with nothing in it to record.
  *
- * @param target - the shell seam, the session's directory, and the file policy.
+ * @param target - the process substrate and the session's directory.
  * @param message - the commit message, already trimmed and checked by the route.
  * @returns the outcome, including the reason a commit did not happen.
  */

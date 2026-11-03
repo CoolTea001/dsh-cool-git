@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-shell' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-denied' | 'git-sandbox-helper' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-denied' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'create-denied' | 'delete-denied' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-denied' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-denied' | 'push-denied' | 'fetch-denied' | 'pull-dirty' | 'push-dirty' | 'auth' | 'auth-helper' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'stage-denied' | 'unstage-denied' | 'discard-denied' | 'commit-clean' | 'commit-nothing-staged' | 'commit-conflict' | 'commit-identity' | 'commit-denied' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-subprocess' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-dirty' | 'push-dirty' | 'auth' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-nothing-staged' | 'commit-conflict' | 'commit-identity' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
@@ -211,7 +211,7 @@ export interface CreateBranchPayload {
     readonly error?: string;
     /** The coded refusal, which the page words in the active locale. */
     readonly failure?: Failure;
-    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'exists' | 'denied' | 'dirty';
+    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'exists' | 'dirty';
     /** The branch HEAD is on after a successful create, which is the new one. */
     readonly branch?: string;
 }
@@ -257,7 +257,7 @@ export interface DeleteBranchesPayload {
     readonly error?: string;
     /** The coded refusal, which the page words in the active locale. */
     readonly failure?: Failure;
-    readonly reason?: 'no-repo' | 'error' | 'denied';
+    readonly reason?: 'no-repo' | 'error';
     /** One entry per branch the request named, in the order it named them. */
     readonly results?: readonly BranchDeletion[];
 }
@@ -273,7 +273,7 @@ export interface CheckoutPayload {
      * repository, the named branch does not exist, the session may not write, or
      * local changes are in the way.
      */
-    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'denied' | 'dirty';
+    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'dirty';
     /** The branch HEAD is on after a successful switch. */
     readonly branch?: string;
 }
@@ -290,7 +290,7 @@ export interface MergePayload {
      * session may not write, local changes are in the way, or the two sides
      * conflict.
      */
-    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'same-branch' | 'detached' | 'no-commits' | 'denied' | 'dirty' | 'conflict';
+    readonly reason?: 'no-repo' | 'error' | 'unknown-branch' | 'same-branch' | 'detached' | 'no-commits' | 'dirty' | 'conflict';
     /**
      * The branch the request named, which is the merge's source.
      *
@@ -327,7 +327,7 @@ export interface FetchPayload {
      * repository, the session may not write, or the remote refused the
      * credentials.
      */
-    readonly reason?: 'no-repo' | 'error' | 'denied' | 'auth';
+    readonly reason?: 'no-repo' | 'error' | 'auth';
 }
 /**
  * `POST /fetch-upstream`: refreshing just the current branch's upstream ref.
@@ -360,7 +360,7 @@ export interface SyncPayload {
      * upstream (or an ambiguous remote), the two sides diverged, local changes are
      * in the way, or the remote refused the credentials.
      */
-    readonly reason?: 'no-repo' | 'error' | 'denied' | 'detached' | 'no-upstream' | 'no-remote' | 'ambiguous-remote' | 'diverged' | 'dirty' | 'auth';
+    readonly reason?: 'no-repo' | 'error' | 'detached' | 'no-upstream' | 'no-remote' | 'ambiguous-remote' | 'diverged' | 'dirty' | 'auth';
     /** Which operation answered, so a caller can label its own report. */
     readonly action?: 'pull' | 'push';
     /**
@@ -466,7 +466,7 @@ export interface CommitAllPayload {
      * unresolved conflict — which `git add -A` would otherwise stage, markers and
      * all.
      */
-    readonly reason?: 'no-repo' | 'error' | 'denied' | 'clean' | 'conflict';
+    readonly reason?: 'no-repo' | 'error' | 'clean' | 'conflict';
     /** The commit that was just created, once it succeeded. */
     readonly commit?: CommitSummary;
 }
@@ -490,7 +490,7 @@ export interface IndexPayload {
     /** The coded refusal, which the page words in the active locale. */
     readonly failure?: Failure;
     /** Why no move happened, when the page can act on it. */
-    readonly reason?: 'no-repo' | 'error' | 'denied';
+    readonly reason?: 'no-repo' | 'error';
     /** The repository state after the move, when the move was made. */
     readonly status?: StatusPayload;
 }
