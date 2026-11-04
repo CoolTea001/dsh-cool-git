@@ -2766,19 +2766,31 @@ export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPay
 /**
  * Pull the current branch from its upstream.
  *
- * `--no-rebase` is deliberate, and it is the whole shape of this feature. A plain
- * `git pull` obeys whatever `pull.rebase` the user configured — and a rebase
- * would rewrite this branch's history, which is not something a one-click sync
- * should do behind a button that says "sync". Stating `--no-rebase` replaces the
- * inherited intent with this one: bring the remote's commits in with a merge.
+ * The three flags are deliberate, and together they are the whole shape of this
+ * feature: a one-click sync brings the remote in with a merge and nothing else.
  *
- * That merge may fast-forward (the common case, and the only outcome this route
- * used to allow), or it may join the two histories with a merge commit whose
- * message Git writes itself — `Merge branch 'main' of <remote> into main` — which
- * is the message this shape is for: nobody has to write it, and nobody is asked
- * to. It may also conflict, and then the merge is left in the tree exactly as a
- * conflicted `git merge` is: the conflict list resolves it, and `completeMerge`
- * records it.
+ * `--no-rebase` replaces an inherited `pull.rebase` / `branch.<name>.rebase`,
+ * because a rebase rewrites this branch's history, which is not something a
+ * button that says "sync" should do behind the reader's back.
+ *
+ * `--ff` replaces an inherited `pull.ff` / `merge.ff` as well. This one is the
+ * difference between "works" and "works on some repositories": a repository
+ * configured `merge.ff = only` (a not-uncommon hand setting, and what several
+ * GUI guides recommend) makes a plain `git pull --no-rebase` refuse the merge
+ * with `Not possible to fast-forward, aborting` and Git's own advice to merge by
+ * hand or rebase. Stating `--ff` on the command line overrides that setting and
+ * restores the only policy this route means: fast-forward when the histories
+ * allow it, join them with a merge commit when they do not.
+ *
+ * `--no-edit` names the message's provenance: nobody writes it, and no editor
+ * can be opened to ask. Git fills a merge commit's subject itself —
+ * `Merge branch 'main' of <remote> into main` — and that is the message this
+ * shape is for.
+ *
+ * The merge may fast-forward (the common case), or it may join the two histories
+ * with that merge commit, or it may conflict. A conflicted merge is left in the
+ * tree exactly as a conflicted `git merge` is: the conflict list resolves it, and
+ * `completeMerge` records it.
  *
  * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a pull was refused.
@@ -2797,7 +2809,9 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
     }
   }
 
-  const run = await runGit(handoff.root, ['pull', '--no-rebase'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  const run = await runGit(handoff.root, ['pull', '--ff', '--no-rebase', '--no-edit'], {
+    timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+  })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'pull' }
   if (run.code !== 0) {
     if (await conflictedMerge(handoff.root, run)) {
