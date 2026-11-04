@@ -129,7 +129,7 @@ const GIT_CSS = [
   // out a weight and a tracking heavier than the same button draws in the sidebar.
   '.dsh-cg-head{flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px}',
   '.dsh-cg-head-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;letter-spacing:.02em}',
-  '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:8px}',
+  '.dsh-cg-list{flex:1 1 auto;min-height:0;overflow:auto;padding:0 8px 8px 8px}',
   // Every scrollport the tab owns — the sidebar's two panes here, the branch
   // dialog's list below, and the diff pane's own scrollers, which state the same
   // binding by sharing this selector — keeps the platform's bar out of the frame
@@ -639,7 +639,7 @@ const GIT_CSS = [
   // sized against, so neither the square nor the button can make the form taller
   // than the field it belongs to. Four of those lines is the 86px past which the
   // field scrolls instead of pushing the Changed files pane down the column.
-  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:8px;padding:0px 10px}',
+  '.dsh-cg-commit-bar{flex:none;display:flex;flex-direction:column;gap:8px;padding:0px 10px 8px}',
   // The frame draws the field and holds the Generate glyph, and the two are laid
   // out independently: the field is the frame's only box in flow and spans it
   // whole, and the glyph is positioned against the frame's own corner. That is
@@ -688,15 +688,11 @@ const GIT_CSS = [
   // The glyph is drawn a shade smaller than the field's own type, so it reads as
   // a mark on the row rather than as a character of the message.
   '.dsh-cg-commit-generate svg{width:14px;height:14px;display:block}',
-  // The commit row is two buttons that share one shape: the label commits, the
-  // caret at its end opens the scope list, no gap sits between them, and only the
-  // outer corners are rounded, so the touching edges are square. Each carries its
-  // own fill, hover and disabled state rather than drawing on a shared one,
-  // because each is a click of its own — and because the caret must stay live
-  // exactly while the label cannot act. (See the caret's rule below.)
+  // The commit row is one button now that the toolbar's menu chooses the scope,
+  // so it takes the row's whole width and the platform's own 6px corners: there is
+  // no second control to share a shape with.
   '.dsh-cg-commit-actions{display:flex;align-items:stretch;width:100%}',
-  '.dsh-cg-commit-actions[data-solo=true] .dsh-cg-commit-send{border-radius:var(--dsw-radius-sm)}',
-  '.dsh-cg-commit-send{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:12px;line-height:18px;cursor:pointer;transition:background-color .12s ease,opacity .12s ease}',
+  '.dsh-cg-commit-send{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:12px;line-height:18px;cursor:pointer;transition:background-color .12s ease,opacity .12s ease}',
   '.dsh-cg-commit-send:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
   // The platform's own disabled weight, so a busy or empty form dims the label
   // exactly as a disabled primary button does.
@@ -704,16 +700,6 @@ const GIT_CSS = [
   // The label elides rather than wraps: the button is the platform's 28px tall,
   // and a second line would spill out of a box that does not grow with it.
   '.dsh-cg-commit-label{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  // The caret is never disabled by the label's own reasons — no message yet,
-  // nothing staged — because choosing a scope is how a reader leaves exactly those
-  // states. It is its own button with its own fill, so it stays at full strength
-  // while the label beside it is the part that cannot act.
-  '.dsh-cg-commit-scope{flex:none;display:inline-flex;align-items:center;justify-content:center;width:30px;padding:0;border:0;border-radius:0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer;transition:background-color .12s ease,opacity .12s ease}',
-  '.dsh-cg-commit-scope:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
-  '.dsh-cg-commit-scope:disabled{opacity:.4;cursor:default}',
-  '.dsh-cg-commit-scope-caret{display:inline-flex}',
-  '.dsh-cg-commit-scope-caret svg{width:12px;height:12px;display:block}',
-  '.dsh-cg-commit-scope-anchor{display:flex;flex:none}',
   // What the model's own pre-commit check found: one line under the field, in
   // the warning colour, because it is about the commit rather than about the
   // message — the message above it is written either way. It wraps rather than

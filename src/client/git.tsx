@@ -11,9 +11,9 @@
  * conflicted path opens the conflict pane instead of a patch, because that pane
  * is where it is resolved.
  * A row's trailing `+` or `−` moves its path between the two lists. The
- * sidebar's second row is the commit form — a message field, a button
- * whose scope is the index or the whole tree, and the caret that switches between
- * them — and the two panes stack under it. Both of the sidebar's boundaries —
+ * sidebar's second row is the commit form — a message field and one button, whose
+ * scope is the index or the whole tree, chosen in the toolbar's More menu — and
+ * the two panes stack under it. Both of the sidebar's boundaries —
  * its right edge and the divider between the two lists — are the reader's to
  * drag, and both sizes are remembered between visits (see `layout.tsx`).
  *
@@ -123,7 +123,6 @@ import {
   IconArrowRight,
   IconBranch,
   IconCheck,
-  IconChevronDown,
   IconCopy,
   IconDiscard,
   IconFolder,
@@ -192,12 +191,14 @@ const COPY_FEEDBACK_MS = 1200
 /**
  * The commit scope a Workspace nobody has chosen one for opens on.
  *
- * Staged is the narrower commitment: the index already holds what the page's own
- * `+` actions put there, and committing it is the decision the changed-path list
- * exists to support. A reader who wants the whole worktree staged and committed
- * says so once, and that Workspace remembers it (see `cache.ts`).
+ * All is the whole-tree commitment: the button records everything the changed
+ * path list shows, which is what a single commit button did before the scope was
+ * a choice, and the answer a reader expects to get without looking at a setting
+ * first. Staged is the narrower one — the index alone, for a reader who moved
+ * paths there on purpose — and a Workspace that chooses it keeps it (see
+ * `cache.ts`).
  */
-const DEFAULT_COMMIT_SCOPE: CommitScope = 'staged'
+const DEFAULT_COMMIT_SCOPE: CommitScope = 'all'
 
 /**
  * The width cap this plugin puts on every hover bubble.
@@ -2212,6 +2213,8 @@ export function GitView(props: {
           onCreate={handleCreate}
           onDelete={handleDelete}
           onError={reportError}
+          commitScope={commitScope}
+          onCommitScope={handleScopeChange}
         />
         {/* The commit form is the sidebar's own third row, under the toolbar and
             above both panes: what it commits is the changed-path pane's list, but
@@ -2236,7 +2239,6 @@ export function GitView(props: {
           operation={status?.ok === true ? status.operation ?? null : null}
           mergeMessage={status?.ok === true ? status.mergeMessage : undefined}
           ending={ending}
-          onScopeChange={handleScopeChange}
           onCommit={handleCommit}
           onFinishMerge={handleFinishMerge}
           onGenerate={handleGenerateMessage}
@@ -3330,10 +3332,14 @@ function SideHead(props: {
   readonly onCreate: (name: string, start: string) => void
   readonly onDelete: (targets: readonly BranchDeleteTarget[]) => Promise<void>
   readonly onError: (error: GitError) => void
+  /** The half the commit button is set to, which the menu's commit rows mark. */
+  readonly commitScope: CommitScope
+  readonly onCommitScope: (scope: CommitScope) => void
 }): ReactElement {
   const {
     t, status, sessionId, refreshing, fetching, syncing, switching, merging, creating, deleting,
     busy, onRefresh, onFetch, onPull, onPush, onCheckout, onMerge, onCreate, onDelete, onError,
+    commitScope, onCommitScope,
   } = props
   /** Whether the More menu is showing. */
   const [menuOpen, setMenuOpen] = useState(false)
@@ -3422,21 +3428,30 @@ function SideHead(props: {
     else if (id === 'fetch') onFetch()
     else if (id === 'pull') onPull()
     else if (id === 'push') onPush()
+    else if (id === 'commit-scope-staged') onCommitScope('staged')
+    else if (id === 'commit-scope-all') onCommitScope('all')
     else if (id === 'branch-create') setPick('create')
     else if (id === 'branch-delete') setDeleteOpen(true)
     else if (id === 'merge-from') setPick('merge-from')
     else if (id === 'settings') setSettingsOpen(true)
-  }, [onRefresh, onFetch, onPull, onPush])
+  }, [onRefresh, onFetch, onPull, onPush, onCommitScope])
 
   // The rows, in the order a reader meets them: the two that only re-read the
   // repository and then run at once, the two halves of the remote round trip,
-  // the two that move branches, then the one that merges them. Each rule says
-  // which of the four groups the rows under it belong to, so the grouping is
-  // argued in the order alone. No row carries a glyph: the words are the whole
-  // of what each row does, and icons in a 144px card would only take width from
-  // them. No row carries a trailing ellipsis either: the mark means work in
-  // flight elsewhere on the page, and the rules already tell the rows that run
-  // at once from the ones that ask a second question.
+  // the two that set what the commit button commits, the two that move branches,
+  // then the one that merges them. Each rule says which of the five groups the
+  // rows under it belong to, so the grouping is argued in the order alone. No row
+  // carries a glyph: the words are the whole of what each row does, and icons in a
+  // 144px card would only take width from them. No row carries a trailing ellipsis
+  // either: the mark means work in flight elsewhere on the page, and the rules
+  // already tell the rows that run at once from the ones that ask a second
+  // question.
+  //
+  // The commit rows are the one group here that is a choice rather than a command:
+  // they set what the form's button below commits, and the one in force carries
+  // the platform's check. They sit next to the remote rows rather than at the
+  // bottom because committing is the sidebar's own main action, and the menu is
+  // where its other two answers were already living.
   //
   // The two reads say which side of the repository they touch — `(local)` and
   // `(remotes)` — because that is the one thing their names do not: Refresh
@@ -3454,6 +3469,9 @@ function SideHead(props: {
     { type: 'separator' as const, id: 'remote' },
     { id: 'pull', label: t('head.pull') },
     { id: 'push', label: t('head.push') },
+    { type: 'separator' as const, id: 'commit' },
+    { id: 'commit-scope-staged', label: t('commit.scopeStaged') },
+    { id: 'commit-scope-all', label: t('commit.scopeAll') },
     { type: 'separator' as const, id: 'branches' },
     { id: 'branch-create', label: t('head.branchCreate') },
     { id: 'branch-delete', label: t('head.branchDelete') },
@@ -3586,6 +3604,10 @@ function SideHead(props: {
             </Tooltip>
           )}
           items={menuItems}
+          // The commit rows are a choice rather than two commands, so the one in
+          // force carries the platform's check: the mark says which scope the
+          // form's button will commit, and the button's own label says it again.
+          selectedId={commitScope === 'staged' ? 'commit-scope-staged' : 'commit-scope-all'}
           onSelect={runMenuRow}
           onClose={() => setMenuOpen(false)}
           // Below the control and growing to its right, not to its left: the
@@ -4708,18 +4730,22 @@ interface GeneratedMessage {
  * `styles.ts`).
  *
  * The form asks one question with two possible answers, and the reader says
- * which before they ask it: the commit takes the index alone, or the whole
- * working tree. `staged` is the default because the changed-path list now offers
- * `+` and `−` — a reader who has moved paths into the index has already said what
- * the commit should hold, and a button that quietly took the rest as well would
- * make that work meaningless. `all` is the explicit alternative, chosen from the
- * caret button that butts against the commit button, for the reader who has staged
- * nothing and wants the one-click commit the tab used to offer.
+ * which before they ask it: the commit takes the whole working tree, or the index
+ * alone. `all` is the default because it is what the button means when nothing
+ * else has been said — everything the list shows, recorded in one click, which is
+ * what this form did before the scope was a choice. `staged` is the narrower
+ * answer, for the reader who has moved paths into the index with the list's own
+ * `+` and `−` and wants the commit to hold only those.
  *
- * The scope is the page's state rather than this form's, because both the
- * Generate request and the commit request read it and the button's disabled state
- * depends on the counts the page's status holds. The message stays here for the
- * reason below.
+ * The choice is the toolbar's: the More menu's commit rows set it, and the row in
+ * force carries the menu's check. That is where the rest of the page's answers
+ * about the repository live, and a caret beside the commit button spent the row's
+ * width on a second control for one binary choice.
+ *
+ * The scope is the page's state rather than this form's, because the toolbar sets
+ * it, both the Generate request and the commit request read it, and the button's
+ * disabled state depends on the counts the page's status holds. The message stays
+ * here for the reason below.
  *
  * The message is this component's own state rather than the page's, and that is
  * deliberate: the page renders thousands of diff rows, so a keystroke that
@@ -4747,7 +4773,6 @@ interface GeneratedMessage {
  * @param props.operation - the merge, rebase, or cherry-pick in progress, if any.
  * @param props.mergeMessage - the message the merge already carries, for the prefill.
  * @param props.ending - the merge this form is recording is in flight.
- * @param props.onScopeChange - switches the commit's scope.
  * @param props.onCommit - runs the commit; resolves true when one was made.
  * @param props.onFinishMerge - records the merge the repository is holding.
  * @param props.onGenerate - asks the Host for a message; resolves null when the
@@ -4765,20 +4790,17 @@ function CommitBar(props: {
   readonly operation: ConflictOperation | null
   readonly mergeMessage: string | undefined
   readonly ending: boolean
-  readonly onScopeChange: (scope: CommitScope) => void
   readonly onCommit: (message: string) => Promise<boolean>
   readonly onFinishMerge: (message: string) => Promise<boolean>
   readonly onGenerate: () => Promise<GeneratedMessage | null>
 }): ReactElement {
   const {
     t, disabled, committing, scope, stagedCount, allCount, operation, mergeMessage,
-    ending, onScopeChange, onCommit, onFinishMerge, onGenerate,
+    ending, onCommit, onFinishMerge, onGenerate,
   } = props
   const [message, setMessage] = useState('')
   const [generating, setGenerating] = useState(false)
   const [warning, setWarning] = useState('')
-  /** Whether the scope menu is showing. */
-  const [scopeOpen, setScopeOpen] = useState(false)
   const field = useRef<HTMLTextAreaElement | null>(null)
 
   /** Whether this form is the one that records a merge in progress. */
@@ -4888,26 +4910,13 @@ function CommitBar(props: {
     nothingToCommit, onCommit, onFinishMerge,
   ])
 
-  /**
-   * Switch the commit's scope, and drop a generated finding with the old one.
-   *
-   * The finding was about the changes the previous scope described; keeping it
-   * over a different set would be the form claiming a check it never ran.
-   *
-   * @param next - the scope the reader picked.
-   */
-  const chooseScope = useCallback((next: CommitScope): void => {
-    setScopeOpen(false)
-    if (next === scope) return
+  // A different scope describes a different set of changes, so the finding from
+  // the old one goes with it: kept, it would be the form claiming a check it never
+  // ran. The scope is the page's state now that the toolbar's menu sets it, which
+  // is why this follows the prop rather than the click that changed it.
+  useEffect(() => {
     setWarning('')
-    onScopeChange(next)
-  }, [scope, onScopeChange])
-
-  /** The caret menu's two rows, with the current scope marked by the platform. */
-  const scopeItems: readonly MenuEntry[] = [
-    { id: 'staged', label: t('commit.scopeStaged') },
-    { id: 'all', label: t('commit.scopeAll') },
-  ]
+  }, [scope])
 
   /**
    * Ask the Host for a message and put it in the field.
@@ -5007,22 +5016,12 @@ function CommitBar(props: {
       {warning === '' ? null : (
         <p className="dsh-cg-commit-note" role="status">{t('commit.warning', { text: warning })}</p>
       )}
-      {/* The two controls are one decision and its scope, and they stand as two
-          buttons with no gap between them: the label commits, the caret at its
-          end opens the only other answer. Each carries its own fill and hover,
-          and each keeps its own disabled state — the caret must stay live while
-          the label cannot act, because choosing a scope is how a reader leaves
-          exactly that state. The halves are separate buttons rather than one
-          button with a mark inside it — a caret that is not a control of its own
-          could not be reached from the keyboard, and one that is could not live
-          inside the button it would have to sit in. The menu marks the current
-          scope, so the label and the checked row always agree.
-
-          While a repository operation is in progress neither half is drawn: a
-          merge records the index Git already built, so there is no scope for the
-          reader to choose and no menu to open, and the label takes the row's
-          whole width as the one action the form has. */}
-      <div className="dsh-cg-commit-actions" data-solo={operation !== null}>
+      {/* The one action the form has, at the row's whole width. Which half it
+          commits is chosen in the toolbar's More menu — the commit rows there
+          mark the one in force — so the button states the answer it is set to
+          rather than growing a caret of its own: the choice belongs with the
+          other answers about the repository, and the button stays one target. */}
+      <div className="dsh-cg-commit-actions">
         <button
           type="button"
           className="dsh-cg-commit-send"
@@ -5041,34 +5040,6 @@ function CommitBar(props: {
                 : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll')}
           </span>
         </button>
-        {operation === null ? (
-          <Menu
-            open={scopeOpen}
-            anchor={(
-              <button
-                type="button"
-                className="dsh-cg-commit-scope"
-                aria-label={t('commit.scope')}
-                aria-haspopup="menu"
-                aria-expanded={scopeOpen}
-                disabled={committing || generating}
-                onClick={() => setScopeOpen(value => !value)}
-              >
-                {/* No bubble of its own: the menu is one click away and states the
-                    same two scopes itself, so a tooltip here would repeat the list
-                    it opens. The accessible name still says what it does. */}
-                <span className="dsh-cg-commit-scope-caret" aria-hidden="true"><IconChevronDown /></span>
-              </button>
-            )}
-            items={scopeItems}
-            selectedId={scope}
-            onSelect={id => chooseScope(id === 'all' ? 'all' : 'staged')}
-            onClose={() => setScopeOpen(false)}
-            align="end"
-            side="bottom"
-            className="dsh-cg-commit-scope-anchor"
-          />
-        ) : null}
       </div>
     </div>
   )

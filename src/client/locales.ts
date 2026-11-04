@@ -181,7 +181,6 @@ type UiKey =
   | 'commit.generating'
   | 'commit.warning'
   /** The commit form's scope: the caret's own name and the two choices. */
-  | 'commit.scope'
   | 'commit.scopeStaged'
   | 'commit.scopeAll'
   /** The commit button's labels, each carrying the number of rows it records. */
@@ -451,7 +450,6 @@ export const en = {
   'commit.generate': 'Generate a commit message',
   'commit.generating': 'Generating…',
   'commit.warning': 'Before you commit: {text}',
-  'commit.scope': 'Commit scope',
   'commit.scopeStaged': 'Commit Staged',
   'commit.scopeAll': 'Commit All',
   'commit.buttonStaged': 'Commit Staged',
@@ -779,7 +777,6 @@ export const zh: typeof en = {
   'commit.generate': '自动生成提交信息',
   'commit.generating': '正在生成…',
   'commit.warning': '提交前请检查：{text}',
-  'commit.scope': '提交范围',
   'commit.scopeStaged': '提交暂存的更改',
   'commit.scopeAll': '提交全部更改',
   'commit.buttonStaged': '提交暂存的更改',

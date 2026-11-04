@@ -1,4 +1,4 @@
-![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.4.0.png)
+![dsh-cool-git 封面](https://cdn.cooltea.top/dsh-cool-git/readme-cover-v0.5.0.png)
 
 # dsh-cool-git
 
@@ -8,7 +8,7 @@
 
 ## 描述
 
-DeepSeek Harness Git 插件 —— 会话 Tab 栏中添加 Git 管理面板，变更、提交、历史、分支、远端同步一站完成，Message 可 AI 生成。
+DeepSeek Harness Git 插件 —— 会话 Tab 栏中添加 Git 管理面板，变更、提交、历史、分支、远端同步、合并冲突一站完成，Message 可 AI 生成。
 
 ## 功能介绍
 
@@ -18,6 +18,7 @@ DeepSeek Harness Git 插件 —— 会话 Tab 栏中添加 Git 管理面板，�
 - **提交：** 全部变更一次提交，AI 生成提交信息（模型与提示词可按工作区配置）
 - **分支：** 切换、新建、删除（标注风险）、合并
 - **远端：** Fetch、Pull、Push、Publish，一键同步（先拉后推）
+- **合并冲突：** 拉取或分支合并产生的冲突可以在 Diff 面板中解决
 
 ## 安装教程
 
