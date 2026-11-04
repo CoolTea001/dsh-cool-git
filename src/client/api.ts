@@ -36,6 +36,7 @@ import {
   type SettingsPayload,
   type StatusPayload,
   type SyncPayload,
+  type UndoCommitPayload,
 } from '../shared/contract.js'
 import { errorMessage } from '../shared/error.js'
 
@@ -160,6 +161,22 @@ export function commitStaged(
   message: string,
 ): Promise<CommitAllPayload> {
   return postJson(ROUTES.commitStaged, { sessionId, message })
+}
+
+/**
+ * Ask the Host to take the commit at HEAD back off the branch.
+ *
+ * The move is a soft reset: the commit leaves the branch, and everything it
+ * recorded stays in the index and the working tree, so the changes return as
+ * staged work rather than disappearing. The page re-reads the repository after
+ * it because both the history and the changed-path lists describe a branch that
+ * has just moved.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the undo payload, which names the commit that was moved.
+ */
+export function undoLastCommit(sessionId: string | undefined): Promise<UndoCommitPayload> {
+  return postJson(ROUTES.undoCommit, { sessionId })
 }
 
 /**

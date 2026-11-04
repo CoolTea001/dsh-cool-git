@@ -72,6 +72,7 @@ type UiKey =
   | 'title.push'
   | 'title.publish'
   | 'title.commit'
+  | 'title.undoCommit'
   | 'title.stage'
   | 'title.unstage'
   | 'title.stageFolder'
@@ -110,6 +111,8 @@ type UiKey =
   /** The menu's two branch rows, each opening a dialog of its own. */
   | 'head.branchCreate'
   | 'head.branchDelete'
+  /** The menu's undo row, which takes the commit at HEAD back off the branch. */
+  | 'head.undoCommit'
   /** The menu's last row, and the dialog it opens. */
   | 'head.settings'
   /** The settings dialog: the model and prompt that write commit messages. */
@@ -344,6 +347,7 @@ export const en = {
   'title.push': 'Push failed',
   'title.publish': 'Publish failed',
   'title.commit': 'Commit failed',
+  'title.undoCommit': 'Undo commit failed',
   'title.stage': 'Could not stage the file',
   'title.unstage': 'Could not unstage the file',
   'title.stageFolder': 'Could not stage the folder',
@@ -381,6 +385,7 @@ export const en = {
   'head.mergeFrom': 'Merge from',
   'head.branchCreate': 'Branch create',
   'head.branchDelete': 'Branch delete',
+  'head.undoCommit': 'Undo Last Commit',
   'head.settings': 'Settings',
 
   'settings.title': 'Settings',
@@ -601,6 +606,9 @@ export const en = {
   'error.commit-conflict': 'Unresolved conflicts remain; resolve them before committing',
   'error.commit-identity': 'Git has no author identity configured, so it refused the commit',
 
+  'error.commit-undo-root': 'The commit at HEAD is this repository\'s first commit, so there is no earlier commit to step back to',
+  'error.commit-undo-operation': 'A merge, rebase, or cherry-pick is in progress; finish or abort it before undoing a commit',
+
   'error.no-llm': 'The model service is unavailable, so no commit message can be written',
   'error.no-model': 'No default model is configured, so no commit message can be written',
   'error.model-timeout': 'The model did not answer in time',
@@ -655,6 +663,7 @@ export const zh: typeof en = {
   'title.push': '推送失败',
   'title.publish': '发布分支失败',
   'title.commit': '提交失败',
+  'title.undoCommit': '撤销提交失败',
   'title.stage': '暂存文件失败',
   'title.unstage': '取消暂存失败',
   'title.stageFolder': '暂存文件夹失败',
@@ -708,6 +717,7 @@ export const zh: typeof en = {
   'head.mergeFrom': '合并分支',
   'head.branchCreate': '创建分支',
   'head.branchDelete': '删除分支',
+  'head.undoCommit': '撤销最后一次提交',
   'head.settings': '设置',
 
   'settings.title': '设置',
@@ -927,6 +937,9 @@ export const zh: typeof en = {
   'error.commit-nothing-staged': '暂存区没有需要提交的改动',
   'error.commit-conflict': '存在未解决的冲突文件，请先解决冲突再提交',
   'error.commit-identity': 'Git 还没有配置提交身份，无法提交',
+
+  'error.commit-undo-root': '当前提交是该仓库的首次提交，没有更早的提交可以回退',
+  'error.commit-undo-operation': '当前有进行中的合并、变基或拣选操作，请先完成或中止后再撤销提交',
 
   'error.no-llm': '模型服务不可用，无法生成提交信息',
   'error.no-model': '未配置默认模型，无法生成提交信息',

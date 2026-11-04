@@ -47,6 +47,7 @@ import {
   stageFolder,
   stagePath,
   switchBranch,
+  undoLastCommit,
   unstageAll,
   unstageFolder,
   unstagePath,
@@ -735,6 +736,13 @@ export function registerRoutes(ctx: any): () => void {
       if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
       return commitStaged(target, message)
     })),
+
+    // Undo the commit at HEAD, keeping every change it recorded in the index.
+    // The Host decides what "one step back" means — the commit's first parent,
+    // never a branch name the page could name — and refuses a repository in the
+    // middle of another operation, because the reset would step over it.
+    route(ROUTES.undoCommit, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      undoLastCommit(target))),
 
     // The commit form's other request, and a read: it writes a message for the
     // changes on disk, which is why the Commit button stays the only control that

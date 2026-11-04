@@ -79,6 +79,7 @@ import {
   type ResolvePayload,
   type StatusPayload,
   type SyncPayload,
+  type UndoCommitPayload,
 } from '../shared/contract.js'
 import { errorMessage } from '../shared/error.js'
 import {
@@ -3427,6 +3428,61 @@ export async function commitStaged(target: GitTarget, message: string): Promise<
     if (commit.code !== 0) return commitFailure(commit, 'staged')
 
     return readMadeCommit(root)
+  })
+}
+
+/**
+ * Take the commit at HEAD back off the branch, keeping everything it recorded.
+ *
+ * The reset is soft on purpose. A mixed or hard reset would also rewrite the
+ * index or the working tree, and the commit's changes would then have to be
+ * rediscovered by the reader; a soft reset leaves both exactly as the commit
+ * made them, so what the commit held comes back as staged changes. The branch
+ * loses one entry in its history and nothing else.
+ *
+ * Three states are refused before the reset runs. A merge, rebase, or
+ * cherry-pick in progress means HEAD is part of an operation this reset would
+ * step over. A first commit has no parent to step back to, and resetting past it
+ * would leave the branch unborn — a state this page has no way to undo. No
+ * commit at all is the read's own empty state.
+ *
+ * The commit summary is read before the reset, while HEAD still names it, so
+ * the answer can report which commit moved even though it is no longer on the
+ * branch. A summary that cannot be read is not a failed undo: the reset already
+ * happened, so the answer stays a success and simply names nothing.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @returns the outcome, including the reason no commit was undone.
+ */
+export async function undoLastCommit(target: GitTarget): Promise<UndoCommitPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  if (!repo.hasHead) return { ok: false, ...coded('no-commits'), reason: 'no-commits' }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const operation = await readOperation(root)
+    if (operation !== undefined) {
+      return { ok: false, ...coded('commit-undo-operation'), reason: 'operation' }
+    }
+
+    // `HEAD^` is checked before the reset rather than inferred from the exit
+    // code of `reset`: a first commit would otherwise be reported as Git's
+    // ambiguous "bad revision" instead of as the state it is.
+    const parent = await runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD^'])
+    if (parent.failure !== undefined) return { ok: false, error: parent.failure, reason: 'error' }
+    if (parent.code !== 0) return { ok: false, ...coded('commit-undo-root'), reason: 'root' }
+
+    const made = await runGit(root, ['log', '-1', `--pretty=format:${LOG_FORMAT}`])
+    const commit = made.code === 0 ? parseSummary(made.stdout.split(FIELD)) : undefined
+
+    // `--soft` is the whole decision: HEAD moves to the parent, the index and
+    // the worktree are not touched, and the commit's changes reappear as staged.
+    const reset = await runGit(root, ['reset', '--soft', 'HEAD^'])
+    if (reset.failure !== undefined) return { ok: false, error: reset.failure, reason: 'error' }
+    if (reset.code !== 0) return { ok: false, ...refusalOf(reset), reason: 'error' }
+
+    return commit === undefined ? { ok: true } : { ok: true, commit }
   })
 }
 

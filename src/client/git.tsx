@@ -20,9 +20,10 @@
  * The page owns no repository state of its own: every answer is a plain value
  * fetched from the Host, and the only local state is which row is selected, which
  * answer is current, which failure the dialog is stating, which operation is in
- * flight — a checkout, one half of a remote round trip, or the commit the
- * changed-path list asks for — each of which is what disables the other
- * controls, the commit form's scope, and where the two boundaries were left.
+ * flight — a checkout, one half of a remote round trip, the commit the
+ * changed-path list asks for, or the undo that takes it back — each of which is
+ * what disables the other controls, the commit form's scope, and where the two
+ * boundaries were left.
  * That keeps a manual refresh honest — it re-reads `status` and `log`, and the
  * diff pane re-reads whatever it is showing.
  *
@@ -105,6 +106,7 @@ import {
   stageAll,
   stageFolder,
   stagePath,
+  undoLastCommit,
   unstageAll,
   unstageFolder,
   unstagePath,
@@ -1066,6 +1068,8 @@ export function GitView(props: {
   const [syncing, setSyncing] = useState<RemoteRun | null>(null)
   /** Whether the changed-path pane's commit is in flight. */
   const [committing, setCommitting] = useState(false)
+  /** Whether the menu's undo of the last commit is in flight. */
+  const [undoing, setUndoing] = useState(false)
   /**
    * The scope the commit form's button is set to.
    *
@@ -1691,6 +1695,33 @@ export function GitView(props: {
   }, [commitScope, sessionId, handleSynced, handleSwitched, reportError, t])
 
   /**
+   * Take the last commit off the branch and leave its changes staged.
+   *
+   * The menu row is the whole interaction: the Host moves HEAD back to the
+   * commit's first parent with a soft reset, so the commit disappears from the
+   * history while every byte it recorded stays in the index. That moves both
+   * answers the page is drawing — the branch's history and the changed-path
+   * lists — so a success takes the checkout's path and clears the selected diff:
+   * a patch read against the old HEAD is no longer the one the new state means.
+   *
+   * A refusal is the error dialog's, like every other menu row's. The repository
+   * is re-read either way, because the answer can only be trusted for what Git
+   * actually did.
+   */
+  const handleUndoCommit = useCallback((): void => {
+    setUndoing(true)
+    void undoLastCommit(sessionId).then(result => {
+      setUndoing(false)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, 'title.undoCommit', result))
+        handleSynced()
+        return
+      }
+      handleSwitched()
+    })
+  }, [sessionId, handleSynced, handleSwitched, reportError, t])
+
+  /**
    * Switch the commit form's scope.
    *
    * Recorded for the Workspace by the persistence effect above rather than
@@ -1921,12 +1952,12 @@ export function GitView(props: {
   // write behind one block's button, and the index write behind one row's stage
   // control. Stating it once here is what keeps a second click from queueing a
   // second checkout, a second merge, a second create or delete, a second round
-  // trip, a second commit, a second fetch, a second resolution, or a second stage
-  // behind the first. Generation is not one of these: it writes nothing, so it is
-  // the form's own state rather than the page's, and a slow model call must not
-  // lock the branch pill or More.
+  // trip, a second commit or undo, a second fetch, a second resolution, or a
+  // second stage behind the first. Generation is not one of these: it writes
+  // nothing, so it is the form's own state rather than the page's, and a slow
+  // model call must not lock the branch pill or More.
   const busy = switching !== null || merging !== null || syncing !== null || committing
-    || fetching || creating || deleting || staging !== null || resolving !== null
+    || undoing || fetching || creating || deleting || staging !== null || resolving !== null
     || markingPath !== null || markingAll
     || ending
 
@@ -2215,6 +2246,8 @@ export function GitView(props: {
           onError={reportError}
           commitScope={commitScope}
           onCommitScope={handleScopeChange}
+          undoing={undoing}
+          onUndoCommit={handleUndoCommit}
         />
         {/* The commit form is the sidebar's own third row, under the toolbar and
             above both panes: what it commits is the changed-path pane's list, but
@@ -3309,6 +3342,8 @@ function SettingsDialog(props: {
  * @param props.onDelete - called with the branches the delete dialog confirmed;
  *   resolves once the answer has arrived.
  * @param props.onError - called with the failure to state in the error dialog.
+ * @param props.undoing - whether the last commit is being taken off the branch.
+ * @param props.onUndoCommit - called to take the last commit off the branch.
  * @returns the header row.
  */
 function SideHead(props: {
@@ -3335,11 +3370,14 @@ function SideHead(props: {
   /** The half the commit button is set to, which the menu's commit rows mark. */
   readonly commitScope: CommitScope
   readonly onCommitScope: (scope: CommitScope) => void
+  /** Whether the menu's undo of the last commit is in flight. */
+  readonly undoing: boolean
+  readonly onUndoCommit: () => void
 }): ReactElement {
   const {
     t, status, sessionId, refreshing, fetching, syncing, switching, merging, creating, deleting,
     busy, onRefresh, onFetch, onPull, onPush, onCheckout, onMerge, onCreate, onDelete, onError,
-    commitScope, onCommitScope,
+    commitScope, onCommitScope, undoing, onUndoCommit,
   } = props
   /** Whether the More menu is showing. */
   const [menuOpen, setMenuOpen] = useState(false)
@@ -3360,9 +3398,11 @@ function SideHead(props: {
    * one would be claiming a wait that is not its own. The remote round trip is
    * one of the menu's now — Pull and Push are its own rows — so it turns this
    * spinner even when the same two calls were started from Sync in the history
-   * pane's header.
+   * pane's header. Undoing a commit is a menu row too, and the control has to
+   * show that wait once the row has closed the list.
    */
   const menuBusy = refreshing || fetching || syncing !== null || merging || creating || deleting
+    || undoing
 
   /** Close the branch list without applying anything. */
   const closeDialog = useCallback((): void => {
@@ -3430,28 +3470,36 @@ function SideHead(props: {
     else if (id === 'push') onPush()
     else if (id === 'commit-scope-staged') onCommitScope('staged')
     else if (id === 'commit-scope-all') onCommitScope('all')
+    else if (id === 'commit-undo') onUndoCommit()
     else if (id === 'branch-create') setPick('create')
     else if (id === 'branch-delete') setDeleteOpen(true)
     else if (id === 'merge-from') setPick('merge-from')
     else if (id === 'settings') setSettingsOpen(true)
-  }, [onRefresh, onFetch, onPull, onPush, onCommitScope])
+  }, [onRefresh, onFetch, onPull, onPush, onCommitScope, onUndoCommit])
 
   // The rows, in the order a reader meets them: the two that only re-read the
   // repository and then run at once, the two halves of the remote round trip,
-  // the two that set what the commit button commits, the two that move branches,
-  // then the one that merges them. Each rule says which of the five groups the
-  // rows under it belong to, so the grouping is argued in the order alone. No row
-  // carries a glyph: the words are the whole of what each row does, and icons in a
-  // 144px card would only take width from them. No row carries a trailing ellipsis
+  // the two that set what the commit button commits and the one that takes the
+  // last commit back off the branch, the two that move branches, then the one
+  // that merges them. Each rule says which of the five groups the rows under it
+  // belong to, so the grouping is argued in the order alone. No row carries a
+  // glyph: the words are the whole of what each row does, and icons in a 144px
+  // card would only take width from them. No row carries a trailing ellipsis
   // either: the mark means work in flight elsewhere on the page, and the rules
   // already tell the rows that run at once from the ones that ask a second
   // question.
   //
-  // The commit rows are the one group here that is a choice rather than a command:
-  // they set what the form's button below commits, and the one in force carries
-  // the platform's check. They sit next to the remote rows rather than at the
-  // bottom because committing is the sidebar's own main action, and the menu is
-  // where its other two answers were already living.
+  // The first two commit rows are choices rather than commands: they set what the
+  // form's button below commits, and the one in force carries the platform's
+  // check. The third takes the commit at HEAD back off the branch, and a soft
+  // reset is what makes it safe to sit in the same group: the changes the commit
+  // held come back staged, so the row undoes the commit without undoing the work.
+  // It follows the choices because it answers a commit that should not have been
+  // made rather than setting the scope of the next one.
+  //
+  // The group sits next to the remote rows rather than at the bottom because
+  // committing is the sidebar's own main action, and the menu is where its other
+  // answers were already living.
   //
   // The two reads say which side of the repository they touch — `(local)` and
   // `(remotes)` — because that is the one thing their names do not: Refresh
@@ -3472,6 +3520,9 @@ function SideHead(props: {
     { type: 'separator' as const, id: 'commit' },
     { id: 'commit-scope-staged', label: t('commit.scopeStaged') },
     { id: 'commit-scope-all', label: t('commit.scopeAll') },
+    // Nothing to undo until the repository has a commit. A disabled row is
+    // quieter than a row that opens a dialog only to say so.
+    { id: 'commit-undo', label: t('head.undoCommit'), disabled: status?.hasHead !== true },
     { type: 'separator' as const, id: 'branches' },
     { id: 'branch-create', label: t('head.branchCreate') },
     { id: 'branch-delete', label: t('head.branchDelete') },

@@ -88,6 +88,9 @@ export type FailureCode =
   | 'commit-nothing-staged'
   | 'commit-conflict'
   | 'commit-identity'
+  // Undoing the commit at HEAD.
+  | 'commit-undo-root'
+  | 'commit-undo-operation'
   // Writing a commit message with the default model.
   | 'no-llm'
   | 'no-model'
@@ -805,6 +808,35 @@ export interface CommitAllPayload {
 }
 
 /**
+ * `POST /undo-commit`: the commit at HEAD, moved back off the branch.
+ *
+ * The move is a soft reset: HEAD steps back to the commit's first parent, while
+ * the index and the working tree keep every byte the commit recorded. So the
+ * changes the commit held come back as staged changes, ready to be amended,
+ * split, or committed again — nothing the reader wrote is thrown away.
+ *
+ * The route refuses while a merge, rebase, or cherry-pick is in progress: the
+ * branch is in the middle of an operation whose commits this reset would step
+ * over. The first commit has no parent to step back to, and is refused as well
+ * instead of leaving the branch unborn.
+ */
+export interface UndoCommitPayload {
+  readonly ok: boolean
+  /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+  readonly error?: string
+  /** The coded refusal, which the page words in the active locale. */
+  readonly failure?: Failure
+  /**
+   * Why no commit was undone: there is no repository, the repository has no
+   * commits, an operation is in progress, or the commit at HEAD is the first
+   * one.
+   */
+  readonly reason?: 'no-repo' | 'error' | 'no-commits' | 'operation' | 'root'
+  /** The commit that was taken off the branch, once the move succeeded. */
+  readonly commit?: CommitSummary
+}
+
+/**
  * `POST /stage`, `/unstage`, `/discard` and their `-folder` siblings: the
  * repository after one path write.
  *
@@ -1052,6 +1084,7 @@ export const ROUTES = {
   commit: '/dsh-cool-git/api/commit',
   commitAll: '/dsh-cool-git/api/commit-all',
   commitStaged: '/dsh-cool-git/api/commit-staged',
+  undoCommit: '/dsh-cool-git/api/undo-commit',
   stage: '/dsh-cool-git/api/stage',
   unstage: '/dsh-cool-git/api/unstage',
   discard: '/dsh-cool-git/api/discard',
