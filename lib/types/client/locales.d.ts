@@ -88,6 +88,8 @@ type UiKey =
  | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stage' | 'stage.unstage' | 'stage.stageFile' | 'stage.unstageFile'
 /** The check on a conflicted row: `git add` it as resolved, i.e. stage it. */
  | 'stage.markResolved' | 'stage.markResolvedFile'
+/** The conflict group's own check: every path in it, as resolved. */
+ | 'stage.markAllResolved'
 /** The unstaged action that throws the worktree half away, and the dialog it
  *  opens before doing so. */
  | 'stage.discard' | 'stage.discardFile' | 'stage.stageFolder' | 'stage.unstageFolder' | 'stage.discardFolder' | 'stage.stageAll' | 'stage.unstageAll' | 'stage.discardAll' | 'discard.title' | 'discard.description' | 'discard.tracked' | 'discard.untracked' | 'discard.folder' | 'discard.folderUntracked' | 'discard.all' | 'discard.allUntracked' | 'discard.confirm' | 'discard.delete' | 'discard.cancel'
@@ -261,6 +263,7 @@ export declare const en: {
     'stage.unstageFile': string;
     'stage.markResolved': string;
     'stage.markResolvedFile': string;
+    'stage.markAllResolved': string;
     'stage.discard': string;
     'stage.discardFile': string;
     'stage.stageFolder': string;

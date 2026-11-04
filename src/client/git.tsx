@@ -1093,6 +1093,8 @@ export function GitView(props: {
    * path, and the control that asked shows the wait.
    */
   const [markingPath, setMarkingPath] = useState<string | null>(null)
+  /** Whether the conflict group's "mark everything resolved" run is in flight. */
+  const [markingAll, setMarkingAll] = useState(false)
   /** Whether the merge the commit form records is in flight. */
   const [ending, setEnding] = useState(false)
   /** The row or folder the discard dialog is asking about, or null while none is open. */
@@ -1436,11 +1438,11 @@ export function GitView(props: {
    * rewrites the history — and a fast-forward rewrites the working tree as well —
    * so a success takes the checkout's path and re-reads everything.
    *
-   * A refusal is the error dialog's, worded around the branch the request named —
-   * and one refusal is also a state rather than a dead end: a conflicted merge is
-   * left in the tree for this page to resolve, so the repository is re-read and
-   * the paths Git wrote markers into appear in the conflict list under the
-   * dialog's sentence about them.
+   * A refusal is the error dialog's, worded around the branch the request named.
+   * A conflicted merge is not one of them: it is a state rather than a dead end,
+   * left in the tree for this page to resolve, so the repository is simply re-read
+   * and the paths Git wrote markers into appear in the conflict list — which is
+   * the word for it, and needs no dialog saying the same thing.
    *
    * @param branch - the branch the dialog confirmed, which is the merge's source.
    */
@@ -1449,8 +1451,14 @@ export function GitView(props: {
     void mergeBranch(sessionId, branch).then(result => {
       setMerging(null)
       if (result?.ok !== true) {
+        // A conflicted merge is left in the tree for this page to resolve, so it
+        // is re-read rather than reported: the conflict list states it, and the
+        // dialog is for the refusals that leave nothing to work on.
+        if (result?.reason === 'conflict') {
+          handleSynced()
+          return
+        }
         reportError(failureOf(t, 'title.mergeFrom', result, { branch }))
-        if (result?.reason === 'conflict') handleSynced()
         return
       }
       handleSwitched()
@@ -1563,7 +1571,11 @@ export function GitView(props: {
     return pullBranch(sessionId).then(result => {
       setSyncing(null)
       if (result?.ok !== true) {
-        reportError(failureOf(t, 'title.pull', result))
+        // A pull that conflicts is not a refusal: the merge is in the tree, the
+        // conflict list is the page's answer to it, and a dialog saying so would
+        // be a second sentence about a state the reader can already see. Every
+        // other failure is the dialog's.
+        if (result?.reason !== 'conflict') reportError(failureOf(t, 'title.pull', result))
         handleSynced()
         return false
       }
@@ -1582,10 +1594,11 @@ export function GitView(props: {
    * the two sides have diverged, so what it brings in may be a merge commit of
    * its own; nothing here has to write a message for it.
    *
-   * A pull that does not finish stops the round trip: a refused one has already
-   * been explained by the dialog, and a conflicted one has left a merge in the
-   * tree that the push cannot act on — the conflict list is the page's next step,
-   * and pushing into a half-merged history is exactly what must not happen.
+   * A pull that does not finish stops the round trip. A refused one has been
+   * explained by the dialog; a conflicted one has left a merge in the tree the
+   * push cannot act on — the conflict list is the page's next step, and pushing
+   * into a half-merged history is exactly what must not happen. Neither one
+   * raises the dialog here.
    *
    * This is only ever asked of a branch that has an upstream — without one the
    * header offers Publish instead — so the pull has a target by construction.
@@ -1894,7 +1907,7 @@ export function GitView(props: {
   // lock the branch pill or More.
   const busy = switching !== null || merging !== null || syncing !== null || committing
     || fetching || creating || deleting || staging !== null || resolving !== null
-    || markingPath !== null
+    || markingPath !== null || markingAll
     || ending
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
@@ -1982,6 +1995,42 @@ export function GitView(props: {
   const handleMarkResolvedRow = useCallback((file: ChangedFile): void => {
     markResolvedPath(file.path)
   }, [markResolvedPath])
+
+  /**
+   * Stage every conflicted path as resolved, from the conflict group's check.
+   *
+   * Each path is its own request because that is what the route is — one file,
+   * its own bytes — and they are sent one after another rather than at once, so a
+   * refusal can name the path it happened on. The run stops at the first refusal:
+   * the rest would fail for the same reason, and the answer that failed has
+   * already said what it was. The last status is what the list repaints from, and
+   * a run that got through none of its paths re-reads the repository instead.
+   */
+  const markAllResolved = useCallback((): void => {
+    if (busy || status?.ok !== true) return
+    const paths = (status.files ?? []).filter(file => file.conflicted).map(file => file.path)
+    if (paths.length === 0) return
+    setMarkingAll(true)
+    void (async (): Promise<void> => {
+      let latest: StatusPayload | undefined
+      let refused = false
+      for (const path of paths) {
+        const result = await markResolved(sessionId, path)
+        if (result?.ok !== true) {
+          reportError(failureOf(t, 'title.resolveDone', result))
+          refused = true
+          break
+        }
+        if (result.status !== undefined) latest = result.status
+      }
+      setMarkingAll(false)
+      if (latest !== undefined) {
+        setStatus(latest)
+        writeRepositorySnapshot(sessionId, latest, log)
+      }
+      if (refused) void refresh()
+    })()
+  }, [busy, status, sessionId, reportError, t, refresh, log])
 
   /**
    * Record the merge the commit form is finishing.
@@ -2193,10 +2242,12 @@ export function GitView(props: {
               staging={staging}
               discarding={discarding}
               marking={markingPath}
+              markingAll={markingAll}
               onSelect={(file, side) => setSelection({ kind: 'file', file, side })}
               onToggleStage={handleStageToggle}
               onDiscard={handleDiscard}
               onMarkResolved={handleMarkResolvedRow}
+              onMarkAllResolved={markAllResolved}
               onToggleFolderStage={handleStageFolder}
               onDiscardFolder={handleDiscardFolder}
               onStageAll={handleStageAll}
@@ -5042,10 +5093,12 @@ function CommitBar(props: {
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
  * @param props.marking - the conflicted path whose resolution write is in flight.
+ * @param props.markingAll - whether every conflicted path is being marked at once.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves one row's path in or out of the index.
  * @param props.onDiscard - opens the confirmation for one row's worktree change.
  * @param props.onMarkResolved - stages one conflicted path as resolved.
+ * @param props.onMarkAllResolved - stages every conflicted path as resolved.
  * @param props.onToggleFolderStage - moves every path under one folder in or out of the index.
  * @param props.onDiscardFolder - opens the confirmation for one folder's worktree changes.
  * @param props.onStageAll - moves one whole half in or out of the index.
@@ -5061,18 +5114,22 @@ function ChangeList(props: {
   readonly staging: string | null
   readonly discarding: string | null
   readonly marking: string | null
+  /** Whether every conflicted path is being marked resolved at once. */
+  readonly markingAll: boolean
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
   readonly onDiscard: (file: ChangedFile) => void
   readonly onMarkResolved: (file: ChangedFile) => void
+  readonly onMarkAllResolved: () => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
   readonly onStageAll: (side: StageableSide) => void
   readonly onDiscardAll: (count: number, untracked: boolean) => void
 }): ReactElement {
   const {
-    t, status, loaded, files, selection, staging, discarding, marking, onSelect, onToggleStage,
-    onDiscard, onMarkResolved, onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
+    t, status, loaded, files, selection, staging, discarding, marking, markingAll, onSelect,
+    onToggleStage, onDiscard, onMarkResolved, onMarkAllResolved, onToggleFolderStage,
+    onDiscardFolder, onStageAll, onDiscardAll,
   } = props
 
   /** The groups the reader closed. */
@@ -5135,16 +5192,17 @@ function ChangeList(props: {
           staging={staging}
           discarding={discarding}
           marking={marking}
+          markingAll={markingAll}
           onSelect={onSelect}
           onToggleStage={onToggleStage}
           onDiscard={onDiscard}
           onMarkResolved={onMarkResolved}
+          onMarkAllResolved={onMarkAllResolved}
           onToggleFolderStage={onToggleFolderStage}
           onDiscardFolder={onDiscardFolder}
-          // The conflict list has no bulk action at all: every row in it is a
-          // decision only its own file can answer, so the header's trailing slot
-          // is left empty rather than offered a control that would lie about
-          // what it does.
+          // The conflict list's bulk action is its own check rather than the
+          // index's `+`: every row in it is a file whose markers are gone, and
+          // staging them all is the same decision the rows' own checks make.
           onStageAll={side === 'conflict' ? undefined : () => onStageAll(side)}
           onDiscardAll={onDiscardAll}
         />
@@ -5164,15 +5222,17 @@ function ChangeList(props: {
  * target, not a chevron beside it — and it carries the half's count, so the
  * header and the rows under it always describe the same thing. Its trailing
  * actions are the row actions' own glyphs, standing for the whole half: the
- * index's offers `−` (unstage), the worktree's offers discard and `+`. They
- * share the rows' reveal and are siblings of the disclosure button, never
- * children of it: a button inside a button is invalid markup, and its clicks
- * would bubble as a fold.
+ * index's offers `−` (unstage), the worktree's offers discard and `+`, and the
+ * conflict list offers its rows' own check. They share the rows' reveal and are
+ * siblings of the disclosure button, never children of it: a button inside a
+ * button is invalid markup, and its clicks would bubble as a fold.
  *
  * A group action covers paths the reader cannot see as well as the ones on
  * screen — a closed folder or a folded group is still part of what `+` and `−`
  * mean. The Host re-reads the status inside its write queue, so the request
- * names no paths at all and the counts here are context rather than a list.
+ * names no paths at all and the counts here are context rather than a list. The
+ * conflict list's check is the exception that proves the rule: `git add` names
+ * the files it resolves, so that one is sent one path at a time.
  *
  * @param props.t - the page's translate seat.
  * @param props.side - the half this group draws.
@@ -5207,20 +5267,24 @@ function ChangeGroup(props: {
   readonly staging: string | null
   readonly discarding: string | null
   readonly marking: string | null
+  /** Whether every conflicted path is being marked resolved at once. */
+  readonly markingAll: boolean
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
   readonly onDiscard: (file: ChangedFile) => void
   readonly onMarkResolved: (file: ChangedFile) => void
+  /** Marks every path in this group resolved; the conflict list's own bulk action. */
+  readonly onMarkAllResolved: () => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
-  /** Absent for the conflict list, whose every row is its own decision. */
+  /** Absent for the conflict list, whose bulk action is its own check. */
   readonly onStageAll?: () => void
   readonly onDiscardAll: (count: number, untracked: boolean) => void
 }): ReactElement {
   const {
     t, side, files, open, onToggle, collapsed, onToggleFolder, selection, staging, discarding,
-    onSelect, onToggleStage, onDiscard, marking, onMarkResolved, onToggleFolderStage,
-    onDiscardFolder, onStageAll, onDiscardAll,
+    onSelect, onToggleStage, onDiscard, marking, markingAll, onMarkResolved, onMarkAllResolved,
+    onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
   } = props
 
   const tree = useMemo(() => buildFileTree(files), [files])
@@ -5231,7 +5295,7 @@ function ChangeGroup(props: {
   const discardBusy = discarding === 'unstaged:'
   // The trailing slot's width comes from this attribute, so a group with no
   // action must say so rather than draw an empty one that reserves the space.
-  const actions = side === 'conflict' ? 'none' : side === 'staged' ? 'stage' : 'both'
+  const actions = side === 'unstaged' ? 'both' : 'stage'
 
   return (
     <section className="dsh-cg-group">
@@ -5246,6 +5310,28 @@ function ChangeGroup(props: {
           <span className="dsh-cg-group-label">{headText(t(GROUP_KEY[side]), count)}</span>
         </button>
         <span className="dsh-cg-row-actions">
+          {side === 'conflict'
+            ? (
+              <Tooltip
+                label={t('stage.markAllResolved')}
+                side="top"
+                delayMs={TOOLTIP_DELAY_MS}
+                portal
+                maxWidth={TOOLTIP_MAX_WIDTH}
+              >
+                <button
+                  type="button"
+                  className="dsh-cg-row-action"
+                  aria-label={t('stage.markAllResolved')}
+                  data-busy={markingAll}
+                  disabled={count === 0 || actionsBusy}
+                  onClick={onMarkAllResolved}
+                >
+                  {markingAll ? SPINNER_ICON : <IconCheck />}
+                </button>
+              </Tooltip>
+            )
+            : null}
           {side === 'unstaged'
             ? (
               <Tooltip
@@ -6148,6 +6234,23 @@ function ConflictPane(props: {
 }
 
 /**
+ * How many lines of the file one block occupies.
+ *
+ * A context run is its own lines. A region is its opener, its two sides and its
+ * closer, plus the base marker and the base section when Git wrote one — the
+ * same rows the pane draws, which is what makes the numbers in the gutter line up
+ * with the file an editor would show.
+ *
+ * @param block - the block to measure.
+ * @returns its line count.
+ */
+function blockLineCount(block: ConflictBlock): number {
+  if (block.kind === 'context') return block.lines.length
+  const base = block.base === undefined ? 0 : block.base.length + 1
+  return 3 + block.ours.length + block.theirs.length + base
+}
+
+/**
  * One conflicted file, drawn as the file itself.
  *
  * The pane is a diff-shaped view rather than a report about a diff: every line of
@@ -6210,6 +6313,21 @@ function ConflictBody(props: {
     return order
   }, [doc])
 
+  // The file line each block starts at. Counted here rather than read from the
+  // answer, because the page is the half that draws the rows: a block occupies
+  // exactly as many lines as it has, so the numbers cannot disagree with what is
+  // on screen — and an answer from a Host that predates the numbering still
+  // numbers correctly.
+  const starts = useMemo(() => {
+    const lines: number[] = []
+    let line = 1
+    for (const block of doc.blocks) {
+      lines.push(line)
+      line += blockLineCount(block)
+    }
+    return lines
+  }, [doc])
+
   if (doc.state === 'binary' || doc.state === 'missing') {
     return (
       <div className="dsh-cg-empty">
@@ -6257,7 +6375,8 @@ function ConflictBody(props: {
           <ConflictContext
             key={`context:${index}`}
             t={t}
-            block={block}
+            lines={block.lines}
+            start={starts[index] ?? 1}
             index={index}
             expanded={expanded.has(index)}
             onToggle={toggleContext}
@@ -6268,6 +6387,7 @@ function ConflictBody(props: {
             key={block.key}
             t={t}
             region={block}
+            line={starts[index] ?? 1}
             ordinal={ordinals.get(block.key) ?? 0}
             total={doc.regions}
             resolving={resolving}
@@ -6306,21 +6426,23 @@ function ConflictBody(props: {
 function ConflictRegionView(props: {
   readonly t: Translate
   readonly region: ConflictRegion
+  /** The file line the block starts at, counting from 1. */
+  readonly line: number
   readonly ordinal: number
   readonly total: number
   readonly resolving: string | null
   readonly busy: boolean
   readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
 }): ReactElement {
-  const { t, region, ordinal, total, resolving, busy, onResolve } = props
+  const { t, region, line, ordinal, total, resolving, busy, onResolve } = props
   const mine = resolving === region.key
   const choose = (choice: ResolveChoice): (() => void) => () => onResolve(choice, [region.key])
 
-  // Where each row sits in the file. Only the opener's number is read from the
-  // Host; the rest follow from the side lengths, because a block is drawn exactly
-  // as it is written — opener, ours, an optional base section, separator, theirs,
-  // closer — and a number counted here cannot drift from the row it is drawn on.
-  const oursLine = region.line + 1
+  // Where each row sits in the file. Only the opener's number is handed in; the
+  // rest follow from the side lengths, because a block is drawn exactly as it is
+  // written — opener, ours, an optional base section, separator, theirs, closer —
+  // and a number counted here cannot drift from the row it is drawn on.
+  const oursLine = line + 1
   const baseLine = oursLine + region.ours.length
   const separatorLine = baseLine + (region.base === undefined ? 0 : region.base.length + 1)
   const theirsLine = separatorLine + 1
@@ -6381,7 +6503,7 @@ function ConflictRegionView(props: {
         </span>
       </div>
       <ConflictMarker
-        line={region.line}
+        line={line}
         mark="<<<<<<<"
         tag={t('conflict.current')}
         gitLabel={region.oursLabel}
@@ -6517,7 +6639,8 @@ function ConflictNoLines(props: {
  * the count in the fold is how much else is there.
  *
  * @param props.t - the page's translate seat.
- * @param props.block - the run, with the line it starts at.
+ * @param props.lines - the run's text, terminators already removed.
+ * @param props.start - the file line the run starts at, counting from 1.
  * @param props.index - its position among the file's blocks, which is what the
  * fold is keyed by.
  * @param props.expanded - whether the reader has opened this run.
@@ -6526,19 +6649,20 @@ function ConflictNoLines(props: {
  */
 function ConflictContext(props: {
   readonly t: Translate
-  readonly block: { readonly line: number; readonly lines: readonly string[] }
+  readonly lines: readonly string[]
+  /** The file line the run starts at, counting from 1. */
+  readonly start: number
   readonly index: number
   readonly expanded: boolean
   readonly onToggle: (index: number) => void
 }): ReactElement {
-  const { t, block, index, expanded, onToggle } = props
-  const { lines } = block
+  const { t, lines, start, index, expanded, onToggle } = props
 
   if (lines.length <= CONFLICT_CONTEXT_EDGE * 2 + 1) {
     return (
       <>
         {lines.map((text, offset) => (
-          <ConflictRow key={offset} line={block.line + offset} kind="context" text={text} />
+          <ConflictRow key={offset} line={start + offset} kind="context" text={text} />
         ))}
       </>
     )
@@ -6564,7 +6688,7 @@ function ConflictContext(props: {
       <>
         {fold}
         {lines.map((text, offset) => (
-          <ConflictRow key={offset} line={block.line + offset} kind="context" text={text} />
+          <ConflictRow key={offset} line={start + offset} kind="context" text={text} />
         ))}
       </>
     )
@@ -6575,13 +6699,13 @@ function ConflictContext(props: {
   return (
     <>
       {head.map((text, offset) => (
-        <ConflictRow key={`head:${offset}`} line={block.line + offset} kind="context" text={text} />
+        <ConflictRow key={`head:${offset}`} line={start + offset} kind="context" text={text} />
       ))}
       {fold}
       {tail.map((text, offset) => (
         <ConflictRow
           key={`tail:${offset}`}
-          line={block.line + lines.length - CONFLICT_CONTEXT_EDGE + offset}
+          line={start + lines.length - CONFLICT_CONTEXT_EDGE + offset}
           kind="context"
           text={text}
         />

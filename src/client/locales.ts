@@ -205,6 +205,8 @@ type UiKey =
   /** The check on a conflicted row: `git add` it as resolved, i.e. stage it. */
   | 'stage.markResolved'
   | 'stage.markResolvedFile'
+  /** The conflict group's own check: every path in it, as resolved. */
+  | 'stage.markAllResolved'
   /** The unstaged action that throws the worktree half away, and the dialog it
    *  opens before doing so. */
   | 'stage.discard'
@@ -469,6 +471,7 @@ export const en = {
   'stage.unstageFile': 'Unstage {path}',
   'stage.markResolved': 'Mark resolved',
   'stage.markResolvedFile': 'Mark {path} resolved',
+  'stage.markAllResolved': 'Mark all resolved',
   'stage.discard': 'Discard changes',
   'stage.discardFile': 'Discard changes in {path}',
   'stage.stageFolder': 'Stage changes under {path}',
@@ -796,6 +799,7 @@ export const zh: typeof en = {
   'stage.unstageFile': '取消暂存 {path}',
   'stage.markResolved': '标记为已解决',
   'stage.markResolvedFile': '标记 {path} 为已解决',
+  'stage.markAllResolved': '全部标记为已解决',
   'stage.discard': '放弃变更',
   'stage.discardFile': '放弃 {path} 的变更',
   'stage.stageFolder': '暂存 {path} 下的变更',

@@ -500,15 +500,6 @@ export interface ConflictRegion {
      * byte-identical blocks in one file therefore still have different keys.
      */
     readonly key: string;
-    /**
-     * The file line the block starts at, counting from 1 — its `<<<<<<<` marker.
-     *
-     * The page numbers the lines it draws, and it draws the file as it is on disk:
-     * one number per line, the marker lines included. Taking the numbers from here
-     * rather than counting on the page is what keeps them right when a side is
-     * empty, or when a base section sits between the two.
-     */
-    readonly line: number;
     readonly ours: readonly string[];
     readonly theirs: readonly string[];
     /** The merge base, present only for a `diff3`-style conflict. */
@@ -528,8 +519,6 @@ export interface ConflictRegion {
 /** One run of a conflicted file: ordinary lines, or a block to resolve. */
 export type ConflictBlock = {
     readonly kind: 'context';
-    /** The file line the run starts at, counting from 1. */
-    readonly line: number;
     readonly lines: readonly string[];
 } | ({
     readonly kind: 'region';
