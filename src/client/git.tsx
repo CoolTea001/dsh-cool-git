@@ -669,6 +669,26 @@ function failureOf(
 }
 
 /**
+ * Whether a refused merge or pull left the merge in the working tree.
+ *
+ * That is a state, not a refusal: the conflict list is the page's answer to it,
+ * and a dialog saying so would be a second sentence about something the reader
+ * can already see. Two facts say so, and both are in the answer. `reason` is the
+ * one the Host sends today. The failure code is the older signal, kept because a
+ * page can outlive the Host it talks to — a reload picks up a new bundle while
+ * the process behind it still runs yesterday's — and reporting a state as an
+ * error is exactly what that mismatch produces otherwise.
+ *
+ * @param payload - the route's answer.
+ * @returns whether the merge the request asked for is in the tree.
+ */
+function leftMerge(payload: RouteOutcome | null | undefined): boolean {
+  if (payload === null || payload === undefined) return false
+  const code = payload.failure?.code
+  return payload.reason === 'conflict' || code === 'pull-conflict' || code === 'merge-conflict'
+}
+
+/**
  * The lines one branch-delete answer amounts to.
  *
  * A delete is the one request whose answer is a list, so it is the one failure
@@ -1454,7 +1474,7 @@ export function GitView(props: {
         // A conflicted merge is left in the tree for this page to resolve, so it
         // is re-read rather than reported: the conflict list states it, and the
         // dialog is for the refusals that leave nothing to work on.
-        if (result?.reason === 'conflict') {
+        if (leftMerge(result)) {
           handleSynced()
           return
         }
@@ -1571,11 +1591,10 @@ export function GitView(props: {
     return pullBranch(sessionId).then(result => {
       setSyncing(null)
       if (result?.ok !== true) {
-        // A pull that conflicts is not a refusal: the merge is in the tree, the
-        // conflict list is the page's answer to it, and a dialog saying so would
-        // be a second sentence about a state the reader can already see. Every
-        // other failure is the dialog's.
-        if (result?.reason !== 'conflict') reportError(failureOf(t, 'title.pull', result))
+        // A pull that conflicts is not a refusal: the merge is in the tree and the
+        // conflict list is the page's answer to it. Every other failure is the
+        // dialog's.
+        if (!leftMerge(result)) reportError(failureOf(t, 'title.pull', result))
         handleSynced()
         return false
       }
