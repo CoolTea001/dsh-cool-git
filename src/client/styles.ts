@@ -1014,7 +1014,7 @@ const GIT_CSS = [
   '.dsh-cg-text{white-space:pre;padding-right:16px}',
   '.dsh-cg-line[data-kind=meta] .dsh-cg-text{grid-column:1 / -1;padding-left:12px}',
 
-  // 4. The conflict pane and the operation banner.
+  // 4. The conflict pane.
   //
   // A conflicted path is not a patch: it is a list of decisions. The blocks are
   // drawn as cards rather than as diff rows so they read as things to answer

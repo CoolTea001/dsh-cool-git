@@ -2143,7 +2143,7 @@ export function GitView(props: {
           stagedCount={stagedCount}
           allCount={files.length}
           operation={status?.ok === true ? status.operation ?? null : null}
-          conflicts={conflictCount}
+          mergeMessage={status?.ok === true ? status.mergeMessage : undefined}
           ending={ending}
           onScopeChange={handleScopeChange}
           onCommit={handleCommit}
@@ -4652,7 +4652,7 @@ interface GeneratedMessage {
  * @param props.stagedCount - how many rows the index holds.
  * @param props.allCount - how many changed paths the whole list holds.
  * @param props.operation - the merge, rebase, or cherry-pick in progress, if any.
- * @param props.conflicts - how many paths are still unmerged.
+ * @param props.mergeMessage - the message the merge already carries, for the prefill.
  * @param props.ending - the merge this form is recording is in flight.
  * @param props.onScopeChange - switches the commit's scope.
  * @param props.onCommit - runs the commit; resolves true when one was made.
@@ -4670,7 +4670,7 @@ function CommitBar(props: {
   readonly stagedCount: number
   readonly allCount: number
   readonly operation: ConflictOperation | null
-  readonly conflicts: number
+  readonly mergeMessage: string | undefined
   readonly ending: boolean
   readonly onScopeChange: (scope: CommitScope) => void
   readonly onCommit: (message: string) => Promise<boolean>
@@ -4678,8 +4678,8 @@ function CommitBar(props: {
   readonly onGenerate: () => Promise<GeneratedMessage | null>
 }): ReactElement {
   const {
-    t, disabled, committing, scope, stagedCount, allCount, operation, conflicts, ending,
-    onScopeChange, onCommit, onFinishMerge, onGenerate,
+    t, disabled, committing, scope, stagedCount, allCount, operation, mergeMessage,
+    ending, onScopeChange, onCommit, onFinishMerge, onGenerate,
   } = props
   const [message, setMessage] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -4691,16 +4691,21 @@ function CommitBar(props: {
   /** Whether this form is the one that records a merge in progress. */
   const merging = operation === 'merge'
   /**
-   * Whether the merge is ready to be recorded: it is a merge, and no path is
-   * unmerged any more. That is the only state in which this button ends one.
+   * Whether the repository is in an operation this page can neither continue nor
+   * record: a rebase or a cherry-pick. A merge is not one of those — its commit
+   * is this form's own button, whether or not it is ready yet.
    */
-  const finishing = merging && conflicts === 0
+  const blocked = operation !== null && !merging
+
   /**
-   * Whether a repository operation stands between the form and an ordinary
-   * commit: a merge with paths still unmerged, or a rebase or a cherry-pick,
-   * which this page can neither continue nor record.
+   * The merge message this form was last prefilled with.
+   *
+   * The field is the reader's the moment they touch it, so the prefill lands
+   * once per message: a status re-read that carries the same words must not put
+   * them back over an edit, and a field the reader emptied must stay empty. A
+   * different message — a second merge — is prefilled again.
    */
-  const blocked = operation !== null && !finishing
+  const prefilled = useRef<string | null>(null)
 
   /** How many rows the current scope would commit. */
   const count = scope === 'staged' ? stagedCount : allCount
@@ -4729,6 +4734,32 @@ function CommitBar(props: {
   }, [message])
 
   /**
+   * Put the merge's own message in the field.
+   *
+   * Git wrote it when the merge started, so it is not a hint about the state:
+   * it is what the commit will say, and it belongs where a commit's message
+   * always lives. The field is prefilled only while it is empty, because a
+   * reader who has typed has taken it over, and only once per message, because
+   * a re-read that carries the same words must not undo an edit.
+   */
+  useEffect(() => {
+    if (operation !== 'merge' || mergeMessage === undefined) {
+      // The merge is over. A field still holding the words this effect put there
+      // is holding a message for a commit that no longer exists — the merge was
+      // finished or abandoned elsewhere — so it goes with the state it described.
+      // Text the reader typed is theirs either way and stays.
+      if (prefilled.current !== null) {
+        setMessage(current => (current === prefilled.current ? '' : current))
+        prefilled.current = null
+      }
+      return
+    }
+    if (prefilled.current === mergeMessage) return
+    prefilled.current = mergeMessage
+    setMessage(current => (current === '' ? mergeMessage : current))
+  }, [operation, mergeMessage])
+
+  /**
    * Ask for the commit the field currently describes.
    *
    * Bound to the button and to ⌘/Ctrl+Enter in the field: Enter alone is the line
@@ -4737,10 +4768,12 @@ function CommitBar(props: {
   const submit = useCallback((): void => {
     const trimmed = message.trim()
     if (disabled || committing || ending || generating || blocked) return
-    // The merge's own button: the field is optional here, because a merge commit
-    // already has Git's `MERGE_MSG` and an empty field asks for exactly that.
-    if (finishing) {
-      void onFinishMerge(trimmed).then(made => {
+    // The merge's own button. The prefilled message is Git's already, so leaving
+    // it untouched asks the Host to keep it (`--no-edit`) rather than to send a
+    // copy of it back; only words the reader wrote are sent.
+    if (merging) {
+      const words = mergeMessage !== undefined && trimmed === mergeMessage ? '' : trimmed
+      void onFinishMerge(words).then(made => {
         if (!made) return
         // The merge is recorded, so the words that did not override its message
         // are as spent as a commit's are.
@@ -4757,7 +4790,10 @@ function CommitBar(props: {
       setMessage('')
       setWarning('')
     })
-  }, [message, disabled, committing, ending, generating, blocked, finishing, nothingToCommit, onCommit, onFinishMerge])
+  }, [
+    message, disabled, committing, ending, generating, blocked, merging, mergeMessage,
+    nothingToCommit, onCommit, onFinishMerge,
+  ])
 
   /**
    * Switch the commit's scope, and drop a generated finding with the old one.
@@ -4804,22 +4840,18 @@ function CommitBar(props: {
   /**
    * What the field says while it holds no text of the reader's.
    *
-   * The empty field is the form's own status line, which is why it carries the
-   * two states a merge puts the form in: how many paths are left to resolve, or
-   * that the field may stay empty because Git already wrote the message. That is
-   * the whole of the merge's on-screen statement — there is no banner above the
-   * form — and it sits inside the control the reader would use next.
+   * Only two states answer here: the ordinary commit's own prompt, and the one
+   * operation this page cannot record — a rebase or a cherry-pick, which the
+   * reader has to finish or abandon in a terminal. A merge's state is not among
+   * them, because its message is in the field itself rather than in a sentence
+   * about the merge.
    */
   const pendingOperation = operation === null
     ? ''
     : t(operation === 'rebase' ? 'operation.rebase' : 'operation.cherryPick')
   const placeholder = blocked
-    ? merging
-      ? t('commit.mergePending', { count: conflicts })
-      : t('commit.operationBlocked', { operation: pendingOperation })
-    : finishing
-      ? t('commit.mergeReady')
-      : t('commit.placeholder')
+    ? t('commit.operationBlocked', { operation: pendingOperation })
+    : t('commit.placeholder')
 
   return (
     <div className="dsh-cg-commit-bar">
@@ -4902,7 +4934,7 @@ function CommitBar(props: {
           type="button"
           className="dsh-cg-commit-send"
           disabled={disabled || committing || ending || generating || blocked
-            || (!finishing && (message.trim() === '' || nothingToCommit))}
+            || (!merging && (message.trim() === '' || nothingToCommit))}
           onClick={submit}
         >
           {/* The label is its own span so a narrow sidebar elides it instead of
@@ -4911,7 +4943,7 @@ function CommitBar(props: {
           <span className="dsh-cg-commit-label">
             {ending || committing
               ? t('commit.busy')
-              : finishing
+              : merging
                 ? t('commit.finishMerge')
                 : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll')}
           </span>

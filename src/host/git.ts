@@ -632,6 +632,11 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
     head = { hash, short, date, subject }
   }
 
+  // A merge already has the words it will commit under, and the page's form is
+  // where a reader looks for them: it is prefilled from here rather than from a
+  // sentence about the merge being in progress.
+  const mergeMessage = operation === 'merge' ? await readMergeMessage(root) : undefined
+
   return {
     ok: true,
     root: repo.root,
@@ -644,6 +649,7 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
     head,
     files: parsed.files,
     ...(operation === undefined ? {} : { operation }),
+    ...(mergeMessage === undefined ? {} : { mergeMessage }),
   }
 }
 
@@ -683,6 +689,44 @@ async function readOperation(root: GitTarget): Promise<ConflictOperation | undef
     return 'cherry-pick'
   }
   return undefined
+}
+
+/**
+ * The message a merge already has, cleaned the way Git cleans it.
+ *
+ * `MERGE_MSG` is written when the merge starts and is the message the commit
+ * would carry: Git's own `Merge branch 'feat' into main`, a body when one was
+ * passed, and the `# Conflicts:` block it notes the unresolved paths under. The
+ * page shows the same words in the commit form VSCode does, so the reader sees
+ * what is about to be recorded instead of being told a merge is in progress.
+ *
+ * The file's path comes from `--git-path`, which is correct in a worktree and a
+ * submodule, and its text goes through `git stripspace --strip-comments` rather
+ * than through a rule of this module's own: the comment block is Git's, and the
+ * character that marks it is `core.commentChar`, which the same command honours.
+ * A merge whose file cannot be read or cleaned answers `undefined` — the form
+ * then opens empty, which is exactly the state it has before Git wrote anything.
+ *
+ * @param root - the repository root and the process substrate.
+ * @returns the cleaned message, or undefined when there is none to show.
+ */
+async function readMergeMessage(root: GitTarget): Promise<string | undefined> {
+  const located = await runGit(root, ['rev-parse', '--git-path', 'MERGE_MSG'])
+  if (located.code !== 0) return undefined
+  const path = located.stdout.trim()
+  if (path === '') return undefined
+
+  let text: string
+  try {
+    text = await readFile(isAbsolute(path) ? path : resolve(root.workdir, path), 'utf8')
+  } catch {
+    return undefined
+  }
+
+  const cleaned = await runGit(root, ['stripspace', '--strip-comments'], { stdin: text })
+  if (cleaned.code !== 0) return undefined
+  const message = cleaned.stdout.trim()
+  return message === '' ? undefined : message
 }
 
 /** The branch facts and changed paths one `status` invocation reported. */

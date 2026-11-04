@@ -253,8 +253,6 @@ type UiKey =
   | 'operation.rebase'
   | 'operation.cherryPick'
   | 'commit.finishMerge'
-  | 'commit.mergePending'
-  | 'commit.mergeReady'
   | 'commit.operationBlocked'
   /** The conflict pane: its header, its per-block choices, and its states. */
   | 'conflict.block'
@@ -515,8 +513,6 @@ export const en = {
   'operation.rebase': 'Rebase',
   'operation.cherryPick': 'Cherry-pick',
   'commit.finishMerge': 'Finish merge',
-  'commit.mergePending': 'Merge in progress: {count} conflict(s) left',
-  'commit.mergeReady': 'Leave empty to keep Git\'s merge message',
   'commit.operationBlocked': '{operation} in progress: finish or abort it in a terminal first',
 
   'conflict.block': 'Conflict {index} / {total}',
@@ -843,8 +839,6 @@ export const zh: typeof en = {
   'operation.rebase': '变基',
   'operation.cherryPick': '拣选',
   'commit.finishMerge': '完成合并',
-  'commit.mergePending': '合并进行中：还有 {count} 个冲突待解决',
-  'commit.mergeReady': '留空则沿用 Git 生成的合并信息',
   'commit.operationBlocked': '{operation}进行中：请先在终端完成或中止',
 
   'conflict.block': '冲突 {index} / {total}',

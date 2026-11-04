@@ -191,6 +191,17 @@ export interface StatusPayload {
    * rest, which is the ordinary case.
    */
   readonly operation?: ConflictOperation
+  /**
+   * The message a merge already carries, when one is in progress.
+   *
+   * Git writes it when the merge starts — `Merge branch 'feat' into main`, the
+   * `# Conflicts:` block under it, and a body when one was passed — and this is
+   * that text with the comment block removed, exactly as a commit would record
+   * it. The page prefills its commit form with it, so the merge is read as the
+   * message it is about to be committed under rather than as a sentence about a
+   * state. Absent when no merge is in progress or Git left no message.
+   */
+  readonly mergeMessage?: string
 }
 
 /**

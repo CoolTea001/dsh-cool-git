@@ -98,7 +98,7 @@ type UiKey =
 /** The diff pane. */
  | 'diff.pane' | 'diff.notRepo' | 'diff.repoFailed' | 'diff.emptyHint' | 'diff.loading' | 'diff.failed' | 'diff.noTextTitle' | 'diff.noTextUntracked' | 'diff.noTextOther' | 'diff.mergeNote' | 'diff.hiddenRows' | 'diff.truncated' | 'diff.copy' | 'diff.copied' | 'diff.expand' | 'diff.collapse'
 /** The operations this page cannot finish, and the merge the form can. */
- | 'operation.rebase' | 'operation.cherryPick' | 'commit.finishMerge' | 'commit.mergePending' | 'commit.mergeReady' | 'commit.operationBlocked'
+ | 'operation.rebase' | 'operation.cherryPick' | 'commit.finishMerge' | 'commit.operationBlocked'
 /** The conflict pane: its header, its per-block choices, and its states. */
  | 'conflict.block' | 'conflict.regionCount' | 'conflict.noRegions' | 'conflict.current' | 'conflict.incoming' | 'conflict.base' | 'conflict.takeOurs' | 'conflict.takeTheirs' | 'conflict.takeBoth' | 'conflict.takeBase' | 'conflict.takeAllOurs' | 'conflict.takeAllTheirs' | 'conflict.markResolved' | 'conflict.noLines' | 'conflict.binaryTitle' | 'conflict.binaryText' | 'conflict.missingTitle' | 'conflict.missingText' | 'conflict.keepOurs' | 'conflict.keepTheirs' | 'conflict.keepOursGone' | 'conflict.keepTheirsGone' | 'conflict.cleanTitle' | 'conflict.cleanText';
 /** Every key in the namespace: the page's own, and one sentence per refusal. */
@@ -301,8 +301,6 @@ export declare const en: {
     'operation.rebase': string;
     'operation.cherryPick': string;
     'commit.finishMerge': string;
-    'commit.mergePending': string;
-    'commit.mergeReady': string;
     'commit.operationBlocked': string;
     'conflict.block': string;
     'conflict.regionCount': string;
