@@ -6106,6 +6106,7 @@ function ConflictPane(props: {
               <button
                 type="button"
                 className="dsh-cg-conflict-btn"
+                data-variant="ghost"
                 disabled={disabled}
                 onClick={() => onResolve('ours', keys)}
               >
@@ -6114,6 +6115,7 @@ function ConflictPane(props: {
               <button
                 type="button"
                 className="dsh-cg-conflict-btn"
+                data-variant="ghost"
                 disabled={disabled}
                 onClick={() => onResolve('theirs', keys)}
               >

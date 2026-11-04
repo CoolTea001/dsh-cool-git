@@ -1042,6 +1042,12 @@ const GIT_CSS = [
   '.dsh-cg-conflict-btn:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-conflict-btn[data-variant=primary]{border-color:transparent;background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-label-primary-foreground)}',
   '.dsh-cg-conflict-btn[data-variant=primary]:hover:not(:disabled){background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-label-primary-foreground);filter:brightness(1.08)}',
+  // The pane's header actions, drawn the platform's ghost way: no stroke and no
+  // fill at rest, so a row of them reads as words rather than as boxes the pane
+  // is full of. The tokens are the primitive's own (`--dsw-alias-interactive-*`),
+  // so the hover fill is the same one every other ghost control uses.
+  '.dsh-cg-conflict-btn[data-variant=ghost]{border-color:transparent;background:transparent;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-conflict-btn[data-variant=ghost]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-conflict-btn svg{width:12px;height:12px;display:block}',
 
   // The blocks' scroller: the same vertical flow as the diff pane, with the

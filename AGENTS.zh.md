@@ -1,5 +1,3 @@
-lalala
-
 # AGENTS.zh.md
 
 ## commit & push 规则
@@ -16,4 +14,4 @@ lalala
 2. 同时添加 `.zh.md` 作为中文补充。
 3. `.md` 和 `.zh.md` 需要同步更新。
 
-lalala
+哈哈哈
