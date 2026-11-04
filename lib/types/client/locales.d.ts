@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message' | 'fallback.settings' | 'fallback.settingsRead'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.stageAll' | 'title.unstageAll' | 'title.discardAll' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.stageAll' | 'title.unstageAll' | 'title.discardAll' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead' | 'title.resolve' | 'title.resolveDone' | 'title.abortOperation' | 'title.completeMerge'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -83,11 +83,8 @@ type UiKey =
  | 'hint.commit-identity'
 /** The changed-path pane's empty and loading states. */
  | 'list.notRepo' | 'list.statusFailed' | 'list.loading'
-/** The note shown while conflicts are withheld from the changed-path lists. */
- | 'list.conflictsHidden'
 /** The changed-path lists: what each holds, and the actions that move one path
- *  between the first two or discard its worktree half. The conflict name is
- *  kept for the list the header withholds (see the client's `VisibleSide`). */
+ *  between the first two or discard its worktree half. */
  | 'stage.staged' | 'stage.unstaged' | 'stage.conflict' | 'stage.stage' | 'stage.unstage' | 'stage.stageFile' | 'stage.unstageFile'
 /** The unstaged action that throws the worktree half away, and the dialog it
  *  opens before doing so. */
@@ -99,7 +96,11 @@ type UiKey =
 /** What one history row adds to the commit it names. */
  | 'commit.noMessage' | 'commit.merge'
 /** The diff pane. */
- | 'diff.pane' | 'diff.notRepo' | 'diff.repoFailed' | 'diff.emptyHint' | 'diff.loading' | 'diff.failed' | 'diff.noTextTitle' | 'diff.noTextUntracked' | 'diff.noTextOther' | 'diff.mergeNote' | 'diff.hiddenRows' | 'diff.truncated' | 'diff.copy' | 'diff.copied' | 'diff.expand' | 'diff.collapse';
+ | 'diff.pane' | 'diff.notRepo' | 'diff.repoFailed' | 'diff.emptyHint' | 'diff.loading' | 'diff.failed' | 'diff.noTextTitle' | 'diff.noTextUntracked' | 'diff.noTextOther' | 'diff.mergeNote' | 'diff.hiddenRows' | 'diff.truncated' | 'diff.copy' | 'diff.copied' | 'diff.expand' | 'diff.collapse'
+/** The banner for an operation that stopped mid-flight. */
+ | 'operation.merge' | 'operation.rebase' | 'operation.cherryPick' | 'operation.pending' | 'operation.ready' | 'operation.clean' | 'operation.abort' | 'operation.complete'
+/** The conflict pane: its header, its per-block choices, and its states. */
+ | 'conflict.block' | 'conflict.regionCount' | 'conflict.noRegions' | 'conflict.current' | 'conflict.incoming' | 'conflict.base' | 'conflict.takeOurs' | 'conflict.takeTheirs' | 'conflict.takeBoth' | 'conflict.takeBase' | 'conflict.takeAllOurs' | 'conflict.takeAllTheirs' | 'conflict.markResolved' | 'conflict.noLines' | 'conflict.binaryTitle' | 'conflict.binaryText' | 'conflict.missingTitle' | 'conflict.missingText' | 'conflict.keepOurs' | 'conflict.keepTheirs' | 'conflict.keepOursGone' | 'conflict.keepTheirsGone' | 'conflict.cleanTitle' | 'conflict.cleanText';
 /** Every key in the namespace: the page's own, and one sentence per refusal. */
 export type MessageKey = UiKey | `error.${FailureCode}`;
 /**
@@ -165,6 +166,10 @@ export declare const en: {
     'title.message': string;
     'title.settings': string;
     'title.settingsRead': string;
+    'title.resolve': string;
+    'title.resolveDone': string;
+    'title.abortOperation': string;
+    'title.completeMerge': string;
     'dialog.close': string;
     'dialog.ok': string;
     'head.currentBranch': string;
@@ -246,7 +251,6 @@ export declare const en: {
     'list.notRepo': string;
     'list.statusFailed': string;
     'list.loading': string;
-    'list.conflictsHidden': string;
     'stage.staged': string;
     'stage.unstaged': string;
     'stage.conflict': string;
@@ -295,6 +299,38 @@ export declare const en: {
     'diff.copied': string;
     'diff.expand': string;
     'diff.collapse': string;
+    'operation.merge': string;
+    'operation.rebase': string;
+    'operation.cherryPick': string;
+    'operation.pending': string;
+    'operation.ready': string;
+    'operation.clean': string;
+    'operation.abort': string;
+    'operation.complete': string;
+    'conflict.block': string;
+    'conflict.regionCount': string;
+    'conflict.noRegions': string;
+    'conflict.current': string;
+    'conflict.incoming': string;
+    'conflict.base': string;
+    'conflict.takeOurs': string;
+    'conflict.takeTheirs': string;
+    'conflict.takeBoth': string;
+    'conflict.takeBase': string;
+    'conflict.takeAllOurs': string;
+    'conflict.takeAllTheirs': string;
+    'conflict.markResolved': string;
+    'conflict.noLines': string;
+    'conflict.binaryTitle': string;
+    'conflict.binaryText': string;
+    'conflict.missingTitle': string;
+    'conflict.missingText': string;
+    'conflict.keepOurs': string;
+    'conflict.keepTheirs': string;
+    'conflict.keepOursGone': string;
+    'conflict.keepTheirsGone': string;
+    'conflict.cleanTitle': string;
+    'conflict.cleanText': string;
     'error.not-ready': string;
     'error.no-workdir': string;
     'error.no-subprocess': string;
@@ -320,6 +356,12 @@ export declare const en: {
     'error.merge-same-branch': string;
     'error.merge-detached': string;
     'error.merge-no-commits': string;
+    'error.not-conflicted': string;
+    'error.stale-conflict': string;
+    'error.resolve-unsafe': string;
+    'error.bad-choice': string;
+    'error.no-operation': string;
+    'error.complete-conflict': string;
     'error.pull-no-commits': string;
     'error.push-no-commits': string;
     'error.pull-detached': string;
@@ -329,6 +371,7 @@ export declare const en: {
     'error.push-dirty': string;
     'error.auth': string;
     'error.pull-diverged': string;
+    'error.pull-conflict': string;
     'error.push-behind': string;
     'error.push-no-remote': string;
     'error.push-ambiguous-remote': string;

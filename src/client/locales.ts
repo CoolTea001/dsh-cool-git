@@ -87,6 +87,10 @@ type UiKey =
   | 'title.message'
   | 'title.settings'
   | 'title.settingsRead'
+  | 'title.resolve'
+  | 'title.resolveDone'
+  | 'title.abortOperation'
+  | 'title.completeMerge'
   /** The error dialog's own two controls. */
   | 'dialog.close'
   | 'dialog.ok'
@@ -190,11 +194,8 @@ type UiKey =
   | 'list.notRepo'
   | 'list.statusFailed'
   | 'list.loading'
-  /** The note shown while conflicts are withheld from the changed-path lists. */
-  | 'list.conflictsHidden'
   /** The changed-path lists: what each holds, and the actions that move one path
-   *  between the first two or discard its worktree half. The conflict name is
-   *  kept for the list the header withholds (see the client's `VisibleSide`). */
+   *  between the first two or discard its worktree half. */
   | 'stage.staged'
   | 'stage.unstaged'
   | 'stage.conflict'
@@ -249,6 +250,40 @@ type UiKey =
   | 'diff.copied'
   | 'diff.expand'
   | 'diff.collapse'
+  /** The banner for an operation that stopped mid-flight. */
+  | 'operation.merge'
+  | 'operation.rebase'
+  | 'operation.cherryPick'
+  | 'operation.pending'
+  | 'operation.ready'
+  | 'operation.clean'
+  | 'operation.abort'
+  | 'operation.complete'
+  /** The conflict pane: its header, its per-block choices, and its states. */
+  | 'conflict.block'
+  | 'conflict.regionCount'
+  | 'conflict.noRegions'
+  | 'conflict.current'
+  | 'conflict.incoming'
+  | 'conflict.base'
+  | 'conflict.takeOurs'
+  | 'conflict.takeTheirs'
+  | 'conflict.takeBoth'
+  | 'conflict.takeBase'
+  | 'conflict.takeAllOurs'
+  | 'conflict.takeAllTheirs'
+  | 'conflict.markResolved'
+  | 'conflict.noLines'
+  | 'conflict.binaryTitle'
+  | 'conflict.binaryText'
+  | 'conflict.missingTitle'
+  | 'conflict.missingText'
+  | 'conflict.keepOurs'
+  | 'conflict.keepTheirs'
+  | 'conflict.keepOursGone'
+  | 'conflict.keepTheirsGone'
+  | 'conflict.cleanTitle'
+  | 'conflict.cleanText'
 
 /** Every key in the namespace: the page's own, and one sentence per refusal. */
 export type MessageKey = UiKey | `error.${FailureCode}`
@@ -326,6 +361,10 @@ export const en = {
   'title.message': 'Could not generate a commit message',
   'title.settings': 'Could not save the settings',
   'title.settingsRead': 'Could not read the settings',
+  'title.resolve': 'Could not resolve the conflict',
+  'title.resolveDone': 'Could not mark the file resolved',
+  'title.abortOperation': 'Could not abandon the operation',
+  'title.completeMerge': 'Could not finish the merge',
 
   'dialog.close': 'Close',
   'dialog.ok': 'Got it',
@@ -424,7 +463,6 @@ export const en = {
   'list.notRepo': 'This session\'s directory is not a Git repository',
   'list.statusFailed': 'Could not read the repository status',
   'list.loading': 'Reading the repository…',
-  'list.conflictsHidden': 'Unresolved conflicts are not shown here; resolve them in your terminal first',
 
   'stage.staged': 'Staged changes',
   'stage.unstaged': 'Changes',
@@ -478,6 +516,40 @@ export const en = {
   'diff.expand': 'Expand this file\'s diff',
   'diff.collapse': 'Collapse this file\'s diff',
 
+  'operation.merge': 'Merge in progress',
+  'operation.rebase': 'Rebase in progress',
+  'operation.cherryPick': 'Cherry-pick in progress',
+  'operation.pending': '{count} conflicting path(s) to resolve',
+  'operation.ready': 'All conflicts resolved: finish the merge',
+  'operation.clean': 'All conflicts resolved',
+  'operation.abort': 'Abort',
+  'operation.complete': 'Finish merge',
+
+  'conflict.block': 'Conflict {index} / {total}',
+  'conflict.regionCount': '{count} conflict(s)',
+  'conflict.noRegions': 'No conflicts left',
+  'conflict.current': 'Current',
+  'conflict.incoming': 'Incoming',
+  'conflict.base': 'Base',
+  'conflict.takeOurs': 'Take current',
+  'conflict.takeTheirs': 'Take incoming',
+  'conflict.takeBoth': 'Keep both',
+  'conflict.takeBase': 'Take base',
+  'conflict.takeAllOurs': 'Take current everywhere',
+  'conflict.takeAllTheirs': 'Take incoming everywhere',
+  'conflict.markResolved': 'Mark resolved',
+  'conflict.noLines': 'no lines',
+  'conflict.binaryTitle': 'This conflict has no text to choose between',
+  'conflict.binaryText': 'The file is binary (or too large to read as text), so it has to be settled as a whole. Pick the version to keep.',
+  'conflict.missingTitle': 'One side of this file was deleted',
+  'conflict.missingText': 'There is nothing to choose between line by line: one side removed this file. Pick the side whose version — or absence — you want to keep.',
+  'conflict.keepOurs': 'Keep current version',
+  'conflict.keepTheirs': 'Keep incoming version',
+  'conflict.keepOursGone': 'Keep the deletion (current)',
+  'conflict.keepTheirsGone': 'Keep the deletion (incoming)',
+  'conflict.cleanTitle': 'No conflict markers left',
+  'conflict.cleanText': 'The file has no conflict blocks. Mark it resolved when it reads the way you want it to.',
+
   'error.not-ready': 'The session is not ready yet; try again in a moment',
   'error.no-workdir': 'Could not determine the session\'s working directory',
   'error.no-subprocess': 'The subprocess service is unavailable, so Git cannot run',
@@ -503,10 +575,17 @@ export const en = {
   'error.unknown-remote': 'No such remote: {remote}',
 
   'error.merge-dirty': 'Uncommitted changes are in the way; commit or stash them before merging',
-  'error.merge-conflict': 'The merge with {branch} conflicts, so it was aborted; merge it by hand to resolve the conflict',
+  'error.merge-conflict': 'Merging {branch} conflicts: the merge is left in the working tree, resolve it in the Conflicts list',
   'error.merge-same-branch': 'Cannot merge {branch} into itself',
   'error.merge-detached': 'HEAD is detached, so there is no branch to merge',
   'error.merge-no-commits': 'This branch has no commits yet, so there is nothing to merge',
+
+  'error.not-conflicted': '{path} is no longer conflicted: nothing to resolve',
+  'error.stale-conflict': '{path} changed since it was read, so nothing was written; the pane was re-read',
+  'error.resolve-unsafe': '{path} is not a file this plugin may write; resolve it in a terminal',
+  'error.bad-choice': 'That choice does not apply to this conflict',
+  'error.no-operation': 'No merge, rebase, or cherry-pick is in progress',
+  'error.complete-conflict': 'Some conflicts are still unresolved; resolve and stage every path first',
 
   'error.pull-no-commits': 'This branch has no commits yet, so there is nothing to pull',
   'error.push-no-commits': 'This branch has no commits yet, so there is nothing to push',
@@ -516,7 +595,8 @@ export const en = {
   'error.pull-dirty': 'Uncommitted changes would be overwritten; commit or stash them before pulling',
   'error.push-dirty': 'Uncommitted changes would be overwritten; commit or stash them before pushing',
   'error.auth': 'Remote authentication failed: configure credentials for this repository first (this plugin never prompts for them)',
-  'error.pull-diverged': 'The local and remote histories have diverged, and this plugin only fast-forwards: merge or rebase first',
+  'error.pull-diverged': 'The local and remote histories have diverged, and this repository is configured to fast-forward only: merge or rebase first',
+  'error.pull-conflict': 'Pulling {branch} conflicts: the merge is left in the working tree, resolve it in the Conflicts list',
   'error.push-behind': 'The remote gained new commits during the sync; sync once more',
   'error.push-no-remote': 'This repository has no remote configured, so it cannot be pushed',
   'error.push-ambiguous-remote': 'There is more than one remote ({remotes}), so the push target is ambiguous',
@@ -596,6 +676,10 @@ export const zh: typeof en = {
   'title.message': '生成提交信息失败',
   'title.settings': '保存设置失败',
   'title.settingsRead': '读取设置失败',
+  'title.resolve': '解决冲突失败',
+  'title.resolveDone': '标记冲突已解决失败',
+  'title.abortOperation': '中止操作失败',
+  'title.completeMerge': '完成合并失败',
 
   'dialog.close': '关闭',
   'dialog.ok': '知道了',
@@ -710,7 +794,6 @@ export const zh: typeof en = {
   'list.notRepo': '当前会话目录不是 Git 仓库',
   'list.statusFailed': '读取仓库状态失败',
   'list.loading': '正在读取仓库…',
-  'list.conflictsHidden': '未解决的冲突暂不显示，请先在终端解决',
 
   'stage.staged': '暂存的变更',
   'stage.unstaged': '变更',
@@ -764,6 +847,40 @@ export const zh: typeof en = {
   'diff.expand': '展开此文件的差异',
   'diff.collapse': '折叠此文件的差异',
 
+  'operation.merge': '合并进行中',
+  'operation.rebase': '变基进行中',
+  'operation.cherryPick': '拣选进行中',
+  'operation.pending': '还有 {count} 个冲突文件待解决',
+  'operation.ready': '冲突已全部解决，可以完成合并',
+  'operation.clean': '冲突已全部解决',
+  'operation.abort': '中止',
+  'operation.complete': '完成合并',
+
+  'conflict.block': '冲突 {index} / {total}',
+  'conflict.regionCount': '{count} 处冲突',
+  'conflict.noRegions': '没有冲突',
+  'conflict.current': '当前',
+  'conflict.incoming': '传入',
+  'conflict.base': '共同祖先',
+  'conflict.takeOurs': '采用当前',
+  'conflict.takeTheirs': '采用传入',
+  'conflict.takeBoth': '两者都保留',
+  'conflict.takeBase': '采用共同祖先',
+  'conflict.takeAllOurs': '全部采用当前',
+  'conflict.takeAllTheirs': '全部采用传入',
+  'conflict.markResolved': '标记已解决',
+  'conflict.noLines': '无内容',
+  'conflict.binaryTitle': '该冲突没有可逐块选择的文本',
+  'conflict.binaryText': '这是二进制文件（或过大无法按文本读取），只能整体取舍：请选择要保留的版本。',
+  'conflict.missingTitle': '该文件在某一侧已被删除',
+  'conflict.missingText': '这里没有可逐行选择的冲突块：某一侧删除该文件。请选择要保留哪一侧的版本（或保留删除）。',
+  'conflict.keepOurs': '保留当前版本',
+  'conflict.keepTheirs': '保留传入版本',
+  'conflict.keepOursGone': '保留删除（当前侧已删除）',
+  'conflict.keepTheirsGone': '保留删除（传入侧已删除）',
+  'conflict.cleanTitle': '文件中已无冲突标记',
+  'conflict.cleanText': '该文件已没有冲突块。确认内容无误后，点「标记已解决」即可。',
+
   'error.not-ready': '会话尚未就绪，请稍后重试',
   'error.no-workdir': '无法确定该会话的工作目录',
   'error.no-subprocess': 'subprocess 服务不可用，无法执行 Git 命令',
@@ -789,10 +906,17 @@ export const zh: typeof en = {
   'error.unknown-remote': '不存在该远端：{remote}',
 
   'error.merge-dirty': '存在未提交的改动，请先提交或暂存后再合并',
-  'error.merge-conflict': '与 {branch} 的合并存在冲突，已中止；请手动合并以解决冲突',
+  'error.merge-conflict': '与 {branch} 的合并存在冲突：合并已保留在工作区，请在「冲突」列表中解决',
   'error.merge-same-branch': '无法将 {branch} 合并到它自己',
   'error.merge-detached': 'HEAD 处于游离状态，没有可合并的分支',
   'error.merge-no-commits': '当前分支还没有任何提交，无法合并',
+
+  'error.not-conflicted': '{path} 已不再是冲突文件，无需解决',
+  'error.stale-conflict': '{path} 在被读取后已被修改，因此没有写入；面板已重新读取',
+  'error.resolve-unsafe': '{path} 不是本插件可以写入的文件，请在终端中解决',
+  'error.bad-choice': '该选择不适用于这个冲突',
+  'error.no-operation': '当前没有进行中的合并、变基或拣选',
+  'error.complete-conflict': '仍有未解决的冲突，请先解决并暂存所有冲突文件',
 
   'error.pull-no-commits': '当前分支还没有任何提交，无法 Pull',
   'error.push-no-commits': '当前分支还没有任何提交，无法 Push',
@@ -802,7 +926,8 @@ export const zh: typeof en = {
   'error.pull-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再 Pull',
   'error.push-dirty': '有未提交的改动会被覆盖，请先提交或暂存后再 Push',
   'error.auth': '远程认证失败：请先在该仓库配置好凭据（本插件不弹出任何凭据输入）',
-  'error.pull-diverged': '本地与远程已经分叉，本插件只做快进式拉取：请先合并或变基',
+  'error.pull-diverged': '本地与远程已经分叉，而该仓库被配置为只做快进式拉取：请先合并或变基',
+  'error.pull-conflict': '拉取 {branch} 时产生冲突：合并已保留在工作区，请在「冲突」列表中解决',
   'error.push-behind': '远程在同步过程中又有了新提交，请再同步一次',
   'error.push-no-remote': '该仓库没有配置远程仓库，无法 Push',
   'error.push-ambiguous-remote': '有多个远程仓库（{remotes}），无法确定推送目标',

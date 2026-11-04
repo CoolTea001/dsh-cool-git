@@ -20,8 +20,10 @@
  */
 
 import {
+  abortOperation,
   commitAll,
   commitStaged,
+  completeMerge,
   createBranch,
   deleteBranches,
   discardAll,
@@ -29,16 +31,19 @@ import {
   discardPath,
   fetchRemotes,
   fetchUpstream,
+  markResolved,
   mergeBranch,
   pullFromRemote,
   pushToRemote,
   readBranches,
   readBranchReport,
   readCommit,
+  readConflict,
   readDiff,
   readLog,
   readRepositoryRoot,
   readStatus,
+  resolveConflict,
   stageAll,
   stageFolder,
   stagePath,
@@ -55,6 +60,7 @@ import {
   type BranchDeleteTarget,
   type CommitScope,
   type DiffSide,
+  type ResolveChoice,
   type SettingsPayload,
   type SaveSettingsPayload,
 } from '../shared/contract.js'
@@ -415,6 +421,61 @@ function readSide(body: Record<string, unknown>): DiffSide {
   if (side === 'staged' || side === 'unstaged' || side === 'conflict') return side
   return body.staged === true ? 'staged' : 'unstaged'
 }
+
+/**
+ * Read which version a resolution keeps.
+ *
+ * The set is closed and it is the contract's: a choice the page cannot mean — a
+ * misspelling, a `both` sent for a whole file — is refused rather than guessed
+ * at, because guessing here writes the reader's file.
+ *
+ * @param body - the parsed request body.
+ * @param wholeFile - whether the request is for the whole file, where only a
+ *   single side makes sense.
+ * @returns the choice, or undefined when the body names none it may use.
+ */
+function readChoice(
+  body: Record<string, unknown>,
+  wholeFile: boolean,
+): ResolveChoice | undefined {
+  const choice = body.choice
+  if (wholeFile) return choice === 'ours' || choice === 'theirs' ? choice : undefined
+  if (choice === 'ours' || choice === 'theirs' || choice === 'both' || choice === 'base') return choice
+  return undefined
+}
+
+/**
+ * Read the conflict blocks one resolution applies to.
+ *
+ * The two shapes of a resolution are told apart by whether the body carries the
+ * field at all, and never by whether the list turned out to be usable: a body
+ * naming keys that do not fit this shape is refused, because reading it as a
+ * whole-file request instead would resolve a file the reader asked to resolve
+ * block by block. An empty list is refused for the same reason — it is not the
+ * spelling the page uses for "the whole file".
+ *
+ * @param value - the field as the body carried it.
+ * @returns the keys, or undefined when they are not a usable list.
+ */
+function readKeys(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_CONFLICT_KEYS) return undefined
+  const out: string[] = []
+  for (const key of value) {
+    if (typeof key !== 'string' || key === '' || key.length > 64) return undefined
+    out.push(key)
+  }
+  return out
+}
+
+/**
+ * How many conflict blocks one resolution may name.
+ *
+ * A bound rather than a rule about the file: a resolution is one request, and one
+ * request is one round trip, so the number of blocks it may carry is the number
+ * this half is willing to make it. A file with more conflicts than this is
+ * resolved in more than one click.
+ */
+const MAX_CONFLICT_KEYS = 500
 
 /**
  * Read the scope a commit or a generated message covers.
@@ -798,6 +859,51 @@ export function registerRoutes(ctx: any): () => void {
       if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
       return mergeBranch(target, branch)
     })),
+
+    // One unmerged path, as the resolver draws it. A read: opening a conflict
+    // writes nothing, and the pane re-reads it after every choice.
+    route(ROUTES.conflict, (req, res) => handle(ctx, req, res, 'read', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return readConflict(target, path)
+    })),
+
+    // One choice for one path. Whether it is a block choice or a whole-file one
+    // is read from the request: a body carrying `keys` replaces those blocks and
+    // leaves the rest of the file alone, and a body carrying none takes a whole
+    // version and marks the path resolved. A `both` or a `base` with no keys is
+    // refused rather than reinterpreted, because there is no whole file it could
+    // mean — and a `keys` field that is present but unusable is refused too,
+    // rather than quietly becoming the whole-file request it was not.
+    route(ROUTES.resolve, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      const wholeFile = body.keys === undefined
+      const keys = wholeFile ? undefined : readKeys(body.keys)
+      if (!wholeFile && keys === undefined) return Promise.resolve({ ok: false, ...coded('bad-choice') })
+      const choice = readChoice(body, wholeFile)
+      if (choice === undefined) return Promise.resolve({ ok: false, ...coded('bad-choice') })
+      return resolveConflict(target, path, choice, keys)
+    })),
+
+    // One path marked resolved without anything being written: the reader edited
+    // it themselves, and the index is the only thing that has to agree.
+    route(ROUTES.resolveDone, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
+      const path = readPath(body)
+      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
+      return markResolved(target, path)
+    })),
+
+    // Abandon whatever a conflicted merge, pull, rebase, or cherry-pick left in
+    // the tree. It names nothing: the repository is what says which operation is
+    // in progress, and the Host runs the one command that undoes it.
+    route(ROUTES.mergeAbort, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      abortOperation(target))),
+
+    // Finish a merge: every conflict is resolved and staged, and Git's own
+    // MERGE_MSG is the message, which is why this route takes no body either.
+    route(ROUTES.mergeCommit, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
+      completeMerge(target))),
 
     // The fetch is the remote operation with the fewest arguments of all: it
     // names nothing, because it refreshes every remote the repository has. It is

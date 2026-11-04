@@ -15,6 +15,7 @@ import {
   type CommitAllPayload,
   type CommitPayload,
   type CommitScope,
+  type ConflictPayload,
   type CreateBranchPayload,
   type DeleteBranchesPayload,
   type DiffPayload,
@@ -27,6 +28,10 @@ import {
   type MessageModel,
   type MessagePayload,
   type ModelEffortsPayload,
+  type OperationPayload,
+  type ResolveChoice,
+  type ResolveDonePayload,
+  type ResolvePayload,
   type SaveSettingsPayload,
   type SettingsPayload,
   type StatusPayload,
@@ -471,6 +476,101 @@ export function mergeBranch(
 }
 
 /**
+ * Ask the Host for one unmerged path, as the resolver draws it.
+ *
+ * The answer is a parsed view of the working-tree file — its context, its
+ * conflict blocks, and the label Git gave each side — rather than a patch,
+ * because a patch of an unmerged path is a combined diff, which describes the
+ * conflict instead of offering a choice within it.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative path.
+ * @returns the conflict payload.
+ */
+export function fetchConflict(
+  sessionId: string | undefined,
+  path: string,
+): Promise<ConflictPayload> {
+  return postJson(ROUTES.conflict, { sessionId, path })
+}
+
+/**
+ * Ask the Host to apply one choice to one path.
+ *
+ * Two shapes, as the route reads them: `keys` replaces exactly those blocks and
+ * leaves the rest of the file alone, while a request naming none takes a whole
+ * version and marks the path resolved. The answer carries the file after the
+ * write, so the pane repaints from what is really on disk instead of assuming
+ * the rewrite did what the click meant.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative path.
+ * @param choice - which version to keep.
+ * @param keys - the blocks to replace, or undefined for a whole-file choice.
+ * @returns the resolve payload.
+ */
+export function resolveConflict(
+  sessionId: string | undefined,
+  path: string,
+  choice: ResolveChoice,
+  keys?: readonly string[],
+): Promise<ResolvePayload> {
+  return postJson(ROUTES.resolve, {
+    sessionId,
+    path,
+    choice,
+    ...(keys === undefined ? {} : { keys }),
+  })
+}
+
+/**
+ * Ask the Host to mark one path resolved without writing it.
+ *
+ * The reader who edited the file themselves has nothing left to write; `git add`
+ * is the whole of the decision, and on an unmerged path that is what "resolved"
+ * means. The answer carries the fresh status, so the sidebar's conflict count
+ * falls in the same paint.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @param path - the repository-relative path.
+ * @returns the resolve-done payload.
+ */
+export function markResolved(
+  sessionId: string | undefined,
+  path: string,
+): Promise<ResolveDonePayload> {
+  return postJson(ROUTES.resolveDone, { sessionId, path })
+}
+
+/**
+ * Ask the Host to abandon the operation a merge or a pull left in progress.
+ *
+ * Nothing crosses but the session: which command to run — `merge --abort`,
+ * `rebase --abort`, `cherry-pick --abort` — is read from the repository, and the
+ * page cannot name an operation it is not looking at.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the operation payload.
+ */
+export function abortOperation(sessionId: string | undefined): Promise<OperationPayload> {
+  return postJson(ROUTES.mergeAbort, { sessionId })
+}
+
+/**
+ * Ask the Host to finish a merge.
+ *
+ * Every conflict must be resolved and staged first; the message is Git's own
+ * `MERGE_MSG` — the one it wrote when the merge started — which is why nothing
+ * but the session crosses here.
+ *
+ * @param sessionId - the session whose directory Git runs in, when known.
+ * @returns the operation payload, carrying the merge commit once it is made.
+ */
+export function completeMerge(sessionId: string | undefined): Promise<OperationPayload> {
+  return postJson(ROUTES.mergeCommit, { sessionId })
+}
+
+/**
  * Ask the Host to refresh every remote-tracking ref.
  *
  * Nothing crosses with the request and nothing comes back but the outcome: which
@@ -509,11 +609,14 @@ export function fetchBranchUpstream(sessionId: string | undefined): Promise<Fetc
 }
 
 /**
- * Ask the Host to fast-forward the current branch from its upstream.
+ * Ask the Host to pull the current branch from its upstream.
  *
  * The Host reads which branch and which upstream from the repository itself, so
  * this call carries nothing to aim: it is a request to pull, not an instruction
- * about what to pull. A divergent history is refused rather than merged.
+ * about what to pull. The pull merges rather than rebases, so a divergent history
+ * is joined with a merge commit whose message Git writes itself; when the two
+ * sides conflict, the merge is left in the working tree and the answer says so —
+ * `reason: 'conflict'` — which is what puts the paths in the conflict list.
  *
  * @param sessionId - the session whose directory Git runs in, when known.
  * @returns the sync payload.

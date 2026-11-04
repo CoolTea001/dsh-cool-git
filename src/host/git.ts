@@ -1,5 +1,5 @@
 /**
- * The Host half's Git reader, and its four writers.
+ * The Host half's Git reader, and its writers.
  *
  * Every fact about the repository is produced by running the real `git` binary —
  * never by reading `.git` by hand. That keeps this plugin honest about the things
@@ -13,11 +13,18 @@
  * a second on Windows, while every path a command carries comes from Git's own
  * output and every command runs inside the repository `routes.ts` resolved.
  *
- * Reading is the bulk of this module. Six commands change something — the
- * branch switch, the merge, the fetch, the fast-forward pull, the push, and the
- * commit — and each reports Git's own refusal. The commit is the one that writes
- * the index as well as the history, which is why it is a single call rather than
- * a stage the page could leave half-finished.
+ * Reading is the bulk of this module. The writes are the branch switch, the
+ * merge, the fetch, the merge pull, the push, and the commit — each of which
+ * reports Git's own refusal — plus the conflict resolver's own four: the index
+ * write that stages a resolved path, the byte-level rewrite of one file's
+ * conflict blocks, and the abort and completion of an operation left in flight.
+ * The commit is the one that writes the index as well as the history, which is
+ * why it is a single call rather than a stage the page could leave half-finished.
+ *
+ * The resolver is the one place this module writes a working-tree file itself
+ * (see `resolveRegions`): nothing in Git's interface replaces one conflict block
+ * with one side, so the file is spliced, and the parser that finds the blocks
+ * lives in `conflict.ts` where it can be read on its own.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -36,7 +43,8 @@
  */
 
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { lstat, readFile, unlink, writeFile } from 'node:fs/promises'
+import { join, isAbsolute, relative, resolve } from 'node:path'
 
 import {
   classifyChange,
@@ -52,6 +60,9 @@ import {
   type CommitPayload,
   type CommitScope,
   type CommitSummary,
+  type ConflictOperation,
+  type ConflictPayload,
+  type ConflictStages,
   type CreateBranchPayload,
   type DeleteBranchesPayload,
   type DiffPayload,
@@ -62,10 +73,20 @@ import {
   type IndexPayload,
   type LogPayload,
   type MergePayload,
+  type OperationPayload,
+  type ResolveChoice,
+  type ResolveDonePayload,
+  type ResolvePayload,
   type StatusPayload,
   type SyncPayload,
 } from '../shared/contract.js'
 import { errorMessage } from '../shared/error.js'
+import {
+  applyResolutions,
+  describeConflict,
+  parseConflict,
+  type Resolution,
+} from './conflict.js'
 import { coded, type Refusal } from './refusal.js'
 
 /** Wall-clock bound per Git invocation; a hung command is killed, not waited on. */
@@ -126,13 +147,24 @@ export const MAX_BRANCHES = 200
 const DIRTY_WORKTREE = /local changes|would be overwritten|commit your changes or stash/i
 
 /**
+ * What Git prints when a switch cannot run because another operation is mid-flight.
+ *
+ * A merge, a rebase, or a cherry-pick has the index in a state no checkout may
+ * disturb, and Git refuses with its own advice rather than with the local-changes
+ * wording above. The reader's answer is the same either way — finish or abandon
+ * what is in flight — so it is read as the same refusal.
+ */
+const UNFINISHED_OPERATION = /you need to resolve your current index|cannot switch branch|You are in the middle of/i
+
+/**
  * What Git prints when a merge could not be applied cleanly.
  *
  * A conflict is a state on disk rather than a mistake in the request, and it is
- * the one merge answer the page words itself: the merge is aborted (see
- * `mergeBranch`), so the sentence has to say both that it failed and that
- * nothing was left behind. `git merge` prints one `CONFLICT` line per path and
- * then a summary sentence; the summary alone is enough to recognize it.
+ * the one merge answer the page words itself: the merge stays in the tree (see
+ * `mergeBranch`), so the sentence has to say that the conflicts are waiting to
+ * be resolved rather than that nothing happened. `git merge` prints one
+ * `CONFLICT` line per path and then a summary sentence; the summary alone is
+ * enough to recognize it.
  */
 const MERGE_CONFLICT = /CONFLICT|Automatic merge failed|fix conflicts/i
 
@@ -581,13 +613,14 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
   if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
 
   const root = inDir(target, repo.root)
-  // The two reads answer different questions and neither depends on the other,
+  // The three reads answer different questions and none depends on the others,
   // so they are asked at once: on a host where a Git invocation means starting
-  // a whole process, the page load is then the slower of the two rather than
+  // a whole process, the page load is then the slower of the three rather than
   // their sum.
-  const [status, log] = await Promise.all([
+  const [status, log, operation] = await Promise.all([
     runGit(root, STATUS_ARGS),
     repo.hasHead ? runGit(root, ['log', '-1', `--pretty=format:${HEAD_FORMAT}`]) : Promise.resolve(undefined),
+    readOperation(root),
   ])
   if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
@@ -610,7 +643,46 @@ export async function readStatus(target: GitTarget): Promise<StatusPayload> {
     hasHead: repo.hasHead,
     head,
     files: parsed.files,
+    ...(operation === undefined ? {} : { operation }),
   }
+}
+
+/**
+ * Which multi-step operation the repository is in the middle of, if any.
+ *
+ * Git records each one as a file (or directory) in its own directory, and names
+ * the path itself through `--git-path`, which is what makes the read correct in
+ * a worktree or a submodule where `.git` is a file rather than a directory. One
+ * invocation asks for all four because they are one question — the page has one
+ * banner, not four — and the answer is whichever marker exists.
+ *
+ * A rebase has two spellings: the interactive/merge backend keeps a directory
+ * (`rebase-merge`) and the older apply backend keeps another (`rebase-apply`).
+ * Both mean the same thing to the page.
+ *
+ * @param root - the repository root and the process substrate.
+ * @returns the operation, or undefined when the repository is at rest.
+ */
+async function readOperation(root: GitTarget): Promise<ConflictOperation | undefined> {
+  const paths = await runGit(root, [
+    'rev-parse',
+    '--git-path', 'MERGE_HEAD',
+    '--git-path', 'rebase-merge',
+    '--git-path', 'rebase-apply',
+    '--git-path', 'CHERRY_PICK_HEAD',
+  ])
+  if (paths.code !== 0) return undefined
+
+  const [merge, rebaseMerge, rebaseApply, cherryPick] = paths.stdout.split('\n')
+  if (merge !== undefined && merge !== '' && existsSync(resolve(root.workdir, merge))) return 'merge'
+  if (
+    (rebaseMerge !== undefined && rebaseMerge !== '' && existsSync(resolve(root.workdir, rebaseMerge)))
+    || (rebaseApply !== undefined && rebaseApply !== '' && existsSync(resolve(root.workdir, rebaseApply)))
+  ) return 'rebase'
+  if (cherryPick !== undefined && cherryPick !== '' && existsSync(resolve(root.workdir, cherryPick))) {
+    return 'cherry-pick'
+  }
+  return undefined
 }
 
 /** The branch facts and changed paths one `status` invocation reported. */
@@ -1505,7 +1577,11 @@ function checkoutFailure(run: GitRun): CheckoutPayload {
  * @returns the coded refusal, or null when the tree was not what Git refused.
  */
 function dirtyRefusal(text: string): Refusal | null {
-  if (!DIRTY_WORKTREE.test(text)) return null
+  // A merge, a rebase, or a cherry-pick in progress refuses a switch before the
+  // working tree is even considered, and Git words that as the index it wants
+  // resolved rather than as local changes. It is the same answer to the reader —
+  // finish what is in flight first — so it takes the same refusal.
+  if (!DIRTY_WORKTREE.test(text) && !UNFINISHED_OPERATION.test(text)) return null
   const paths = text
     .split('\n')
     .map(line => line.trim())
@@ -1970,11 +2046,12 @@ function remoteDeleteFailure(run: GitRun, branch: string): Refusal {
  * intention, buying two saved clicks at the price of a commit made on a branch
  * the page is not showing, where nothing on screen would show it happen.
  *
- * A conflicting merge is aborted rather than left in the tree. The page has no
- * way to finish one —the commit form refuses while unmerged paths exist —so an
- * unfinished merge is exactly the state the fast-forward-only pull was shaped to
- * avoid. Aborting puts the working tree back where it was and words the refusal;
- * the branch is then merged by hand, with Git's own tools and markers.
+ * A conflicting merge is left in the tree rather than aborted. The working tree
+ * is exactly what the reader has to decide about, and the conflict list beside
+ * the diff pane is where they decide it: block by block, then `git add`, then the
+ * merge commit — which Git has already written the message for. Aborting would
+ * throw that state away and send the reader to a terminal to reproduce it, which
+ * is the one thing this page exists to avoid.
  *
  * @param target - the process substrate and the session's directory.
  * @param name - the branch to merge in, local or remote-tracking.
@@ -2033,8 +2110,10 @@ async function mergeIn(root: GitTarget, source: string): Promise<MergePayload> {
   if (run.code === 0) return { ok: true, branch: source, summary: mergeSummary(run, source) }
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
 
+  // The merge stays in the tree: the conflicts it wrote are what the page
+  // resolves, and the commit that finishes it is made once every path is
+  // resolved (see `completeMerge`).
   if (await conflictedMerge(root, run)) {
-    await runGit(root, ['merge', '--abort'])
     return { ok: false, ...coded('merge-conflict', { branch: source }), reason: 'conflict' }
   }
   return mergeFailure(run)
@@ -2043,10 +2122,10 @@ async function mergeIn(root: GitTarget, source: string): Promise<MergePayload> {
 /**
  * Whether a failed merge left conflicts behind, or never started one.
  *
- * The pattern is Git's own summary sentence, and the fallback asks the index:
- * a merge that failed before touching the tree —a refused fast-forward, an
- * unrelated history —has no unmerged paths and must not be aborted, because
- * there is nothing to abort.
+ * The pattern is Git's own summary sentence, and the fallback asks the index: a
+ * merge that failed before touching the tree — a refused fast-forward, an
+ * unrelated history — has no unmerged paths, and that is the difference between
+ * "there is a merge in progress to resolve" and "nothing happened at all".
  *
  * @param root - the repository root and the process substrate.
  * @param run - the failed merge invocation.
@@ -2091,6 +2170,394 @@ function mergeSummary(run: GitRun, source: string): string {
   if (/Already up[ -]to[ -]date/i.test(output)) return `Already up to date with ${source}`
   if (/Fast-forward/i.test(output)) return `Fast-forwarded ${source}`
   return `Merged ${source}`
+}
+
+/**
+ * The stages one unmerged path still holds, or null when it is not unmerged.
+ *
+ * `ls-files -u` is the authority for this rather than `status`: it is the index
+ * itself, it names the stage of every entry, and its `-z` output is safe for any
+ * path. A path with no unmerged entries answers with no output at all, which is
+ * the one case the resolver must not write to — `git add` on it would mean
+ * something else entirely.
+ *
+ * @param root - the repository root and the process substrate.
+ * @param path - the repository-relative path.
+ * @returns which of base, ours, and theirs exist, or null when none does.
+ */
+async function conflictStages(root: GitTarget, path: string): Promise<ConflictStages | null> {
+  const listed = await runGit(root, ['ls-files', '-u', '-z', '--', literalPath(path)])
+  if (listed.code !== 0 || listed.stdout === '') return null
+
+  const stages = { base: false, ours: false, theirs: false }
+  for (const record of listed.stdout.split('\0')) {
+    const tab = record.indexOf('\t')
+    if (tab < 0) continue
+    // `<mode> <object> <stage>` before the tab, the path after it.
+    const stage = record.slice(0, tab).split(' ')[2]
+    if (stage === '1') stages.base = true
+    else if (stage === '2') stages.ours = true
+    else if (stage === '3') stages.theirs = true
+  }
+  return stages.base || stages.ours || stages.theirs ? stages : null
+}
+
+/**
+ * Whether the worktree entry at one path is a symlink.
+ *
+ * A conflicted symlink has no text to resolve: its content is the target path,
+ * and Git records it as mode `120000`. The page offers the whole-file choice for
+ * it, and this is what tells the two apart, because `lstat` is the only read that
+ * does not follow the link.
+ *
+ * @param workdir - the repository root.
+ * @param path - the repository-relative path.
+ * @returns true when the entry is a symlink.
+ */
+async function isSymlink(workdir: string, path: string): Promise<boolean> {
+  try {
+    return (await lstat(join(workdir, path))).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Read one worktree file's bytes, or null when there is no regular file there.
+ *
+ * Bytes rather than text because a resolution splices what it did not choose
+ * back into the file unchanged, and a decode/encode round trip would not do that
+ * for a file in any encoding but UTF-8.
+ *
+ * @param workdir - the repository root.
+ * @param path - the repository-relative path.
+ * @returns the content, or null when the path holds no regular file.
+ */
+async function readWorktreeFile(workdir: string, path: string): Promise<Uint8Array | null> {
+  try {
+    const info = await lstat(join(workdir, path))
+    if (!info.isFile()) return null
+    return new Uint8Array(await readFile(join(workdir, path)))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether one request path names a file inside the repository.
+ *
+ * The check is lexical on purpose. Every path a resolver writes is one the page
+ * drew from `git status`, and the index is asked again before anything is
+ * written — an unmerged path is, by construction, tracked and inside the
+ * repository. This is the belt to that suspenders: a request body is still
+ * something a page composed, and a `../` in it must not become a write outside
+ * the tree. The file itself is then checked for being a symlink, which a lexical
+ * test cannot see.
+ *
+ * @param workdir - the repository root.
+ * @param path - the path the request named.
+ * @returns the absolute path, or null when it is not inside the root.
+ */
+function containedPath(workdir: string, path: string): string | null {
+  const root = resolve(workdir)
+  const target = resolve(root, path)
+  const relativePath = relative(root, target)
+  if (relativePath === '' || relativePath.startsWith('..') || isAbsolute(relativePath)) return null
+  return target
+}
+
+/**
+ * Read one unmerged path as the page resolves it.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param path - the repository-relative path.
+ * @returns the conflict document, or the reason there is none.
+ */
+export async function readConflict(target: GitTarget, path: string): Promise<ConflictPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  const stages = await conflictStages(root, path)
+  if (stages === null) {
+    return { ok: false, ...coded('not-conflicted', { path }), reason: 'not-conflicted' }
+  }
+
+  const link = await isSymlink(root.workdir, path)
+  const bytes = link ? null : await readWorktreeFile(root.workdir, path)
+  return { ok: true, conflict: describeConflict(path, bytes, stages, link) }
+}
+
+/**
+ * Apply one choice to one unmerged path.
+ *
+ * Two shapes, one decision. A request naming region keys rewrites exactly those
+ * blocks and leaves the rest of the file — including any conflict it did not
+ * name — as it was: the reader is part-way through a file with several
+ * conflicts, and each block is their decision to make. A request naming none is
+ * a whole-file choice, which is the only kind a binary file or a path deleted on
+ * one side can take, and because that *is* the resolution it is staged as well.
+ *
+ * The write runs in the repository's write queue, and the index is re-read inside
+ * it: a path resolved by someone else since the page read it is refused rather
+ * than written, and a region key that no longer matches the file is refused the
+ * same way.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param path - the repository-relative path.
+ * @param choice - which version to keep.
+ * @param keys - the blocks to replace, or undefined for a whole-file choice.
+ * @returns the file after the write, or the refusal.
+ */
+export async function resolveConflict(
+  target: GitTarget,
+  path: string,
+  choice: ResolveChoice,
+  keys: readonly string[] | undefined,
+): Promise<ResolvePayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+
+  const absolute = containedPath(repo.root, path)
+  if (absolute === null) {
+    return { ok: false, ...coded('resolve-unsafe', { path }), reason: 'unsafe' }
+  }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const stages = await conflictStages(root, path)
+    if (stages === null) {
+      return { ok: false, ...coded('not-conflicted', { path }), reason: 'not-conflicted' }
+    }
+    if (keys === undefined) return resolveWholeFile(target, root, absolute, path, choice, stages)
+    return resolveRegions(target, root, absolute, path, choice, keys)
+  })
+}
+
+/**
+ * Take one whole version of a path that has no blocks to choose within.
+ *
+ * `git checkout --ours/--theirs` is what writes it, rather than this module
+ * copying bytes: the stage is the version Git recorded, and checkout restores it
+ * with the mode it had — which matters for a symlink or an executable file, and
+ * which a plain file write would silently flatten. When the chosen side is the
+ * one that deleted the path there is nothing to check out, so the worktree copy
+ * is removed instead and `git add -A` records the deletion.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param root - the repository root and the process substrate.
+ * @param absolute - the worktree path, already checked to be inside the root.
+ * @param path - the repository-relative path.
+ * @param choice - which version to keep; `both` and `base` have no whole-file meaning.
+ * @param stages - the stages the path holds.
+ * @returns the file after the write, or the refusal.
+ */
+async function resolveWholeFile(
+  target: GitTarget,
+  root: GitTarget,
+  absolute: string,
+  path: string,
+  choice: ResolveChoice,
+  stages: ConflictStages,
+): Promise<ResolvePayload> {
+  if (choice !== 'ours' && choice !== 'theirs') {
+    return { ok: false, ...coded('bad-choice', { choice }), reason: 'error' }
+  }
+
+  const present = choice === 'ours' ? stages.ours : stages.theirs
+  if (present) {
+    const restore = await runGit(root, ['checkout', `--${choice}`, '--', literalPath(path)])
+    const failure = writeFailure(restore)
+    if (failure !== null) return { ...failure, reason: 'error' }
+  } else {
+    try {
+      await unlink(absolute)
+    } catch {
+      // Already gone: the deletion is the resolution either way.
+    }
+  }
+
+  const add = await runGit(root, ['add', '-A', '--', literalPath(path)])
+  const failure = writeFailure(add)
+  if (failure !== null) return { ...failure, reason: 'error' }
+
+  const answer = await indexAnswer(target)
+  return answer.ok === true
+    ? { ok: true, staged: true, status: answer.status }
+    : { ...answer, reason: answer.reason === 'no-repo' ? 'no-repo' : 'error' }
+}
+
+/**
+ * Replace the named blocks of one file with the chosen side's bytes.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param root - the repository root and the process substrate.
+ * @param absolute - the worktree path, already checked to be inside the root.
+ * @param path - the repository-relative path.
+ * @param choice - which version to keep.
+ * @param keys - the blocks to replace.
+ * @returns the file after the write, or the refusal.
+ */
+async function resolveRegions(
+  target: GitTarget,
+  root: GitTarget,
+  absolute: string,
+  path: string,
+  choice: ResolveChoice,
+  keys: readonly string[],
+): Promise<ResolvePayload> {
+  if (await isSymlink(root.workdir, path)) {
+    return { ok: false, ...coded('resolve-unsafe', { path }), reason: 'unsafe' }
+  }
+
+  const bytes = await readWorktreeFile(root.workdir, path)
+  if (bytes === null) {
+    return { ok: false, ...coded('not-conflicted', { path }), reason: 'not-conflicted' }
+  }
+
+  const parsed = parseConflict(bytes)
+  const resolutions: Resolution[] = keys.map(key => ({ key, choice }))
+  const next = applyResolutions(bytes, parsed, resolutions)
+  if (next === null) {
+    // The file changed since the page read it. Nothing is written: the page
+    // re-reads and the reader chooses again against what is really there.
+    return { ok: false, ...coded('stale-conflict', { path }), reason: 'stale' }
+  }
+
+  try {
+    await writeFile(absolute, next)
+  } catch (error) {
+    return { ok: false, error: errorMessage(error), reason: 'error' }
+  }
+
+  const stages = await conflictStages(root, path)
+  return {
+    ok: true,
+    conflict: describeConflict(path, next, stages ?? { base: false, ours: false, theirs: false }),
+  }
+}
+
+/**
+ * Tell Git that one path is resolved, without writing it.
+ *
+ * The reader who edited the file themselves, or who resolved every block and
+ * wants one last look before committing to it, has nothing left to write. `git
+ * add` is the whole of that decision — and it is the only place a conflicted path
+ * is ever staged, because on an unmerged path `add` means "resolved", which no
+ * bulk action can decide for the reader.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param path - the repository-relative path.
+ * @returns the fresh status, or the refusal.
+ */
+export async function markResolved(target: GitTarget, path: string): Promise<ResolveDonePayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    if (await conflictStages(root, path) === null) {
+      return { ok: false, ...coded('not-conflicted', { path }), reason: 'not-conflicted' }
+    }
+    const add = await runGit(root, ['add', '-A', '--', literalPath(path)])
+    const failure = writeFailure(add)
+    if (failure !== null) return { ...failure, reason: 'error' }
+    return indexAnswer(target)
+  })
+}
+
+/**
+ * Abandon the operation a merge or a pull left in progress.
+ *
+ * Git words the three commands differently but they mean one thing to the page,
+ * and each is the only command that can undo its own operation — `merge --abort`
+ * restores the pre-merge tree, `rebase --abort` returns to the branch that was
+ * being rebased, `cherry-pick --abort` drops the sequencer state.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @returns the fresh status, or the refusal.
+ */
+export async function abortOperation(target: GitTarget): Promise<OperationPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const operation = await readOperation(root)
+    if (operation === undefined) {
+      return { ok: false, ...coded('no-operation'), reason: 'no-operation' }
+    }
+    const run = await runGit(root, [operation, '--abort'])
+    if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+    if (run.code !== 0) return { ok: false, ...refusalOf(run), reason: 'error' }
+
+    const status = await readStatus(target)
+    return status.ok === true
+      ? { ok: true, status, summary: `Aborted the ${operation}` }
+      : { ok: false, ...refusalOfStatus(status), reason: 'error' }
+  })
+}
+
+/**
+ * Finish the merge a conflicted merge or pull left in progress.
+ *
+ * `--no-edit` is what makes it non-interactive: Git already wrote the message a
+ * merge commit should carry into `MERGE_MSG` — `Merge branch 'feat' into main`
+ * and the conflict note — and this page has no editor to offer, so that message
+ * is the one the commit takes. The reader who wants their own words commits from
+ * the form instead, which is why this is a convenience and not the only way out.
+ *
+ * Only a merge is finished here. A rebase and a cherry-pick continue by applying
+ * the next commit, which is a different question from "record the resolution",
+ * and the page does not offer a button for either: it offers the abort.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @returns the commit that was made, or the refusal.
+ */
+export async function completeMerge(target: GitTarget): Promise<OperationPayload> {
+  const repo = await resolveRepo(target)
+  if ('refusal' in repo) return { ok: false, ...repo.refusal, reason: repo.reason }
+  const root = inDir(target, repo.root)
+
+  return withRepoWrite(repo.root, async () => {
+    const operation = await readOperation(root)
+    if (operation !== 'merge') {
+      return { ok: false, ...coded('no-operation'), reason: 'no-operation' }
+    }
+
+    const unmerged = await runGit(root, ['diff', '--name-only', '--diff-filter=U'])
+    if (unmerged.code === 0 && unmerged.stdout.trim() !== '') {
+      return { ok: false, ...coded('complete-conflict'), reason: 'conflict' }
+    }
+
+    const run = await runGit(root, ['commit', '--no-edit'])
+    if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error' }
+    if (run.code !== 0) {
+      const text = diagnosticText(run)
+      if (MISSING_IDENTITY.test(text)) {
+        return { ok: false, ...coded('commit-identity'), reason: 'error' }
+      }
+      return { ok: false, ...refusalOf(run), reason: 'error' }
+    }
+
+    const status = await readStatus(target)
+    if (status.ok !== true) return { ok: false, ...refusalOfStatus(status), reason: 'error' }
+    return { ok: true, status, summary: 'Merged' }
+  })
+}
+
+/**
+ * The refusal one payload's own failure amounts to, for a nested read.
+ *
+ * A write route that re-reads the status has already succeeded by the time the
+ * read can fail, so the read's reason is carried over rather than re-derived.
+ *
+ * @param payload - the failed status answer.
+ * @returns the coded refusal, or its text.
+ */
+function refusalOfStatus(payload: StatusPayload): Refusal {
+  if (payload.failure !== undefined) return { failure: payload.failure }
+  return { error: payload.error ?? 'could not read the status after the write' }
 }
 
 /**
@@ -2299,12 +2766,19 @@ export async function fetchUpstream(target: GitTarget): Promise<FetchUpstreamPay
 /**
  * Pull the current branch from its upstream.
  *
- * `--ff-only` is deliberate, and it is the whole shape of this feature: a plain
- * `git pull` would invent a merge commit (a commit nobody wrote a message for)
- * and, when the two sides conflict, would leave the working tree in a merge this
- * page has no way to finish or abort. A fast-forward either applies cleanly or
- * is refused with the one thing the user can act on —that the branches have
- * diverged.
+ * `--no-rebase` is deliberate, and it is the whole shape of this feature. A plain
+ * `git pull` obeys whatever `pull.rebase` the user configured — and a rebase
+ * would rewrite this branch's history, which is not something a one-click sync
+ * should do behind a button that says "sync". Stating `--no-rebase` replaces the
+ * inherited intent with this one: bring the remote's commits in with a merge.
+ *
+ * That merge may fast-forward (the common case, and the only outcome this route
+ * used to allow), or it may join the two histories with a merge commit whose
+ * message Git writes itself — `Merge branch 'main' of <remote> into main` — which
+ * is the message this shape is for: nobody has to write it, and nobody is asked
+ * to. It may also conflict, and then the merge is left in the tree exactly as a
+ * conflicted `git merge` is: the conflict list resolves it, and `completeMerge`
+ * records it.
  *
  * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a pull was refused.
@@ -2323,9 +2797,19 @@ export async function pullFromRemote(target: GitTarget): Promise<SyncPayload> {
     }
   }
 
-  const run = await runGit(handoff.root, ['pull', '--ff-only'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
+  const run = await runGit(handoff.root, ['pull', '--no-rebase'], { timeoutMs: GIT_NETWORK_TIMEOUT_MS })
   if (run.failure !== undefined) return { ok: false, error: run.failure, reason: 'error', action: 'pull' }
-  if (run.code !== 0) return syncFailure(run, 'pull')
+  if (run.code !== 0) {
+    if (await conflictedMerge(handoff.root, run)) {
+      return {
+        ok: false,
+        ...coded('pull-conflict', { branch: handoff.branch }),
+        reason: 'conflict',
+        action: 'pull',
+      }
+    }
+    return syncFailure(run, 'pull')
+  }
 
   return syncSuccess(run, 'pull', upstream)
 }
@@ -2437,16 +2921,21 @@ function syncFailure(run: GitRun, action: 'pull' | 'push'): SyncPayload {
 /**
  * One queue of repository writes per repository root.
  *
- * Stage, unstage, discard and both commit routes write the repository. The index
- * writers among them take Git's `index.lock`, and two overlapping is a lock error
- * the user did not cause; a discard writes the worktree instead, but it still
- * must not interleave with a stage that is re-reading the state it came from.
- * The page already disables its own controls while one is in flight, but a
- * second window, the agent in the same repository, or a stale answer can still
- * arrive at the same moment, so the Host serializes the routes themselves. The
- * queue is keyed by root because two repositories have no reason to wait on each
- * other, and dropped when the last write finishes so it holds no state of its
- * own.
+ * Stage, unstage, discard, both commit routes, the conflict resolver's writes,
+ * and the abort and completion of an operation all write the repository. The
+ * index writers among them take Git's `index.lock`, and two overlapping is a lock
+ * error the user did not cause; a discard and a block resolution write the
+ * worktree instead, but they still must not interleave with a stage that is
+ * re-reading the state it came from. The page already disables its own controls
+ * while one is in flight, but a second window, the agent in the same repository,
+ * or a stale answer can still arrive at the same moment, so the Host serializes
+ * the routes themselves. The queue is keyed by root because two repositories have
+ * no reason to wait on each other, and dropped when the last write finishes so it
+ * holds no state of its own.
+ *
+ * The resolver's write is the one that depends on being inside the queue for more
+ * than mutual exclusion: it re-reads the index and the file under the lock, so the
+ * region key the page sent is checked against the bytes that are really there.
  */
 const writeQueues = new Map<string, Promise<unknown>>()
 

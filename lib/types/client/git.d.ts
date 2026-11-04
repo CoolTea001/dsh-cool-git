@@ -6,9 +6,10 @@
  * Changed paths come from `git status`, the history from `git log`, and the
  * diff pane shows one side of one path's change — the index against HEAD, or the
  * worktree against the index — or one commit's whole patch (see `api.ts` for the
- * routes and `diff.ts` for the patch parser). The pane stacks the index's half
- * above the worktree's, each a disclosure of its own, and the conflict list is
- * withheld until the page can resolve one (see `VisibleSide`).
+ * routes and `diff.ts` for the patch parser). The pane stacks the conflicts
+ * above the index's half and the worktree's, each a disclosure of its own; a
+ * conflicted path opens the conflict pane instead of a patch, because that pane
+ * is where it is resolved.
  * A row's trailing `+` or `−` moves its path between the two lists. The
  * sidebar's second row is the commit form — a message field, a button
  * whose scope is the index or the whole tree, and the caret that switches between

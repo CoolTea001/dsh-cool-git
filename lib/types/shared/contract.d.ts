@@ -30,7 +30,7 @@
  * The set is closed on purpose: a refusal that is not one of these is Git's
  * own words and travels as `error` text instead.
  */
-export type FailureCode = 'not-ready' | 'no-workdir' | 'no-subprocess' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-dirty' | 'push-dirty' | 'auth' | 'pull-diverged' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-nothing-staged' | 'commit-conflict' | 'commit-identity' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
+export type FailureCode = 'not-ready' | 'no-workdir' | 'no-subprocess' | 'missing-path' | 'bad-hash' | 'missing-message' | 'missing-branch' | 'missing-name' | 'git-exit' | 'no-root' | 'no-commits' | 'unparsable-commit' | 'unknown-branch' | 'remote-local-name' | 'checkout-dirty' | 'checkout-dirty-paths' | 'branch-exists' | 'branch-not-merged' | 'branch-in-use' | 'unknown-remote' | 'merge-dirty' | 'merge-conflict' | 'merge-same-branch' | 'merge-detached' | 'merge-no-commits' | 'not-conflicted' | 'stale-conflict' | 'resolve-unsafe' | 'bad-choice' | 'no-operation' | 'complete-conflict' | 'pull-no-commits' | 'push-no-commits' | 'pull-detached' | 'push-detached' | 'pull-no-upstream' | 'pull-dirty' | 'push-dirty' | 'auth' | 'pull-diverged' | 'pull-conflict' | 'push-behind' | 'push-no-remote' | 'push-ambiguous-remote' | 'commit-clean' | 'commit-nothing-staged' | 'commit-conflict' | 'commit-identity' | 'no-llm' | 'no-model' | 'model-timeout' | 'model-truncated' | 'empty-message';
 /**
  * One coded refusal, with the values its sentence interpolates.
  *
@@ -103,7 +103,27 @@ export interface StatusPayload {
     readonly files?: readonly ChangedFile[];
     /** The owning Workspace, absent when the Host cannot name one. */
     readonly workspace?: WorkspaceInfo;
+    /**
+     * The multi-step operation the repository is in the middle of, when it is in
+     * one.
+     *
+     * A merge that conflicts, and a pull that merges into a conflict, both leave
+     * the working tree unfinished on purpose — that is the state the conflict list
+     * resolves. This is how the page knows to offer finishing or abandoning it, and
+     * to keep the commit form from recording a half-merge. Absent at rest, which
+     * is the ordinary case.
+     */
+    readonly operation?: ConflictOperation;
 }
+/**
+ * A multi-step Git operation that is in progress.
+ *
+ * `rebase` and `cherry-pick` are read for the same reason `merge` is: a reader
+ * can start one in a terminal and come back to this tab, and the conflicted paths
+ * it leaves behind are the same paths, resolved the same way. Only the way the
+ * operation is finished or abandoned differs, and that is the Host's business.
+ */
+export type ConflictOperation = 'merge' | 'rebase' | 'cherry-pick';
 /** The DSH Workspace this session belongs to, when the Host can name it. */
 export interface WorkspaceInfo {
     /** The Workspace's display title. */
@@ -358,9 +378,10 @@ export interface SyncPayload {
      * Why the operation did not happen, when the page can act on it: there is no
      * repository, the session may not write, HEAD is detached, the branch has no
      * upstream (or an ambiguous remote), the two sides diverged, local changes are
-     * in the way, or the remote refused the credentials.
+     * in the way, the merge the pull asked for conflicts, or the remote refused the
+     * credentials.
      */
-    readonly reason?: 'no-repo' | 'error' | 'detached' | 'no-upstream' | 'no-remote' | 'ambiguous-remote' | 'diverged' | 'dirty' | 'auth';
+    readonly reason?: 'no-repo' | 'error' | 'detached' | 'no-upstream' | 'no-remote' | 'ambiguous-remote' | 'diverged' | 'dirty' | 'conflict' | 'auth';
     /** Which operation answered, so a caller can label its own report. */
     readonly action?: 'pull' | 'push';
     /**
@@ -426,6 +447,188 @@ export interface DiffPayload {
     readonly truncated?: boolean;
     /** Git reported a binary difference, so there are no lines to render. */
     readonly binary?: boolean;
+}
+/**
+ * Which of the three versions of a conflicted path the reader keeps for one
+ * block, or for the whole file.
+ *
+ * `ours` and `theirs` are the index stages, not the sides of any particular
+ * operation: during a merge stage 2 is the branch checked out and stage 3 is the
+ * branch merged in, and the page labels both from the marker lines Git wrote
+ * rather than from those words, because a rebase swaps which is which.
+ *
+ * `both` is the ordinary "keep both edits" answer, and is what a reader wants
+ * when the two sides added different lines rather than changed the same one. It
+ * has no meaning for a whole file and is refused there.
+ */
+export type ResolveChoice = 'ours' | 'theirs' | 'both' | 'base';
+/** Which of the three index stages a conflicted path still has. */
+export interface ConflictStages {
+    /** Stage 1: the merge base. */
+    readonly base: boolean;
+    /** Stage 2: the version the current branch holds. */
+    readonly ours: boolean;
+    /** Stage 3: the version the other side holds. */
+    readonly theirs: boolean;
+}
+/**
+ * One `<<<<<<<` … `>>>>>>>` block of a conflicted file.
+ *
+ * The lines are display text with their terminators removed; the bytes they came
+ * from stay in the Host, which is the only half that writes. A block carries its
+ * own key so a resolution names *which* block it means without the page having to
+ * trust an index that a concurrent edit could have moved.
+ */
+export interface ConflictRegion {
+    /**
+     * Identity of this block, derived from its position and its bytes.
+     *
+     * The page sends it back with a choice, and the Host refuses a key that no
+     * longer matches the file — which is what keeps an editor that wrote the file
+     * in the meantime from turning a click into a splice at the wrong place. Two
+     * byte-identical blocks in one file therefore still have different keys.
+     */
+    readonly key: string;
+    readonly ours: readonly string[];
+    readonly theirs: readonly string[];
+    /** The merge base, present only for a `diff3`-style conflict. */
+    readonly base?: readonly string[];
+    /**
+     * The label Git wrote after the marker (`HEAD`, `feat`, a short hash with the
+     * subject), which is what the page calls each side.
+     *
+     * Read from the file rather than assumed: a rebase writes the sides in the
+     * opposite roles, and a sentence that hard-coded "current"/"incoming" would be
+     * wrong exactly there.
+     */
+    readonly oursLabel?: string;
+    readonly theirsLabel?: string;
+    readonly baseLabel?: string;
+}
+/** One run of a conflicted file: ordinary lines, or a block to resolve. */
+export type ConflictBlock = {
+    readonly kind: 'context';
+    readonly lines: readonly string[];
+} | ({
+    readonly kind: 'region';
+} & ConflictRegion);
+/**
+ * One conflicted path, as the page resolves it.
+ *
+ * A parsed view rather than a patch, because `git diff` answers an unmerged path
+ * with a *combined* diff (`diff --cc`, `@@@` headers, two-column prefixes) that
+ * is a report about the conflict rather than something to choose within, and
+ * because a delete/modify conflict has no diff at all — Git prints
+ * `* Unmerged path x` and nothing else. The worktree file and its markers are
+ * what a resolver can actually act on, so those are what this carries.
+ */
+export interface ConflictDoc {
+    readonly path: string;
+    readonly blocks: readonly ConflictBlock[];
+    /** How many blocks carry a choice; zero means the markers are already gone. */
+    readonly regions: number;
+    /**
+     * Whether Git wrote a merge base into the file (`diff3`/`zdiff3` style), which
+     * is the only reason a block has a third version to show.
+     */
+    readonly style: 'merge' | 'diff3';
+    /** The file is binary, so there are no markers and only a whole-file choice. */
+    readonly binary: boolean;
+    readonly stages: ConflictStages;
+    /**
+     * What there is to do with the path: blocks to resolve, a clean file that only
+     * needs staging, a path one side deleted (so a whole-file choice is the only
+     * one that can express it, whether or not Git left a marker-free copy in the
+     * working tree), or content with no markers to find.
+     */
+    readonly state: 'regions' | 'clean' | 'missing' | 'binary';
+}
+/** `POST /conflict`: one unmerged path, ready to resolve. */
+export interface ConflictPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    /**
+     * Why no conflict was read, when the page can act on it: there is no
+     * repository, the path is no longer unmerged (it was resolved elsewhere), or
+     * the read itself failed.
+     */
+    readonly reason?: 'no-repo' | 'error' | 'not-conflicted';
+    readonly conflict?: ConflictDoc;
+}
+/**
+ * `POST /resolve`: one choice applied to one path.
+ *
+ * Two shapes share the route because they are one decision. A request naming
+ * `keys` replaces exactly those blocks and leaves the file's remaining markers
+ * alone — the reader is part-way through a file with several conflicts. A request
+ * naming none is a whole-file choice for a path that has no blocks to choose
+ * within (binary content, or a file deleted on one side), and because that *is*
+ * the resolution it is staged as well.
+ */
+export interface ResolvePayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    /**
+     * Why nothing was written, when the page can act on it: there is no
+     * repository, the path is not unmerged, the file changed since it was read, or
+     * the path is not one this plugin may write.
+     */
+    readonly reason?: 'no-repo' | 'error' | 'not-conflicted' | 'stale' | 'unsafe';
+    /** The path after the write, so the pane repaints from what is on disk. */
+    readonly conflict?: ConflictDoc;
+    /** The write staged the path as resolved. */
+    readonly staged?: boolean;
+    /** The repository state after the write, when the write staged the path. */
+    readonly status?: StatusPayload;
+}
+/**
+ * `POST /resolve-done`: one path marked resolved, without writing it.
+ *
+ * The reader who edited the file themselves — or who resolved every block and
+ * wants to look once more before telling Git so — has nothing left to write and
+ * only needs the index to agree. That is `git add`, and this is the route for it.
+ */
+export interface ResolveDonePayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    readonly reason?: 'no-repo' | 'error' | 'not-conflicted';
+    /** The repository state after the index write. */
+    readonly status?: StatusPayload;
+}
+/**
+ * `POST /merge-abort` and `POST /merge-commit`: finishing or abandoning the
+ * operation a merge or a pull left in progress.
+ *
+ * Both are answered with the re-read status, because both move the branch and the
+ * working tree at once and the page has no other way to learn what they did.
+ */
+export interface OperationPayload {
+    readonly ok: boolean;
+    /** Raw diagnostic text: Git's own words, or a transport or seam message. */
+    readonly error?: string;
+    /** The coded refusal, which the page words in the active locale. */
+    readonly failure?: Failure;
+    /**
+     * Why the operation did not finish, when the page can act on it: there is no
+     * repository, nothing was in progress, the tree still holds unresolved
+     * conflicts, or the commit itself was refused.
+     */
+    readonly reason?: 'no-repo' | 'error' | 'no-operation' | 'conflict';
+    /** The repository state after the operation. */
+    readonly status?: StatusPayload;
+    /** The merge commit that was just created, once one was. */
+    readonly commit?: CommitSummary;
+    /** The Host's own one-line account of what the operation did. */
+    readonly summary?: string;
 }
 /** `POST /commit`: one commit's message plus its whole patch. */
 export interface CommitPayload {
@@ -697,6 +900,11 @@ export declare const ROUTES: {
     readonly branchDelete: "/dsh-cool-git/api/branch-delete";
     readonly checkout: "/dsh-cool-git/api/checkout";
     readonly merge: "/dsh-cool-git/api/merge";
+    readonly conflict: "/dsh-cool-git/api/conflict";
+    readonly resolve: "/dsh-cool-git/api/resolve";
+    readonly resolveDone: "/dsh-cool-git/api/resolve-done";
+    readonly mergeAbort: "/dsh-cool-git/api/merge-abort";
+    readonly mergeCommit: "/dsh-cool-git/api/merge-commit";
     readonly fetch: "/dsh-cool-git/api/fetch";
     readonly fetchUpstream: "/dsh-cool-git/api/fetch-upstream";
     readonly pull: "/dsh-cool-git/api/pull";

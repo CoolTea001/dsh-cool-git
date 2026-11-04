@@ -908,6 +908,10 @@ const GIT_CSS = [
   '.dsh-cg-main-head{flex:none;display:flex;align-items:center;gap:8px;min-height:30px;padding:4px 8px 4px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base)}',
   '.dsh-cg-main-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-main-subtitle{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+  // How many blocks a conflicted file still holds. It reads in the subtitle's
+  // register — a quiet count beside the title — but as its own class, because
+  // the subtitle slot is the kind tag's and two elements cannot share it.
+  '.dsh-cg-main-count{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}',
   // Which half of a path the patch is: a pill because it is a state of the pane
   // rather than a second title, and quiet enough to sit beside the kind tag.
   '.dsh-cg-main-side{flex:none;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:16px}',
@@ -1008,6 +1012,78 @@ const GIT_CSS = [
   // space and every diff of indented code would read as if it were flat.
   '.dsh-cg-text{white-space:pre;padding-right:16px}',
   '.dsh-cg-line[data-kind=meta] .dsh-cg-text{grid-column:1 / -1;padding-left:12px}',
+
+  // 4. The conflict pane and the operation banner.
+  //
+  // A conflicted path is not a patch: it is a list of decisions. The blocks are
+  // drawn as cards rather than as diff rows so they read as things to answer
+  // instead of things to read, and each card's head carries the answers in the
+  // reader's reach.
+  //
+  // The cards are separated by a rule of their own rather than by the diff
+  // pane's row tinting: nothing here is an addition or a deletion, so the two
+  // background washes would say something untrue about which side is which. The
+  // side that is *current* keeps a neutral wash so a reader scanning the pane
+  // can tell the two columns apart before reading a word.
+
+  // The header's right-hand group on the conflict pane. `.dsh-cg-main-title`
+  // takes the slack, so the group only has to refuse to shrink.
+  '.dsh-cg-main-actions{flex:none;display:flex;align-items:center;gap:6px}',
+
+  // One small button, used by the pane header and by each block. It is a text
+  // button rather than a glyph: every one of these answers a question in words
+  // ("take current", "keep both"), and none of them has a picture that would say
+  // it as quickly. The primary variant is the one that moves the file on.
+  //
+  // Its text is the theme's own foreground token rather than `bg-base`: the
+  // wallpaper theme rebinds `bg-base` to transparent inside this root, and a
+  // colour of `transparent` on a filled button is a label nobody can read.
+  '.dsh-cg-conflict-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:22px;padding:0 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm,6px);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:1;white-space:nowrap;cursor:pointer}',
+  '.dsh-cg-conflict-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-conflict-btn:disabled{opacity:.45;cursor:default}',
+  '.dsh-cg-conflict-btn[data-variant=primary]{border-color:transparent;background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-label-primary-foreground)}',
+  '.dsh-cg-conflict-btn[data-variant=primary]:hover:not(:disabled){background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-label-primary-foreground);filter:brightness(1.08)}',
+  '.dsh-cg-conflict-btn svg{width:12px;height:12px;display:block}',
+
+  // The blocks' scroller: the same vertical flow as the diff pane, with the
+  // padding the cards need to read as separate objects.
+  '.dsh-cg-conflict-list{display:flex;flex-direction:column;gap:10px;padding:10px 12px 14px}',
+  '.dsh-cg-conflict{display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,8px);overflow:hidden;background:var(--dsw-alias-bg-base)}',
+  '.dsh-cg-conflict[data-busy]{opacity:.6}',
+  '.dsh-cg-conflict-head{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 10px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1));border-bottom:.5px solid var(--dsw-alias-border-l3)}',
+  '.dsh-cg-conflict-index{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+  '.dsh-cg-conflict-actions{flex:none;display:flex;align-items:center;gap:4px}',
+
+  // The two (or three, with a merge base) columns. `auto-fit` is what lets the
+  // same markup draw two sides on a wide pane and stack them on a narrow one,
+  // without the pane needing to know which it is.
+  '.dsh-cg-conflict-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--dsw-alias-border-l3)}',
+  '.dsh-cg-conflict-side{min-width:0;padding:4px 0 6px;background:var(--dsw-alias-bg-base)}',
+  '.dsh-cg-conflict-side[data-side=ours]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 6%,var(--dsw-alias-bg-base))}',
+  '.dsh-cg-conflict-side[data-side=theirs]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 6%,var(--dsw-alias-bg-base))}',
+  '.dsh-cg-conflict-tag{padding:0 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10.5px;line-height:16px;user-select:none}',
+  // A conflict line wraps rather than scrolls: two columns in one pane have no
+  // width to spare, and a line that ran off would hide the very text the reader
+  // is comparing.
+  '.dsh-cg-conflict-line{padding:0 10px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;line-height:18px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-conflict-line[data-empty]{color:var(--dsw-alias-label-tertiary);font-style:italic}',
+  '.dsh-cg-conflict-context{padding:2px 0;border-radius:var(--dsw-radius-sm,6px)}',
+  '.dsh-cg-conflict-context .dsh-cg-conflict-line{color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-conflict-choose{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}',
+
+  // The banner above the commit form. It is tinted with the error token because
+  // the state it names blocks every other action on the page, and `data-ready`
+  // lifts the tint once the last conflict is gone — the same row, saying the
+  // opposite thing.
+  '.dsh-cg-operation{flex:none;display:flex;align-items:center;gap:8px;padding:5px 8px 5px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}',
+  '.dsh-cg-operation[data-ready=true]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent)}',
+  '.dsh-cg-operation-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-state-error-primary)}',
+  '.dsh-cg-operation[data-ready=true] .dsh-cg-operation-icon{color:var(--dsw-alias-state-success-primary)}',
+  '.dsh-cg-operation-icon svg{width:13px;height:13px;display:block}',
+  '.dsh-cg-operation-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}',
+  '.dsh-cg-operation-title{font-size:11.5px;line-height:15px;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.dsh-cg-operation-note{font-size:10.5px;line-height:14px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.dsh-cg-operation-actions{flex:none;display:flex;align-items:center;gap:4px}',
 
   // 4. Wallpaper.
   //

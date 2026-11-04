@@ -6,9 +6,10 @@
  * Changed paths come from `git status`, the history from `git log`, and the
  * diff pane shows one side of one path's change — the index against HEAD, or the
  * worktree against the index — or one commit's whole patch (see `api.ts` for the
- * routes and `diff.ts` for the patch parser). The pane stacks the index's half
- * above the worktree's, each a disclosure of its own, and the conflict list is
- * withheld until the page can resolve one (see `VisibleSide`).
+ * routes and `diff.ts` for the patch parser). The pane stacks the conflicts
+ * above the index's half and the worktree's, each a disclosure of its own; a
+ * conflicted path opens the conflict pane instead of a patch, because that pane
+ * is where it is resolved.
  * A row's trailing `+` or `−` moves its path between the two lists. The
  * sidebar's second row is the commit form — a message field, a button
  * whose scope is the index or the whole tree, and the caret that switches between
@@ -74,9 +75,11 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
+  abortOperation,
   checkoutBranch,
   commitAll,
   commitStaged,
+  completeMerge,
   createBranch,
   deleteBranches,
   discardAll,
@@ -86,6 +89,7 @@ import {
   fetchBranchReport,
   fetchBranchUpstream,
   fetchCommit,
+  fetchConflict,
   fetchDiff,
   fetchLog,
   fetchModelEfforts,
@@ -93,9 +97,11 @@ import {
   fetchSettings,
   fetchStatus,
   generateMessage,
+  markResolved,
   mergeBranch,
   pullBranch,
   pushBranch,
+  resolveConflict,
   saveSettings,
   stageAll,
   stageFolder,
@@ -152,12 +158,17 @@ import {
   type ChangeKind,
   type CommitScope,
   type CommitSummary,
+  type ConflictBlock,
+  type ConflictDoc,
+  type ConflictOperation,
+  type ConflictRegion,
   type DeleteBranchesPayload,
   type DiffSide,
   type Failure,
   type LogPayload,
   type MessageModel,
   type MessageModelGroup,
+  type ResolveChoice,
   type StatusPayload,
 } from '../shared/contract.js'
 
@@ -280,8 +291,8 @@ type DiscardRequest =
  * rows: a partly staged file is one row under Staged and one under Changes. An
  * untracked path is in neither porcelain column but is a worktree change, so it
  * belongs to the unstaged list. A conflicted path is neither side: `git add`
- * would mark it resolved, so it is classified as the conflict list — which the
- * pane withholds until the page can resolve one (see `VisibleSide`).
+ * would mark it resolved, and nothing but the reader can say that happened, so it
+ * is classified as the conflict list alone.
  *
  * @param file - one changed path.
  * @returns the groups that list it, in sidebar order.
@@ -319,26 +330,40 @@ interface DocState {
   readonly binary?: boolean
   readonly commit?: CommitSummary & { readonly body: string }
   readonly merge?: boolean
+  /**
+   * The parsed conflict of the selected unmerged path, when it has one.
+   *
+   * A conflict answer is not a patch and does not go through `diff.ts`: the pane
+   * draws it from the file's marker blocks, which is what the reader chooses
+   * within. So the two live in the same state rather than in two, and the pane
+   * reads whichever the selection asked for.
+   */
+  readonly conflict?: ConflictDoc
 }
 
 /**
- * The two changed-path lists the pane draws.
+ * The three changed-path lists the pane draws.
  *
- * Both are drawn together — the index's half above the worktree's — and each is
- * a disclosure of its own, so the reader can fold one away while reading the
- * other. The conflict list is deliberately absent. The page can show an unmerged
- * path's combined diff, but it has no way to resolve one: `git merge` aborts a
- * conflicting merge (see `mergeBranch` in the Host), and a conflicted row
- * therefore carries no action. Drawing a list whose rows only restate Git's
- * state, and whose count is always zero for a merge this page started, promises
- * a resolver that does not exist yet. The list is one entry in `SIDES` away from
- * returning once one does; `DiffSide`, the Host's `conflict` diff, and the
- * sidebar's classification all stay in place for it.
+ * All three are drawn together, each a disclosure of its own, so the reader can
+ * fold one away while reading another. The conflict list comes first because it
+ * is the one that blocks everything else: a commit cannot record a tree with
+ * unmerged paths in it, so the list that has to be emptied before the others can
+ * be acted on is the list that reads first.
+ *
+ * Every row in it opens the conflict pane, and that pane is what resolves it.
+ * The two other lists never hold a conflicted path — `sidesOf` puts one in this
+ * list alone — which is why no bulk action here can stage a file that still has
+ * markers in it.
  */
-type VisibleSide = Exclude<DiffSide, 'conflict'>
+const SIDES: readonly DiffSide[] = ['conflict', 'staged', 'unstaged']
 
-/** The lists the pane draws, in the order it draws them: the index first. */
-const SIDES: readonly VisibleSide[] = ['staged', 'unstaged']
+/**
+ * The halves a bulk action moves between the index and the worktree.
+ *
+ * Conflicts are not one of them: `git add` on an unmerged path means "resolved",
+ * which is a per-path decision no group header can make.
+ */
+type StageableSide = Exclude<DiffSide, 'conflict'>
 
 /**
  * What one session's page remembers between mounts.
@@ -461,6 +486,10 @@ interface RouteAnswer extends RouteOutcome {
   readonly binary?: boolean
   readonly commit?: CommitSummary & { readonly body: string }
   readonly merge?: boolean
+  /** The parsed conflict, on the route that answers one instead of a patch. */
+  readonly conflict?: ConflictDoc
+  /** The write staged the path as resolved, on a whole-file resolution. */
+  readonly staged?: boolean
 }
 
 /**
@@ -520,6 +549,30 @@ function buildDoc(t: Translate, key: string, result: RouteAnswer | null | undefi
     return { ...base, commit: result.commit, merge: result.merge === true }
   }
   return { ...base, binary: result.binary === true }
+}
+
+/**
+ * Turn one conflict answer into the pane's state.
+ *
+ * The shape is deliberately the same `DocState` a patch uses, with `conflict`
+ * where `doc` would be: the pane switches on the selection's side, not on which
+ * kind of answer is in flight, so a conflict and a patch are two contents of one
+ * slot rather than two slots.
+ *
+ * @param t - the page's translate seat, for the reason the answer did not give.
+ * @param key - the selection identity this answer belongs to.
+ * @param result - the payload the route returned.
+ * @returns the pane state to render.
+ */
+function buildConflictDoc(
+  t: Translate,
+  key: string,
+  result: RouteAnswer | null | undefined,
+): DocState {
+  if (result?.ok !== true || result.conflict === undefined) {
+    return { key, loading: false, error: reasonOf(t, result ?? {}, 'fallback.unknown') }
+  }
+  return { key, loading: false, conflict: result.conflict }
 }
 
 /**
@@ -1014,6 +1067,18 @@ export function GitView(props: {
   const [staging, setStaging] = useState<string | null>(null)
   /** The row whose worktree discard is in flight, as `unstaged:path`, or null. */
   const [discarding, setDiscarding] = useState<string | null>(null)
+  /**
+   * The conflict write in flight, or null at rest.
+   *
+   * A resolution rewrites one file, and two of them in flight at once would race
+   * the second against the first's bytes — the Host serializes the writes, but the
+   * second request carries region keys from before the first one landed, and the
+   * answer it would get is "this file changed". So the page holds the answers to
+   * one at a time and shows the wait on the block that was clicked.
+   */
+  const [resolving, setResolving] = useState<string | null>(null)
+  /** Whether a merge abort or completion is in flight. */
+  const [finishing, setFinishing] = useState(false)
   /** The row or folder the discard dialog is asking about, or null while none is open. */
   const [discardTarget, setDiscardTarget] = useState<DiscardRequest | null>(null)
   const [selection, setSelection] = useState<Selection | null>(() => remembered.selection)
@@ -1353,8 +1418,13 @@ export function GitView(props: {
    * The page's part is one name: the Host decides what a name may be, and Git
    * merges into the branch it is on. The merge leaves HEAD where it is, but it
    * rewrites the history — and a fast-forward rewrites the working tree as well —
-   * so a success takes the checkout's path and re-reads everything. A refusal is
-   * the error dialog's, worded around the branch the request named.
+   * so a success takes the checkout's path and re-reads everything.
+   *
+   * A refusal is the error dialog's, worded around the branch the request named —
+   * and one refusal is also a state rather than a dead end: a conflicted merge is
+   * left in the tree for this page to resolve, so the repository is re-read and
+   * the paths Git wrote markers into appear in the conflict list under the
+   * dialog's sentence about them.
    *
    * @param branch - the branch the dialog confirmed, which is the merge's source.
    */
@@ -1364,11 +1434,12 @@ export function GitView(props: {
       setMerging(null)
       if (result?.ok !== true) {
         reportError(failureOf(t, 'title.mergeFrom', result, { branch }))
+        if (result?.reason === 'conflict') handleSynced()
         return
       }
       handleSwitched()
     })
-  }, [sessionId, handleSwitched, reportError, t])
+  }, [sessionId, handleSwitched, handleSynced, reportError, t])
 
   /**
    * Start the branch the dialog confirmed, and switch to it.
@@ -1488,12 +1559,17 @@ export function GitView(props: {
   /**
    * Run the round trip: pull, then push.
    *
-   * The order is what makes a single button safe. Fast-forwarding first means
-   * the push that follows sends a history the remote already has, so the common
+   * The order is what makes a single button safe. Pulling first means the push
+   * that follows sends a history the remote already has, so the common
    * divergence — the remote moved on while this branch did — resolves without a
-   * second click and without the non-fast-forward refusal. A refused pull stops
-   * there instead: the two sides have diverged, and pushing into that is exactly
-   * the refusal the pull has already explained.
+   * second click and without the non-fast-forward refusal. The pull merges when
+   * the two sides have diverged, so what it brings in may be a merge commit of
+   * its own; nothing here has to write a message for it.
+   *
+   * A pull that does not finish stops the round trip: a refused one has already
+   * been explained by the dialog, and a conflicted one has left a merge in the
+   * tree that the push cannot act on — the conflict list is the page's next step,
+   * and pushing into a half-merged history is exactly what must not happen.
    *
    * This is only ever asked of a branch that has an upstream — without one the
    * header offers Publish instead — so the pull has a target by construction.
@@ -1663,7 +1739,7 @@ export function GitView(props: {
    *
    * @param side - the half the group names: staged unstages, unstaged stages.
    */
-  const handleStageAll = useCallback((side: VisibleSide): void => {
+  const handleStageAll = useCallback((side: StageableSide): void => {
     if (staging !== null || discarding !== null) return
     setStaging(`${side}:`)
     const request = side === 'staged' ? unstageAll(sessionId) : stageAll(sessionId)
@@ -1792,15 +1868,16 @@ export function GitView(props: {
 
   // One operation at a time, wherever the control that asks for it lives: the
   // branch pill and the More menu in the toolbar, the remote control in the
-  // history pane's header, the commit in the changed-path pane's, and the
-  // index write behind one row's stage control. Stating it once here is what
-  // keeps a second click from queueing a second checkout, a second merge, a
-  // second create or delete, a second round trip, a second commit, a second
-  // fetch, or a second stage behind the first. Generation is not one of these:
-  // it writes nothing, so it is the form's own state rather than the page's, and
-  // a slow model call must not lock the branch pill or More.
+  // history pane's header, the commit in the changed-path pane's, the conflict
+  // write behind one block's button, and the index write behind one row's stage
+  // control. Stating it once here is what keeps a second click from queueing a
+  // second checkout, a second merge, a second create or delete, a second round
+  // trip, a second commit, a second fetch, a second resolution, or a second stage
+  // behind the first. Generation is not one of these: it writes nothing, so it is
+  // the form's own state rather than the page's, and a slow model call must not
+  // lock the branch pill or More.
   const busy = switching !== null || merging !== null || syncing !== null || committing
-    || fetching || creating || deleting || staging !== null
+    || fetching || creating || deleting || staging !== null || resolving !== null || finishing
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
@@ -1808,10 +1885,121 @@ export function GitView(props: {
   // and whether Generate has anything to describe. A half-staged path is counted
   // in both lists, which is what it is: the index holds one version and the
   // worktree another, and each count names rows rather than distinct paths. A
-  // conflicted path is in neither — it cannot be committed until it is resolved —
-  // and the list that would hold it is withheld.
+  // conflicted path is counted by neither, and the conflict list is drawn above
+  // the other two so the count that has to reach zero is the first one read.
   const stagedCount = files.filter(file => file.staged && !file.conflicted).length
   const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
+  const conflictCount = files.filter(file => file.conflicted).length
+
+  /**
+   * Apply one choice to the conflict on screen.
+   *
+   * `keys` names the blocks to replace, and is absent for a whole-file choice —
+   * the one a binary path or a path deleted on one side can take. The answer
+   * carries the file after the write, so the pane repaints from what is on disk
+   * rather than from what the click assumed; a refused key or a path that is no
+   * longer unmerged is answered by re-reading the repository, because both mean
+   * the page was holding an older picture of the file than the disk had.
+   *
+   * @param choice - which version to keep.
+   * @param keys - the blocks to replace, or undefined for the whole file.
+   */
+  const handleResolve = useCallback((
+    choice: ResolveChoice,
+    keys: readonly string[] | undefined,
+  ): void => {
+    if (selection?.kind !== 'file' || selection.side !== 'conflict') return
+    if (busy) return
+    const path = selection.file.path
+    const key = selectionKey(selection)
+    setResolving(keys === undefined ? 'whole' : keys.join(','))
+    void resolveConflict(sessionId, path, choice, keys).then(result => {
+      setResolving(null)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, 'title.resolve', result))
+        // Both refusals that can happen here mean "the file is not what the page
+        // read", so the answer is a re-read: it either repaints the conflict as
+        // it really is, or drops the row because it was resolved elsewhere.
+        if (result?.reason === 'stale' || result?.reason === 'not-conflicted') void refresh()
+        return
+      }
+      if (result.conflict !== undefined) {
+        setDoc({ key, loading: false, conflict: result.conflict })
+      }
+      // A whole-file choice *is* the resolution, so the path is staged and left
+      // the conflict list; a block choice may have left markers behind, and the
+      // list is re-read only once the index moved.
+      if (result.staged === true) void refresh()
+    })
+  }, [selection, busy, sessionId, reportError, t, refresh])
+
+  /**
+   * Tell Git the conflict on screen is resolved, without writing it.
+   *
+   * For the reader who fixed the file in their editor, or who resolved every
+   * block and wants one last look before committing to it. The answer carries the
+   * fresh status, and the selection follows the path out of the conflict list and
+   * into the index on the repaint that follows.
+   */
+  const handleMarkResolved = useCallback((): void => {
+    if (selection?.kind !== 'file' || selection.side !== 'conflict') return
+    if (busy) return
+    setFinishing(true)
+    void markResolved(sessionId, selection.file.path).then(result => {
+      setFinishing(false)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, 'title.resolveDone', result))
+        void refresh()
+        return
+      }
+      if (result.status === undefined) return
+      setStatus(result.status)
+      writeRepositorySnapshot(sessionId, result.status, log)
+    })
+  }, [selection, busy, sessionId, reportError, t, refresh, log])
+
+  /**
+   * Abandon whatever operation left conflicts in the tree.
+   *
+   * A merge, a pull, a rebase, or a cherry-pick — the Host reads which one from
+   * the repository and runs the one command that undoes it. Everything on screen
+   * is stale afterwards, because the working tree and possibly HEAD moved, so it
+   * takes the switch's path rather than a plain re-read.
+   */
+  const handleAbortOperation = useCallback((): void => {
+    if (busy) return
+    setFinishing(true)
+    void abortOperation(sessionId).then(result => {
+      setFinishing(false)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, 'title.abortOperation', result))
+        handleSynced()
+        return
+      }
+      handleSwitched()
+    })
+  }, [busy, sessionId, reportError, t, handleSynced, handleSwitched])
+
+  /**
+   * Record a finished merge.
+   *
+   * Every conflict must be resolved and staged; the message is the one Git wrote
+   * into `MERGE_MSG` when the merge started, which is why the page sends none. The
+   * history moved, so this takes the switch's path too.
+   */
+  const handleCompleteMerge = useCallback((): void => {
+    if (busy) return
+    setFinishing(true)
+    void completeMerge(sessionId).then(result => {
+      setFinishing(false)
+      if (result?.ok !== true) {
+        reportError(failureOf(t, 'title.completeMerge', result))
+        handleSynced()
+        return
+      }
+      handleSwitched()
+    })
+  }, [busy, sessionId, reportError, t, handleSynced, handleSwitched])
 
   // Keep the selected row meaningful while both lists are drawn. A stage or
   // unstage moves the path from one half to the other rather than out of the
@@ -1840,9 +2028,10 @@ export function GitView(props: {
     return files.find(file => file.path === selection.file.path) ?? selection.file
   }, [selection, files])
 
-  // Load the patch for whatever the diff pane is showing. Answers are matched
-  // against the selection they were asked for, so a click during a slow request
-  // cannot paint the previous row's diff under the new row's title.
+  // Load the patch — or the conflict — for whatever the diff pane is showing.
+  // Answers are matched against the selection they were asked for, so a click
+  // during a slow request cannot paint the previous row's answer under the new
+  // row's title.
   useEffect(() => {
     if (selection === null) {
       setDoc(null)
@@ -1856,6 +2045,22 @@ export function GitView(props: {
     // spinner would be this page forgetting something it still knows. Any other
     // row starts loading, exactly as a click on it always has.
     setDoc(rememberedDoc !== null && rememberedDoc.key === key ? rememberedDoc : { key, loading: true })
+
+    // A conflicted path is read by its own route, which answers the file's
+    // marker blocks rather than a patch: `git diff` on an unmerged path is a
+    // combined diff, and a delete/modify conflict has no diff at all.
+    if (selection.kind === 'file' && selection.side === 'conflict') {
+      void fetchConflict(sessionId, selection.file.path).then(result => {
+        if (cancelled) return
+        setDoc(buildConflictDoc(t, key, result))
+        if (result?.ok !== true && !isNoRepo(result)) {
+          reportError(failureOf(t, 'title.diff', result))
+        }
+      })
+      return () => {
+        cancelled = true
+      }
+    }
 
     const request = selection.kind === 'commit'
       ? fetchCommit(sessionId, selection.commit.hash)
@@ -1928,6 +2133,24 @@ export function GitView(props: {
           onDelete={handleDelete}
           onError={reportError}
         />
+        {/* A merge, a pull, a rebase, or a cherry-pick that is still in flight.
+            It sits between the toolbar and the commit form because it is the one
+            fact that governs both: the form cannot record anything until the
+            unmerged paths are resolved, and the branch controls will refuse a
+            switch until the operation is finished or abandoned. */}
+        {status?.ok === true && status.operation !== undefined
+          ? (
+            <OperationBar
+              t={t}
+              operation={status.operation}
+              conflicts={conflictCount}
+              busy={busy}
+              finishing={finishing}
+              onAbort={handleAbortOperation}
+              onComplete={handleCompleteMerge}
+            />
+          )
+          : null}
         {/* The commit form is the sidebar's own third row, under the toolbar and
             above both panes: what it commits is the changed-path pane's list, but
             its scope belongs to the form as a whole, so it belongs to the column
@@ -2024,7 +2247,17 @@ export function GitView(props: {
       </aside>
 
       <main className="dsh-cg-main">
-        <DiffPane t={t} status={status} selection={selection} current={current} />
+        <DiffPane
+          t={t}
+          status={status}
+          selection={selection}
+          current={current}
+          resolving={resolving}
+          marking={finishing}
+          busy={busy}
+          onResolve={handleResolve}
+          onMarkResolved={handleMarkResolved}
+        />
       </main>
 
       <DiscardDialog
@@ -2939,6 +3172,90 @@ function SettingsDialog(props: {
 }
 
 /**
+ * The banner for an operation that is still in flight.
+ *
+ * A merge, a pull, a rebase, or a cherry-pick that stopped on a conflict leaves
+ * the repository in a state the reader has to get out of before anything else
+ * works — a commit refuses, a branch switch refuses, and the conflict list is
+ * what has to be emptied first. The banner is that statement, in one row above
+ * the commit form, with the two ways out beside it.
+ *
+ * The word for the operation is the dictionary's one per kind, and the count
+ * says what is left. The finish button appears only for a merge with no conflicts
+ * left, because that is the only case this page knows how to conclude: a rebase
+ * and a cherry-pick continue by applying the next commit, which is a different
+ * question from recording a resolution, and this row offers their abort instead.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.operation - which operation is in progress.
+ * @param props.conflicts - how many paths are still unmerged.
+ * @param props.busy - whether any repository operation is in flight.
+ * @param props.finishing - whether this row's own request is in flight.
+ * @param props.onAbort - abandons the operation.
+ * @param props.onComplete - records the finished merge.
+ * @returns the banner.
+ */
+function OperationBar(props: {
+  readonly t: Translate
+  readonly operation: ConflictOperation
+  readonly conflicts: number
+  readonly busy: boolean
+  readonly finishing: boolean
+  readonly onAbort: () => void
+  readonly onComplete: () => void
+}): ReactElement {
+  const { t, operation, conflicts, busy, finishing, onAbort, onComplete } = props
+  const ready = conflicts === 0
+  // Only a merge is finished here, so only a merge's clean state says there is
+  // a button to press. A rebase or a cherry-pick with no conflicts left is still
+  // the reader's to continue, and the sentence must not promise otherwise.
+  const note = ready
+    ? t(operation === 'merge' ? 'operation.ready' : 'operation.clean')
+    : t('operation.pending', { count: conflicts })
+
+  return (
+    <div className="dsh-cg-operation" data-ready={ready}>
+      <span className="dsh-cg-operation-icon" aria-hidden="true"><IconAlert /></span>
+      <span className="dsh-cg-operation-text">
+        <span className="dsh-cg-operation-title">{t(OPERATION_KEY[operation])}</span>
+        <span className="dsh-cg-operation-note">{note}</span>
+      </span>
+      <span className="dsh-cg-operation-actions">
+        {finishing ? SPINNER_ICON : null}
+        <button
+          type="button"
+          className="dsh-cg-conflict-btn"
+          disabled={busy}
+          onClick={onAbort}
+        >
+          {t('operation.abort')}
+        </button>
+        {operation === 'merge' && ready
+          ? (
+            <button
+              type="button"
+              className="dsh-cg-conflict-btn"
+              data-variant="primary"
+              disabled={busy}
+              onClick={onComplete}
+            >
+              {t('operation.complete')}
+            </button>
+          )
+          : null}
+      </span>
+    </div>
+  )
+}
+
+/** The dictionary entry each in-flight operation is named by. */
+const OPERATION_KEY: Readonly<Record<ConflictOperation, MessageKey>> = {
+  merge: 'operation.merge',
+  rebase: 'operation.rebase',
+  'cherry-pick': 'operation.cherryPick',
+}
+
+/**
  * The sidebar's first row: the Workspace this session is in, the branch it is
  * on, and the More control every other operation hangs from. It draws no rule of
  * its own: the toolbar, the commit form under it, and the changed-path groups
@@ -2992,7 +3309,7 @@ function SettingsDialog(props: {
  * @param props.busy - whether any repository operation is in flight.
  * @param props.onRefresh - called to re-read the repository state and history.
  * @param props.onFetch - called to refresh the remote-tracking refs.
- * @param props.onPull - called to fast-forward the branch from its upstream.
+ * @param props.onPull - called to pull the branch from its upstream.
  * @param props.onPush - called to send the branch to its upstream.
  * @param props.onCheckout - called with the branch the dialog confirmed.
  * @param props.onMerge - called with the branch the dialog confirmed.
@@ -3307,8 +3624,8 @@ function SideHead(props: {
  * count yet. The bubble's text is the button's accessible name as well, so a
  * screen reader hears the same counts.
  *
- * Sync is the round trip taken in the one order that cannot rewind work: a
- * fast-forward pull, then a push of what is left. Both arrows and both counts
+ * Sync is the round trip taken in the one order that cannot rewind work: a pull
+ * that merges when it has to, then a push of what is left. Both arrows and both counts
  * stay inside that single button — `↓` behind is what the pull brings, `↑` ahead
  * is what the push sends — so the control that states the divergence is the one
  * that resolves it, and each arrow turns while its own half is in flight. A glyph
@@ -4726,7 +5043,7 @@ function ChangeList(props: {
   readonly onDiscard: (file: ChangedFile) => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
-  readonly onStageAll: (side: VisibleSide) => void
+  readonly onStageAll: (side: StageableSide) => void
   readonly onDiscardAll: (count: number, untracked: boolean) => void
 }): ReactElement {
   const {
@@ -4735,24 +5052,25 @@ function ChangeList(props: {
   } = props
 
   /** The groups the reader closed. */
-  const [closedSides, setClosedSides] = useState<ReadonlySet<VisibleSide>>(() => new Set())
+  const [closedSides, setClosedSides] = useState<ReadonlySet<DiffSide>>(() => new Set())
   /**
    * The folders the reader closed, keyed by `side:path`.
    *
-   * The side is part of the key because both halves are on screen at once: the
+   * The side is part of the key because every list is on screen at once: the
    * same directory can hold an index row and a worktree row, and closing one
    * tree must not close the other.
    */
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
-  // Split once per status answer: a refresh rebuilds both trees, while a
+  // Split once per status answer: a refresh rebuilds every tree, while a
   // selection or an indentation change leaves them alone.
   const visible = useMemo(() => ({
+    conflict: files.filter(file => inList(file, 'conflict')),
     staged: files.filter(file => inList(file, 'staged')),
     unstaged: files.filter(file => inList(file, 'unstaged')),
   }), [files])
 
-  const toggleSide = useCallback((side: VisibleSide): void => {
+  const toggleSide = useCallback((side: DiffSide): void => {
     setClosedSides(previous => {
       const next = new Set(previous)
       if (next.has(side)) next.delete(side)
@@ -4776,16 +5094,9 @@ function ChangeList(props: {
     return <Note text={t(status.reason === 'no-repo' ? 'list.notRepo' : 'list.statusFailed')} />
   }
   if (!loaded && status === null) return <Note text={t('list.loading')} />
-  // Empty halves are skipped, not drawn at zero (see the pane's doc comment).
-  //
-  // The conflict list is withheld until the page can resolve one (see
-  // `VisibleSide`). An unmerged path would otherwise simply vanish from every
-  // list, so the pane says it is there and that finishing it is not this page's.
-  const conflicted = files.some(file => file.conflicted)
 
   return (
     <>
-      {conflicted ? <Note text={t('list.conflictsHidden')} /> : null}
       {SIDES.filter(side => visible[side].length > 0).map(side => (
         <ChangeGroup
           key={side}
@@ -4804,7 +5115,11 @@ function ChangeList(props: {
           onDiscard={onDiscard}
           onToggleFolderStage={onToggleFolderStage}
           onDiscardFolder={onDiscardFolder}
-          onStageAll={() => onStageAll(side)}
+          // The conflict list has no bulk action at all: every row in it is a
+          // decision only its own file can answer, so the header's trailing slot
+          // is left empty rather than offered a control that would lie about
+          // what it does.
+          onStageAll={side === 'conflict' ? undefined : () => onStageAll(side)}
           onDiscardAll={onDiscardAll}
         />
       ))}
@@ -4854,7 +5169,7 @@ function ChangeList(props: {
  */
 function ChangeGroup(props: {
   readonly t: Translate
-  readonly side: VisibleSide
+  readonly side: DiffSide
   readonly files: readonly ChangedFile[]
   readonly open: boolean
   readonly onToggle: () => void
@@ -4868,7 +5183,8 @@ function ChangeGroup(props: {
   readonly onDiscard: (file: ChangedFile) => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
-  readonly onStageAll: () => void
+  /** Absent for the conflict list, whose every row is its own decision. */
+  readonly onStageAll?: () => void
   readonly onDiscardAll: (count: number, untracked: boolean) => void
 }): ReactElement {
   const {
@@ -4882,7 +5198,9 @@ function ChangeGroup(props: {
   const actionsBusy = staging !== null || discarding !== null
   const stageBusy = staging === `${side}:`
   const discardBusy = discarding === 'unstaged:'
-  const actions = side === 'staged' ? 'stage' : 'both'
+  // The trailing slot's width comes from this attribute, so a group with no
+  // action must say so rather than draw an empty one that reserves the space.
+  const actions = side === 'conflict' ? 'none' : side === 'staged' ? 'stage' : 'both'
 
   return (
     <section className="dsh-cg-group">
@@ -4919,24 +5237,28 @@ function ChangeGroup(props: {
               </Tooltip>
             )
             : null}
-          <Tooltip
-            label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
-            side="top"
-            delayMs={TOOLTIP_DELAY_MS}
-            portal
-            maxWidth={TOOLTIP_MAX_WIDTH}
-          >
-            <button
-              type="button"
-              className="dsh-cg-row-action"
-              aria-label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
-              data-busy={stageBusy}
-              disabled={count === 0 || actionsBusy}
-              onClick={onStageAll}
-            >
-              {stageBusy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
-            </button>
-          </Tooltip>
+          {onStageAll === undefined
+            ? null
+            : (
+              <Tooltip
+                label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
+                side="top"
+                delayMs={TOOLTIP_DELAY_MS}
+                portal
+                maxWidth={TOOLTIP_MAX_WIDTH}
+              >
+                <button
+                  type="button"
+                  className="dsh-cg-row-action"
+                  aria-label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
+                  data-busy={stageBusy}
+                  disabled={count === 0 || actionsBusy}
+                  onClick={onStageAll}
+                >
+                  {stageBusy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
+                </button>
+              </Tooltip>
+            )}
         </span>
       </div>
       {open
@@ -5521,10 +5843,21 @@ function RefRow(props: { readonly refs: readonly string[] }): ReactElement {
 /**
  * The diff pane: its header, its body, and its empty and error states.
  *
+ * One pane, two kinds of content. A changed path's patch and a conflicted path's
+ * blocks are both "the answer to the row the reader picked", so they are drawn by
+ * the same component into the same frame; only the body and the header's controls
+ * differ. That is what keeps the pane's layout, its empty states and its scrolling
+ * from having to exist twice.
+ *
  * @param props.t - the page's translate seat.
  * @param props.status - the current status answer.
  * @param props.selection - what the user picked.
  * @param props.current - the answer that belongs to that selection, if it arrived.
+ * @param props.resolving - the conflict write in flight, as its keys or `whole`.
+ * @param props.marking - the "mark resolved" write is in flight.
+ * @param props.busy - an operation is already in flight elsewhere on the page.
+ * @param props.onResolve - applies a choice to the selected conflict.
+ * @param props.onMarkResolved - tells Git the selected conflict is resolved.
  * @returns the pane.
  */
 function DiffPane(props: {
@@ -5532,8 +5865,13 @@ function DiffPane(props: {
   readonly status: StatusPayload | null
   readonly selection: Selection | null
   readonly current: DocState | null
+  readonly resolving: string | null
+  readonly marking: boolean
+  readonly busy: boolean
+  readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
+  readonly onMarkResolved: () => void
 }): ReactElement {
-  const { t, status, selection, current } = props
+  const { t, status, selection, current, resolving, marking, busy, onResolve, onMarkResolved } = props
 
   // Which files are closed lives here, above the body's loading line, rather than
   // in the sections themselves. A re-read of the answer on screen — the refresh
@@ -5585,6 +5923,23 @@ function DiffPane(props: {
   const title = selection.kind === 'file' ? selection.file.path : current?.commit?.subject ?? selection.commit.subject
   const loading = current === null || current.loading
 
+  // A conflicted path is its own pane rather than a patch with a badge: what the
+  // reader does there is choose, and a choice has nowhere to live in a diff.
+  if (selection.kind === 'file' && selection.side === 'conflict') {
+    return (
+      <ConflictPane
+        t={t}
+        file={selection.file}
+        current={current}
+        resolving={resolving}
+        marking={marking}
+        busy={busy}
+        onResolve={onResolve}
+        onMarkResolved={onMarkResolved}
+      />
+    )
+  }
+
   return (
     <>
       <header className="dsh-cg-main-head">
@@ -5618,6 +5973,368 @@ function DiffPane(props: {
           onToggleFile={toggleFile}
         />
       </div>
+    </>
+  )
+}
+
+/**
+ * The conflict pane: one unmerged path and the blocks its reader decides.
+ *
+ * The pane exists because a conflicted path is not something to *read*. `git
+ * diff` answers one with a combined diff — a report about the merge, not a file
+ * to choose within — and a delete/modify conflict answers with no diff at all.
+ * What the reader needs is the file Git left on disk, split into the runs it
+ * agrees on and the blocks it does not, with a way to say which side each block
+ * keeps. That is what this draws.
+ *
+ * The header is the whole file's decisions — take one side everywhere, or tell
+ * Git the file is done — and each block carries its own, because a file with
+ * five conflicts is five decisions far more often than it is one.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.file - the changed path, for its state letter and its name.
+ * @param props.current - the conflict answer, or the fact that it is loading.
+ * @param props.resolving - the write in flight, as its keys or `whole`.
+ * @param props.marking - the "mark resolved" write is in flight.
+ * @param props.busy - an operation is already in flight elsewhere on the page.
+ * @param props.onResolve - applies a choice to this path.
+ * @param props.onMarkResolved - tells Git this path is resolved.
+ * @returns the pane.
+ */
+function ConflictPane(props: {
+  readonly t: Translate
+  readonly file: ChangedFile
+  readonly current: DocState | null
+  readonly resolving: string | null
+  readonly marking: boolean
+  readonly busy: boolean
+  readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
+  readonly onMarkResolved: () => void
+}): ReactElement {
+  const { t, file, current, resolving, marking, busy, onResolve, onMarkResolved } = props
+  const conflict = current?.conflict
+  const loading = current === null || current.loading
+
+  // The blocks this file still has to decide, in file order. A whole-file state
+  // — binary content, or a path with no worktree file — has none, and the
+  // header's "take one side" buttons would have nothing to name.
+  const keys = useMemo(
+    () => (conflict?.blocks ?? []).flatMap(block => (block.kind === 'region' ? [block.key] : [])),
+    [conflict],
+  )
+  const disabled = busy || keys.length === 0
+  const allBusy = resolving === keys.join(',')
+
+  return (
+    <>
+      <header className="dsh-cg-main-head">
+        <span className="dsh-cg-main-title" title={file.path}>{file.path}</span>
+        {/* No kind tag here: the side pill below already says "Conflicts", and
+            two badges reading the same word on one row is one too many. */}
+        <span className="dsh-cg-main-side" data-side="conflict">{t('stage.conflict')}</span>
+        {/* The block count, in the states where a block count means something: a
+            file whose markers are gone says so, and one that never had any — a
+            binary path, or a path one side deleted — says nothing rather than
+            "0 conflicts", which reads as a fault where there is none. */}
+        {conflict === undefined || (conflict.regions === 0 && conflict.state !== 'clean')
+          ? null
+          : (
+            <span className="dsh-cg-main-count">
+              {conflict.regions === 0
+                ? t('conflict.noRegions')
+                : t('conflict.regionCount', { count: conflict.regions })}
+            </span>
+          )}
+        <span className="dsh-cg-main-actions">
+          {allBusy ? SPINNER_ICON : null}
+          {keys.length === 0 ? null : (
+            <>
+              <button
+                type="button"
+                className="dsh-cg-conflict-btn"
+                disabled={disabled}
+                onClick={() => onResolve('ours', keys)}
+              >
+                {t('conflict.takeAllOurs')}
+              </button>
+              <button
+                type="button"
+                className="dsh-cg-conflict-btn"
+                disabled={disabled}
+                onClick={() => onResolve('theirs', keys)}
+              >
+                {t('conflict.takeAllTheirs')}
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="dsh-cg-conflict-btn"
+            data-variant="primary"
+            disabled={busy || conflict === undefined}
+            onClick={onMarkResolved}
+          >
+            {marking ? SPINNER_ICON : t('conflict.markResolved')}
+          </button>
+        </span>
+      </header>
+      <div className="dsh-cg-diff">
+        {loading
+          ? <Note text={t('diff.loading')} />
+          : conflict === undefined
+            ? <Note text={t('diff.failed')} />
+            : (
+              <ConflictBody
+                t={t}
+                doc={conflict}
+                resolving={resolving}
+                busy={busy}
+                onResolve={onResolve}
+              />
+            )}
+      </div>
+    </>
+  )
+}
+
+/**
+ * One conflicted file's blocks, as the pane scrolls them.
+ *
+ * Three states other than the ordinary one, each answered in place rather than
+ * by a refusal: a binary or missing path can only take a whole version, and a
+ * file whose markers are already gone only has to be staged — which is a much
+ * better thing to be told than "there is no diff".
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.doc - the parsed conflict.
+ * @param props.resolving - the write in flight, as its keys or `whole`.
+ * @param props.busy - an operation is already in flight elsewhere on the page.
+ * @param props.onResolve - applies a choice to this path.
+ * @returns the blocks.
+ */
+function ConflictBody(props: {
+  readonly t: Translate
+  readonly doc: ConflictDoc
+  readonly resolving: string | null
+  readonly busy: boolean
+  readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
+}): ReactElement {
+  const { t, doc, resolving, busy, onResolve } = props
+
+  // Where each block sits in the file's conflict order, for the "2 / 5" label.
+  // Computed rather than counted during the walk so a block's number does not
+  // depend on what has already been drawn above it.
+  const ordinals = useMemo(() => {
+    const order = new Map<string, number>()
+    let ordinal = 0
+    for (const block of doc.blocks) {
+      if (block.kind !== 'region') continue
+      ordinal += 1
+      order.set(block.key, ordinal)
+    }
+    return order
+  }, [doc])
+
+  if (doc.state === 'binary' || doc.state === 'missing') {
+    return (
+      <div className="dsh-cg-empty">
+        <span className="dsh-cg-empty-title">
+          {t(doc.state === 'binary' ? 'conflict.binaryTitle' : 'conflict.missingTitle')}
+        </span>
+        <span className="dsh-cg-empty-text">
+          {t(doc.state === 'binary' ? 'conflict.binaryText' : 'conflict.missingText')}
+        </span>
+        <div className="dsh-cg-conflict-choose">
+          <button
+            type="button"
+            className="dsh-cg-conflict-btn"
+            disabled={busy}
+            onClick={() => onResolve('ours', undefined)}
+          >
+            {t(doc.stages.ours ? 'conflict.keepOurs' : 'conflict.keepOursGone')}
+          </button>
+          <button
+            type="button"
+            className="dsh-cg-conflict-btn"
+            disabled={busy}
+            onClick={() => onResolve('theirs', undefined)}
+          >
+            {t(doc.stages.theirs ? 'conflict.keepTheirs' : 'conflict.keepTheirsGone')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (doc.state === 'clean') {
+    return (
+      <div className="dsh-cg-empty">
+        <span className="dsh-cg-empty-title">{t('conflict.cleanTitle')}</span>
+        <span className="dsh-cg-empty-text">{t('conflict.cleanText')}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="dsh-cg-conflict-list">
+      {doc.blocks.map((block, index) => (block.kind === 'context'
+        ? (
+          <div key={`context:${index}`} className="dsh-cg-conflict-context">
+            {block.lines.map((line, lineIndex) => (
+              <div key={lineIndex} className="dsh-cg-conflict-line">{line}</div>
+            ))}
+          </div>
+        )
+        : (
+          <ConflictRegionView
+            key={block.key}
+            t={t}
+            region={block}
+            ordinal={ordinals.get(block.key) ?? 0}
+            total={doc.regions}
+            resolving={resolving}
+            busy={busy}
+            onResolve={onResolve}
+          />
+        )))}
+    </div>
+  )
+}
+
+/**
+ * One block of a conflicted file, and the four ways it can be settled.
+ *
+ * The two sides are drawn as columns under the labels Git itself wrote after the
+ * markers — `HEAD` and the branch that was merged in, or during a rebase the two
+ * commits involved. Those words are read from the file rather than assumed,
+ * because "ours" and "theirs" swap roles across a rebase and a label that says
+ * "current" when the file says otherwise is a label that lies.
+ *
+ * "Keep both" is offered beside the two sides because it is the answer for the
+ * most common conflict of all — both sides added something, and the reader wants
+ * both — and because the only other way to express it is to edit the file by
+ * hand.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.region - the block to draw.
+ * @param props.ordinal - its position among the file's conflicts, from 1.
+ * @param props.total - how many conflicts the file holds.
+ * @param props.resolving - the write in flight, as its keys or `whole`.
+ * @param props.busy - an operation is already in flight elsewhere on the page.
+ * @param props.onResolve - applies a choice to this block.
+ * @returns the block.
+ */
+function ConflictRegionView(props: {
+  readonly t: Translate
+  readonly region: ConflictRegion
+  readonly ordinal: number
+  readonly total: number
+  readonly resolving: string | null
+  readonly busy: boolean
+  readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
+}): ReactElement {
+  const { t, region, ordinal, total, resolving, busy, onResolve } = props
+  const mine = resolving === region.key
+  const choose = (choice: ResolveChoice): (() => void) => () => onResolve(choice, [region.key])
+
+  return (
+    <section className="dsh-cg-conflict" data-busy={mine || undefined}>
+      <header className="dsh-cg-conflict-head">
+        <span className="dsh-cg-conflict-index">
+          {t('conflict.block', { index: ordinal, total })}
+        </span>
+        <span className="dsh-cg-conflict-actions">
+          {mine ? SPINNER_ICON : null}
+          <button
+            type="button"
+            className="dsh-cg-conflict-btn"
+            disabled={busy}
+            onClick={choose('ours')}
+          >
+            {t('conflict.takeOurs')}
+          </button>
+          <button
+            type="button"
+            className="dsh-cg-conflict-btn"
+            disabled={busy}
+            onClick={choose('theirs')}
+          >
+            {t('conflict.takeTheirs')}
+          </button>
+          <button
+            type="button"
+            className="dsh-cg-conflict-btn"
+            disabled={busy}
+            onClick={choose('both')}
+          >
+            {t('conflict.takeBoth')}
+          </button>
+          {region.base === undefined
+            ? null
+            : (
+              <button
+                type="button"
+                className="dsh-cg-conflict-btn"
+                disabled={busy}
+                onClick={choose('base')}
+              >
+                {t('conflict.takeBase')}
+              </button>
+            )}
+        </span>
+      </header>
+      <div className="dsh-cg-conflict-grid">
+        <div className="dsh-cg-conflict-side" data-side="ours">
+          <div className="dsh-cg-conflict-tag">
+            {t('conflict.current')}
+            {region.oursLabel === undefined ? null : ` · ${region.oursLabel}`}
+          </div>
+          <ConflictLines t={t} lines={region.ours} />
+        </div>
+        <div className="dsh-cg-conflict-side" data-side="theirs">
+          <div className="dsh-cg-conflict-tag">
+            {t('conflict.incoming')}
+            {region.theirsLabel === undefined ? null : ` · ${region.theirsLabel}`}
+          </div>
+          <ConflictLines t={t} lines={region.theirs} />
+        </div>
+        {region.base === undefined
+          ? null
+          : (
+            <div className="dsh-cg-conflict-side" data-side="base">
+              <div className="dsh-cg-conflict-tag">
+                {t('conflict.base')}
+                {region.baseLabel === undefined ? null : ` · ${region.baseLabel}`}
+              </div>
+              <ConflictLines t={t} lines={region.base} />
+            </div>
+          )}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The lines of one side of a conflict block.
+ *
+ * An empty side is drawn as a word rather than as nothing: "this side deleted the
+ * lines" is a real answer to see, and a blank column beside content reads as a
+ * rendering fault.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.lines - the side's lines, terminators already removed.
+ * @returns the lines.
+ */
+function ConflictLines(props: { readonly t: Translate; readonly lines: readonly string[] }): ReactElement {
+  const { t, lines } = props
+  if (lines.length === 0) {
+    return <div className="dsh-cg-conflict-line" data-empty="true">{t('conflict.noLines')}</div>
+  }
+  return (
+    <>
+      {lines.map((line, index) => (
+        <div key={index} className="dsh-cg-conflict-line">{line}</div>
+      ))}
     </>
   )
 }

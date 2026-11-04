@@ -1,5 +1,5 @@
 /**
- * The Host half's Git reader, and its four writers.
+ * The Host half's Git reader, and its writers.
  *
  * Every fact about the repository is produced by running the real `git` binary —
  * never by reading `.git` by hand. That keeps this plugin honest about the things
@@ -13,11 +13,18 @@
  * a second on Windows, while every path a command carries comes from Git's own
  * output and every command runs inside the repository `routes.ts` resolved.
  *
- * Reading is the bulk of this module. Six commands change something — the
- * branch switch, the merge, the fetch, the fast-forward pull, the push, and the
- * commit — and each reports Git's own refusal. The commit is the one that writes
- * the index as well as the history, which is why it is a single call rather than
- * a stage the page could leave half-finished.
+ * Reading is the bulk of this module. The writes are the branch switch, the
+ * merge, the fetch, the merge pull, the push, and the commit — each of which
+ * reports Git's own refusal — plus the conflict resolver's own four: the index
+ * write that stages a resolved path, the byte-level rewrite of one file's
+ * conflict blocks, and the abort and completion of an operation left in flight.
+ * The commit is the one that writes the index as well as the history, which is
+ * why it is a single call rather than a stage the page could leave half-finished.
+ *
+ * The resolver is the one place this module writes a working-tree file itself
+ * (see `resolveRegions`): nothing in Git's interface replaces one conflict block
+ * with one side, so the file is spliced, and the parser that finds the blocks
+ * lives in `conflict.ts` where it can be read on its own.
  *
  * Three properties of the invocation matter and are easy to lose:
  *
@@ -34,7 +41,7 @@
  * no Node context, and parsing next to the command keeps the JSON contract in
  * `shared/contract.ts` the only thing the two halves must agree on.
  */
-import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CommitScope, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type DiffSide, type FetchPayload, type FetchUpstreamPayload, type IndexPayload, type LogPayload, type MergePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
+import { type BranchDeleteTarget, type BranchReportPayload, type BranchesPayload, type ChangedFile, type CheckoutPayload, type CommitAllPayload, type CommitPayload, type CommitScope, type ConflictPayload, type CreateBranchPayload, type DeleteBranchesPayload, type DiffPayload, type DiffSide, type FetchPayload, type FetchUpstreamPayload, type IndexPayload, type LogPayload, type MergePayload, type OperationPayload, type ResolveChoice, type ResolveDonePayload, type ResolvePayload, type StatusPayload, type SyncPayload } from '../shared/contract.js';
 import { type Refusal } from './refusal.js';
 /** Commits returned when the caller names no limit. */
 export declare const DEFAULT_LOG_LIMIT = 60;
@@ -352,17 +359,91 @@ export declare function deleteBranches(target: GitTarget, wanted: readonly Branc
  * intention, buying two saved clicks at the price of a commit made on a branch
  * the page is not showing, where nothing on screen would show it happen.
  *
- * A conflicting merge is aborted rather than left in the tree. The page has no
- * way to finish one —the commit form refuses while unmerged paths exist —so an
- * unfinished merge is exactly the state the fast-forward-only pull was shaped to
- * avoid. Aborting puts the working tree back where it was and words the refusal;
- * the branch is then merged by hand, with Git's own tools and markers.
+ * A conflicting merge is left in the tree rather than aborted. The working tree
+ * is exactly what the reader has to decide about, and the conflict list beside
+ * the diff pane is where they decide it: block by block, then `git add`, then the
+ * merge commit — which Git has already written the message for. Aborting would
+ * throw that state away and send the reader to a terminal to reproduce it, which
+ * is the one thing this page exists to avoid.
  *
  * @param target - the process substrate and the session's directory.
  * @param name - the branch to merge in, local or remote-tracking.
  * @returns the outcome, including the reason a merge was refused.
  */
 export declare function mergeBranch(target: GitTarget, name: string): Promise<MergePayload>;
+/**
+ * Read one unmerged path as the page resolves it.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param path - the repository-relative path.
+ * @returns the conflict document, or the reason there is none.
+ */
+export declare function readConflict(target: GitTarget, path: string): Promise<ConflictPayload>;
+/**
+ * Apply one choice to one unmerged path.
+ *
+ * Two shapes, one decision. A request naming region keys rewrites exactly those
+ * blocks and leaves the rest of the file — including any conflict it did not
+ * name — as it was: the reader is part-way through a file with several
+ * conflicts, and each block is their decision to make. A request naming none is
+ * a whole-file choice, which is the only kind a binary file or a path deleted on
+ * one side can take, and because that *is* the resolution it is staged as well.
+ *
+ * The write runs in the repository's write queue, and the index is re-read inside
+ * it: a path resolved by someone else since the page read it is refused rather
+ * than written, and a region key that no longer matches the file is refused the
+ * same way.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param path - the repository-relative path.
+ * @param choice - which version to keep.
+ * @param keys - the blocks to replace, or undefined for a whole-file choice.
+ * @returns the file after the write, or the refusal.
+ */
+export declare function resolveConflict(target: GitTarget, path: string, choice: ResolveChoice, keys: readonly string[] | undefined): Promise<ResolvePayload>;
+/**
+ * Tell Git that one path is resolved, without writing it.
+ *
+ * The reader who edited the file themselves, or who resolved every block and
+ * wants one last look before committing to it, has nothing left to write. `git
+ * add` is the whole of that decision — and it is the only place a conflicted path
+ * is ever staged, because on an unmerged path `add` means "resolved", which no
+ * bulk action can decide for the reader.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @param path - the repository-relative path.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function markResolved(target: GitTarget, path: string): Promise<ResolveDonePayload>;
+/**
+ * Abandon the operation a merge or a pull left in progress.
+ *
+ * Git words the three commands differently but they mean one thing to the page,
+ * and each is the only command that can undo its own operation — `merge --abort`
+ * restores the pre-merge tree, `rebase --abort` returns to the branch that was
+ * being rebased, `cherry-pick --abort` drops the sequencer state.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @returns the fresh status, or the refusal.
+ */
+export declare function abortOperation(target: GitTarget): Promise<OperationPayload>;
+/**
+ * Finish the merge a conflicted merge or pull left in progress.
+ *
+ * `--no-edit` is what makes it non-interactive: Git already wrote the message a
+ * merge commit should carry into `MERGE_MSG` — `Merge branch 'feat' into main`
+ * and the conflict note — and this page has no editor to offer, so that message
+ * is the one the commit takes. The reader who wants their own words commits from
+ * the form instead, which is why this is a convenience and not the only way out.
+ *
+ * Only a merge is finished here. A rebase and a cherry-pick continue by applying
+ * the next commit, which is a different question from "record the resolution",
+ * and the page does not offer a button for either: it offers the abort.
+ *
+ * @param target - the process substrate and the session's directory.
+ * @returns the commit that was made, or the refusal.
+ */
+export declare function completeMerge(target: GitTarget): Promise<OperationPayload>;
 /**
  * Refresh every remote-tracking ref from its remote.
  *
@@ -412,12 +493,19 @@ export declare function fetchUpstream(target: GitTarget): Promise<FetchUpstreamP
 /**
  * Pull the current branch from its upstream.
  *
- * `--ff-only` is deliberate, and it is the whole shape of this feature: a plain
- * `git pull` would invent a merge commit (a commit nobody wrote a message for)
- * and, when the two sides conflict, would leave the working tree in a merge this
- * page has no way to finish or abort. A fast-forward either applies cleanly or
- * is refused with the one thing the user can act on —that the branches have
- * diverged.
+ * `--no-rebase` is deliberate, and it is the whole shape of this feature. A plain
+ * `git pull` obeys whatever `pull.rebase` the user configured — and a rebase
+ * would rewrite this branch's history, which is not something a one-click sync
+ * should do behind a button that says "sync". Stating `--no-rebase` replaces the
+ * inherited intent with this one: bring the remote's commits in with a merge.
+ *
+ * That merge may fast-forward (the common case, and the only outcome this route
+ * used to allow), or it may join the two histories with a merge commit whose
+ * message Git writes itself — `Merge branch 'main' of <remote> into main` — which
+ * is the message this shape is for: nobody has to write it, and nobody is asked
+ * to. It may also conflict, and then the merge is left in the tree exactly as a
+ * conflicted `git merge` is: the conflict list resolves it, and `completeMerge`
+ * records it.
  *
  * @param target - the process substrate and the session's directory.
  * @returns the outcome, including the reason a pull was refused.
