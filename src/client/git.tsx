@@ -1076,8 +1076,14 @@ export function GitView(props: {
    * one at a time and shows the wait on the block that was clicked.
    */
   const [resolving, setResolving] = useState<string | null>(null)
-  /** Whether the conflict pane's "mark resolved" write is in flight. */
-  const [finishing, setFinishing] = useState(false)
+  /**
+   * The path whose "mark resolved" write is in flight, or null at rest.
+   *
+   * The pane's header button and a conflict row's own mark both go through one
+   * write, so one name is enough: a second click is refused while this holds a
+   * path, and the control that asked shows the wait.
+   */
+  const [markingPath, setMarkingPath] = useState<string | null>(null)
   /** Whether the merge the commit form records is in flight. */
   const [ending, setEnding] = useState(false)
   /** The row or folder the discard dialog is asking about, or null while none is open. */
@@ -1878,7 +1884,8 @@ export function GitView(props: {
   // the form's own state rather than the page's, and a slow model call must not
   // lock the branch pill or More.
   const busy = switching !== null || merging !== null || syncing !== null || committing
-    || fetching || creating || deleting || staging !== null || resolving !== null || finishing
+    || fetching || creating || deleting || staging !== null || resolving !== null
+    || markingPath !== null
     || ending
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
@@ -1936,19 +1943,22 @@ export function GitView(props: {
   }, [selection, busy, sessionId, reportError, t, refresh])
 
   /**
-   * Tell Git the conflict on screen is resolved, without writing it.
+   * Tell Git one conflicted path is resolved, without writing it.
    *
-   * For the reader who fixed the file in their editor, or who resolved every
-   * block and wants one last look before committing to it. The answer carries the
-   * fresh status, and the selection follows the path out of the conflict list and
-   * into the index on the repaint that follows.
+   * The one write behind both places the page offers it: the conflict pane's
+   * header, for the reader who resolved the blocks on screen, and the check on
+   * the row itself, for the reader who fixed the file in their editor and never
+   * opened the pane. The answer carries the fresh status, and the selection
+   * follows the path out of the conflict list and into the index on the repaint
+   * that follows.
+   *
+   * @param path - the repository-relative path to stage as resolved.
    */
-  const handleMarkResolved = useCallback((): void => {
-    if (selection?.kind !== 'file' || selection.side !== 'conflict') return
+  const markResolvedPath = useCallback((path: string): void => {
     if (busy) return
-    setFinishing(true)
-    void markResolved(sessionId, selection.file.path).then(result => {
-      setFinishing(false)
+    setMarkingPath(path)
+    void markResolved(sessionId, path).then(result => {
+      setMarkingPath(null)
       if (result?.ok !== true) {
         reportError(failureOf(t, 'title.resolveDone', result))
         void refresh()
@@ -1958,7 +1968,18 @@ export function GitView(props: {
       setStatus(result.status)
       writeRepositorySnapshot(sessionId, result.status, log)
     })
-  }, [selection, busy, sessionId, reportError, t, refresh, log])
+  }, [busy, sessionId, reportError, t, refresh, log])
+
+  /** The conflict pane's header: the path it is showing, if it is showing one. */
+  const handleMarkResolved = useCallback((): void => {
+    if (selection?.kind !== 'file' || selection.side !== 'conflict') return
+    markResolvedPath(selection.file.path)
+  }, [selection, markResolvedPath])
+
+  /** A conflict row's own check: the file is staged from the list alone. */
+  const handleMarkResolvedRow = useCallback((file: ChangedFile): void => {
+    markResolvedPath(file.path)
+  }, [markResolvedPath])
 
   /**
    * Record the merge the commit form is finishing.
@@ -2169,9 +2190,11 @@ export function GitView(props: {
               selection={selection}
               staging={staging}
               discarding={discarding}
+              marking={markingPath}
               onSelect={(file, side) => setSelection({ kind: 'file', file, side })}
               onToggleStage={handleStageToggle}
               onDiscard={handleDiscard}
+              onMarkResolved={handleMarkResolvedRow}
               onToggleFolderStage={handleStageFolder}
               onDiscardFolder={handleDiscardFolder}
               onStageAll={handleStageAll}
@@ -2234,7 +2257,10 @@ export function GitView(props: {
           selection={selection}
           current={current}
           resolving={resolving}
-          marking={finishing}
+          marking={markingPath !== null
+            && selection?.kind === 'file'
+            && selection.side === 'conflict'
+            && selection.file.path === markingPath}
           busy={busy}
           onResolve={handleResolve}
           onMarkResolved={handleMarkResolved}
@@ -5018,9 +5044,11 @@ function CommitBar(props: {
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
+ * @param props.marking - the conflicted path whose resolution write is in flight.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves one row's path in or out of the index.
  * @param props.onDiscard - opens the confirmation for one row's worktree change.
+ * @param props.onMarkResolved - stages one conflicted path as resolved.
  * @param props.onToggleFolderStage - moves every path under one folder in or out of the index.
  * @param props.onDiscardFolder - opens the confirmation for one folder's worktree changes.
  * @param props.onStageAll - moves one whole half in or out of the index.
@@ -5035,17 +5063,19 @@ function ChangeList(props: {
   readonly selection: Selection | null
   readonly staging: string | null
   readonly discarding: string | null
+  readonly marking: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
   readonly onDiscard: (file: ChangedFile) => void
+  readonly onMarkResolved: (file: ChangedFile) => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
   readonly onStageAll: (side: StageableSide) => void
   readonly onDiscardAll: (count: number, untracked: boolean) => void
 }): ReactElement {
   const {
-    t, status, loaded, files, selection, staging, discarding, onSelect, onToggleStage, onDiscard,
-    onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
+    t, status, loaded, files, selection, staging, discarding, marking, onSelect, onToggleStage,
+    onDiscard, onMarkResolved, onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
   } = props
 
   /** The groups the reader closed. */
@@ -5107,9 +5137,11 @@ function ChangeList(props: {
           selection={selection}
           staging={staging}
           discarding={discarding}
+          marking={marking}
           onSelect={onSelect}
           onToggleStage={onToggleStage}
           onDiscard={onDiscard}
+          onMarkResolved={onMarkResolved}
           onToggleFolderStage={onToggleFolderStage}
           onDiscardFolder={onDiscardFolder}
           // The conflict list has no bulk action at all: every row in it is a
@@ -5155,9 +5187,11 @@ function ChangeList(props: {
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
+ * @param props.marking - the conflicted path whose resolution write is in flight.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves one row's path in or out of the index.
  * @param props.onDiscard - opens the confirmation for one row's worktree change.
+ * @param props.onMarkResolved - stages one conflicted path as resolved.
  * @param props.onToggleFolderStage - moves every path under one folder in or out of the index.
  * @param props.onDiscardFolder - opens the confirmation for one folder's worktree changes.
  * @param props.onStageAll - moves the whole half in or out of the index.
@@ -5175,9 +5209,11 @@ function ChangeGroup(props: {
   readonly selection: Selection | null
   readonly staging: string | null
   readonly discarding: string | null
+  readonly marking: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
   readonly onDiscard: (file: ChangedFile) => void
+  readonly onMarkResolved: (file: ChangedFile) => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
   /** Absent for the conflict list, whose every row is its own decision. */
@@ -5186,13 +5222,14 @@ function ChangeGroup(props: {
 }): ReactElement {
   const {
     t, side, files, open, onToggle, collapsed, onToggleFolder, selection, staging, discarding,
-    onSelect, onToggleStage, onDiscard, onToggleFolderStage, onDiscardFolder, onStageAll, onDiscardAll,
+    onSelect, onToggleStage, onDiscard, marking, onMarkResolved, onToggleFolderStage,
+    onDiscardFolder, onStageAll, onDiscardAll,
   } = props
 
   const tree = useMemo(() => buildFileTree(files), [files])
   const count = files.length
   const untracked = files.some(file => file.untracked)
-  const actionsBusy = staging !== null || discarding !== null
+  const actionsBusy = staging !== null || discarding !== null || marking !== null
   const stageBusy = staging === `${side}:`
   const discardBusy = discarding === 'unstaged:'
   // The trailing slot's width comes from this attribute, so a group with no
@@ -5273,9 +5310,11 @@ function ChangeGroup(props: {
                 selection={selection}
                 staging={staging}
                 discarding={discarding}
+                marking={marking}
                 onSelect={onSelect}
                 onToggleStage={onToggleStage}
                 onDiscard={onDiscard}
+                onMarkResolved={onMarkResolved}
                 onToggleFolderStage={onToggleFolderStage}
                 onDiscardFolder={onDiscardFolder}
               />
@@ -5290,9 +5329,11 @@ function ChangeGroup(props: {
                 selection={selection}
                 staging={staging}
                 discarding={discarding}
+                marking={marking}
                 onSelect={onSelect}
                 onToggleStage={onToggleStage}
                 onDiscard={onDiscard}
+                onMarkResolved={onMarkResolved}
               />
             ))}
           </>
@@ -5361,9 +5402,11 @@ function filesUnderFolder(folder: FileTreeFolder): readonly ChangedFile[] {
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
+ * @param props.marking - the conflicted path whose resolution write is in flight.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves one row's path in or out of the index.
  * @param props.onDiscard - opens the confirmation for one row's worktree change.
+ * @param props.onMarkResolved - stages one conflicted path as resolved.
  * @param props.onToggleFolderStage - moves every path under this folder in or out of the index.
  * @param props.onDiscardFolder - opens the confirmation for every worktree change under this folder.
  * @returns the folder row, and its open children.
@@ -5378,24 +5421,26 @@ function FolderBranch(props: {
   readonly selection: Selection | null
   readonly staging: string | null
   readonly discarding: string | null
+  readonly marking: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
   readonly onDiscard: (file: ChangedFile) => void
+  readonly onMarkResolved: (file: ChangedFile) => void
   readonly onToggleFolderStage: (path: string, side: DiffSide) => void
   readonly onDiscardFolder: (path: string, count: number, untracked: boolean) => void
 }): ReactElement {
   const {
-    t, folder, side, depth, collapsed, onToggle, selection, staging, discarding, onSelect,
-    onToggleStage, onDiscard, onToggleFolderStage, onDiscardFolder,
+    t, folder, side, depth, collapsed, onToggle, selection, staging, discarding, marking, onSelect,
+    onToggleStage, onDiscard, onMarkResolved, onToggleFolderStage, onDiscardFolder,
   } = props
   const key = `${side}:${folder.path}`
   const open = !collapsed.has(key)
   const files = filesUnderFolder(folder)
   const stageBusy = staging === `${side}:${folder.path}`
   const discardBusy = discarding === `unstaged:${folder.path}`
-  const actionsBusy = staging !== null || discarding !== null
+  const actionsBusy = staging !== null || discarding !== null || marking !== null
   const untracked = files.some(file => file.untracked)
-  const actions = side === 'conflict' ? 'none' : side === 'unstaged' ? 'both' : 'stage'
+  const actions = side === 'conflict' ? 'mark' : side === 'unstaged' ? 'both' : 'stage'
 
   return (
     <>
@@ -5489,9 +5534,11 @@ function FolderBranch(props: {
               selection={selection}
               staging={staging}
               discarding={discarding}
+              marking={marking}
               onSelect={onSelect}
               onToggleStage={onToggleStage}
               onDiscard={onDiscard}
+              onMarkResolved={onMarkResolved}
               onToggleFolderStage={onToggleFolderStage}
               onDiscardFolder={onDiscardFolder}
             />
@@ -5506,9 +5553,11 @@ function FolderBranch(props: {
               selection={selection}
               staging={staging}
               discarding={discarding}
+              marking={marking}
               onSelect={onSelect}
               onToggleStage={onToggleStage}
               onDiscard={onDiscard}
+              onMarkResolved={onMarkResolved}
             />
           ))}
         </>
@@ -5544,10 +5593,13 @@ function FolderBranch(props: {
  * Only the opposite half's action is offered: a staged row shows `−` (unstage),
  * an unstaged row `+` (stage). The unstaged row also offers the discard action
  * to its left, which throws the worktree half away after a confirmation. A
- * conflicted row shows neither, because `git add` on it means "resolved" and the
- * page cannot know that the reader finished editing. A path that holds both
- * halves is one row in each list: the worktree side's row offers `+` and the
- * discard, the index side's `−`.
+ * conflicted row's one action is a check: it stages the path as resolved, which
+ * is what `git add` on an unmerged path means. That is the same write the
+ * conflict pane's header offers for the file on screen, and the row is where a
+ * reader who resolved the file in their own editor needs it — without opening a
+ * pane whose blocks are already gone. A path that holds both halves is one row
+ * in each list: the worktree side's row offers `+` and the discard, the index
+ * side's `−`.
  *
  * @param props.t - the page's translate seat.
  * @param props.file - the changed path this row names.
@@ -5557,9 +5609,11 @@ function FolderBranch(props: {
  * @param props.selection - the current selection, for the selected row's state.
  * @param props.staging - the row whose index write is in flight, as `side:path`.
  * @param props.discarding - the row whose discard is in flight, as `side:path`.
+ * @param props.marking - the conflicted path whose resolution write is in flight.
  * @param props.onSelect - called with the file and the half the reader picked.
  * @param props.onToggleStage - moves this row's path in or out of the index.
  * @param props.onDiscard - opens the confirmation for this row's worktree change.
+ * @param props.onMarkResolved - stages this conflicted path as resolved.
  * @returns the row.
  */
 function ChangeRow(props: {
@@ -5570,12 +5624,15 @@ function ChangeRow(props: {
   readonly selection: Selection | null
   readonly staging: string | null
   readonly discarding: string | null
+  readonly marking: string | null
   readonly onSelect: (file: ChangedFile, side: DiffSide) => void
   readonly onToggleStage: (file: ChangedFile, side: DiffSide) => void
   readonly onDiscard: (file: ChangedFile) => void
+  readonly onMarkResolved: (file: ChangedFile) => void
 }): ReactElement {
   const {
-    t, file, side, depth, selection, staging, discarding, onSelect, onToggleStage, onDiscard,
+    t, file, side, depth, selection, staging, discarding, marking, onSelect, onToggleStage,
+    onDiscard, onMarkResolved,
   } = props
   const { name } = splitPath(file.path)
   const key = `${side}:${file.path}`
@@ -5584,7 +5641,8 @@ function ChangeRow(props: {
     && selection.side === side
   const busy = staging === key
   const discardBusy = discarding === key
-  const actionsBusy = staging !== null || discarding !== null
+  const markBusy = marking === file.path
+  const actionsBusy = staging !== null || discarding !== null || marking !== null
   const actionLabel = t(side === 'staged' ? 'stage.unstageFile' : 'stage.stageFile', { path: name })
   const actionTip = t(side === 'staged' ? 'stage.unstage' : 'stage.stage')
   const discardLabel = t('stage.discardFile', { path: name })
@@ -5636,7 +5694,28 @@ function ChangeRow(props: {
         </button>
       </Tooltip>
       {side === 'conflict'
-        ? null
+        ? (
+          <span className="dsh-cg-row-actions">
+            <Tooltip
+              label={t('stage.markResolved')}
+              side="top"
+              delayMs={TOOLTIP_DELAY_MS}
+              portal
+              maxWidth={TOOLTIP_MAX_WIDTH}
+            >
+              <button
+                type="button"
+                className="dsh-cg-row-action"
+                aria-label={t('stage.markResolvedFile', { path: name })}
+                data-busy={markBusy}
+                disabled={actionsBusy}
+                onClick={() => onMarkResolved(file)}
+              >
+                {markBusy ? SPINNER_ICON : <IconCheck />}
+              </button>
+            </Tooltip>
+          </span>
+        )
         : (
           <span className="dsh-cg-row-actions">
             {side === 'unstaged'
