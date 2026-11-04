@@ -279,6 +279,8 @@ type UiKey =
   | 'conflict.keepTheirsGone'
   | 'conflict.cleanTitle'
   | 'conflict.cleanText'
+  | 'conflict.showContext'
+  | 'conflict.hideContext'
 
 /** Every key in the namespace: the page's own, and one sentence per refusal. */
 export type MessageKey = UiKey | `error.${FailureCode}`
@@ -538,6 +540,8 @@ export const en = {
   'conflict.keepTheirsGone': 'Keep the deletion (incoming)',
   'conflict.cleanTitle': 'No conflict markers left',
   'conflict.cleanText': 'The file has no conflict blocks. When it reads the way you want, tick the check at the end of its row to mark it resolved.',
+  'conflict.showContext': 'Show {count} unchanged lines',
+  'conflict.hideContext': 'Hide {count} unchanged lines',
 
   'error.not-ready': 'The session is not ready yet; try again in a moment',
   'error.no-workdir': 'Could not determine the session\'s working directory',
@@ -863,6 +867,8 @@ export const zh: typeof en = {
   'conflict.keepTheirsGone': '保留删除（传入侧已删除）',
   'conflict.cleanTitle': '文件中已无冲突标记',
   'conflict.cleanText': '该文件已没有冲突块。确认内容无误后，点该文件行末的 ✓ 标记为已解决。',
+  'conflict.showContext': '展开 {count} 行未修改内容',
+  'conflict.hideContext': '收起 {count} 行未修改内容',
 
   'error.not-ready': '会话尚未就绪，请稍后重试',
   'error.no-workdir': '无法确定该会话的工作目录',

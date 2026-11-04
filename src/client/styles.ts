@@ -1013,25 +1013,27 @@ const GIT_CSS = [
 
   // 4. The conflict pane.
   //
-  // A conflicted path is not a patch: it is a list of decisions. The blocks are
-  // drawn as cards rather than as diff rows so they read as things to answer
-  // instead of things to read, and each card's head carries the answers in the
-  // reader's reach.
+  // A conflicted path is not a patch, but it is a file, and the pane draws it as
+  // one: every line of the working-tree file once, in file order, with the number
+  // it has on disk. The markers Git left in it are the separators they are in an
+  // editor, and each block opens with a bar that carries the four answers — the
+  // place the diff pane puts a hunk's `@@` scope.
   //
-  // The cards are separated by a rule of their own rather than by the diff
-  // pane's row tinting: nothing here is an addition or a deletion, so the two
-  // background washes would say something untrue about which side is which. The
-  // side that is *current* keeps a neutral wash so a reader scanning the pane
-  // can tell the two columns apart before reading a word.
+  // The two sides keep a wash of their own, in the diff pane's own colours: the
+  // side the branch already holds is drawn as an addition and the side arriving as
+  // a deletion, which is what a reader of this page has already been taught to
+  // read. Markers and unchanged lines are left plain, so the tinted rows are the
+  // ones a decision is about.
 
   // The header's right-hand group on the conflict pane. `.dsh-cg-main-title`
   // takes the slack, so the group only has to refuse to shrink.
   '.dsh-cg-main-actions{flex:none;display:flex;align-items:center;gap:6px}',
 
-  // One small button, used by the pane header and by each block. It is a text
-  // button rather than a glyph: every one of these answers a question in words
-  // ("take current", "keep both"), and none of them has a picture that would say
-  // it as quickly. The primary variant is the one that moves the file on.
+  // One small button, used by the pane header, by each block's bar, and by the
+  // whole-file choice. It is a text button rather than a glyph: every one of these
+  // answers a question in words ("take current", "keep both"), and none of them
+  // has a picture that would say it as quickly. The primary variant is the one
+  // that moves the file on.
   //
   // Its text is the theme's own foreground token rather than `bg-base`: the
   // wallpaper theme rebinds `bg-base` to transparent inside this root, and a
@@ -1041,38 +1043,59 @@ const GIT_CSS = [
   '.dsh-cg-conflict-btn:disabled{opacity:.45;cursor:default}',
   '.dsh-cg-conflict-btn[data-variant=primary]{border-color:transparent;background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-label-primary-foreground)}',
   '.dsh-cg-conflict-btn[data-variant=primary]:hover:not(:disabled){background:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-label-primary-foreground);filter:brightness(1.08)}',
-  // The pane's header actions, drawn the platform's ghost way: no stroke and no
-  // fill at rest, so a row of them reads as words rather than as boxes the pane
-  // is full of. The tokens are the primitive's own (`--dsw-alias-interactive-*`),
-  // so the hover fill is the same one every other ghost control uses.
+  // The header's and each bar's actions, drawn the platform's ghost way: no stroke
+  // and no fill at rest, so a row of them reads as words rather than as boxes the
+  // pane is full of. The tokens are the primitive's own
+  // (`--dsw-alias-interactive-*`), so the hover fill is the same one every other
+  // ghost control uses.
   '.dsh-cg-conflict-btn[data-variant=ghost]{border-color:transparent;background:transparent;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-cg-conflict-btn[data-variant=ghost]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-conflict-btn svg{width:12px;height:12px;display:block}',
 
-  // The blocks' scroller: the same vertical flow as the diff pane, with the
-  // padding the cards need to read as separate objects.
-  '.dsh-cg-conflict-list{display:flex;flex-direction:column;gap:10px;padding:10px 12px 14px}',
-  '.dsh-cg-conflict{display:flex;flex-direction:column;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md,8px);overflow:hidden;background:var(--dsw-alias-bg-base)}',
-  '.dsh-cg-conflict[data-busy]{opacity:.6}',
-  '.dsh-cg-conflict-head{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 10px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1));border-bottom:.5px solid var(--dsw-alias-border-l3)}',
+  // The file, as a column of rows. No padding: the rows are the pane's width, edge
+  // to edge, the way a patch's rows are.
+  '.dsh-cg-conflict-stream{display:flex;flex-direction:column}',
+  // A block's container line. It is a band with a dashed rule along each edge
+  // rather than a box, so the code above and below it still reads as one file, and
+  // it stays the width of the pane rather than the width of the widest line: the
+  // answers have to be reachable without scrolling sideways first.
+  '.dsh-cg-conflict-bar{display:flex;align-items:center;gap:8px;padding:3px 8px 3px 10px;border-top:1px dashed var(--dsw-alias-border-l3);border-bottom:1px dashed var(--dsw-alias-border-l3);background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 60%,transparent)}',
+  '.dsh-cg-conflict-bar[data-busy]{opacity:.6}',
   '.dsh-cg-conflict-index{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
-  '.dsh-cg-conflict-actions{flex:none;display:flex;align-items:center;gap:4px}',
+  '.dsh-cg-conflict-actions{flex:none;display:flex;align-items:center;gap:2px}',
 
-  // The two (or three, with a merge base) columns. `auto-fit` is what lets the
-  // same markup draw two sides on a wide pane and stack them on a narrow one,
-  // without the pane needing to know which it is.
-  '.dsh-cg-conflict-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--dsw-alias-border-l3)}',
-  '.dsh-cg-conflict-side{min-width:0;padding:4px 0 6px;background:var(--dsw-alias-bg-base)}',
-  '.dsh-cg-conflict-side[data-side=ours]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 6%,var(--dsw-alias-bg-base))}',
-  '.dsh-cg-conflict-side[data-side=theirs]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 6%,var(--dsw-alias-bg-base))}',
-  '.dsh-cg-conflict-tag{padding:0 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10.5px;line-height:16px;user-select:none}',
-  // A conflict line wraps rather than scrolls: two columns in one pane have no
-  // width to spare, and a line that ran off would hide the very text the reader
-  // is comparing.
-  '.dsh-cg-conflict-line{padding:0 10px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;line-height:18px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}',
-  '.dsh-cg-conflict-line[data-empty]{color:var(--dsw-alias-label-tertiary);font-style:italic}',
-  '.dsh-cg-conflict-context{padding:2px 0;border-radius:var(--dsw-radius-sm,6px)}',
-  '.dsh-cg-conflict-context .dsh-cg-conflict-line{color:var(--dsw-alias-label-secondary)}',
+  // One line: its number, then its text. One number, not two — a patch has two
+  // versions of a line to number, and a conflicted file has one on disk.
+  '.dsh-cg-conflict-row{display:grid;grid-template-columns:44px minmax(0,1fr);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}',
+  // The same 20% washes a patch's added and deleted lines wear, and for the same
+  // reason: the colour has to survive the light theme's white as well as a dark
+  // wallpaper.
+  '.dsh-cg-conflict-row[data-kind=add]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 20%,transparent)}',
+  '.dsh-cg-conflict-row[data-kind=del]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 20%,transparent)}',
+  // The merge base is neither side, so it keeps a neutral wash rather than a third
+  // state colour.
+  '.dsh-cg-conflict-row[data-kind=base]{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 70%,transparent)}',
+  '.dsh-cg-conflict-row[data-kind=meta]{color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-cg-conflict-no{padding-right:8px;text-align:right;color:var(--dsw-alias-label-tertiary);user-select:none;font-variant-numeric:tabular-nums}',
+  // Lines wrap rather than scroll here, unlike a patch's. The pane is one column
+  // whose rows carry a prose-length question above them, and a line that ran off
+  // the right edge would take the text a decision is *about* with it.
+  '.dsh-cg-conflict-text{padding:0 12px 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}',
+  '.dsh-cg-conflict-row[data-empty] .dsh-cg-conflict-text{color:var(--dsw-alias-label-tertiary);font-style:italic}',
+  // The side's name on its marker, and the label Git wrote after the marker. Both
+  // are dimmer than the code, because the code is what is being read. The space
+  // before the name lives in the text rather than in a margin, so a copied marker
+  // line reads the way it is drawn.
+  '.dsh-cg-conflict-tag{color:var(--dsw-alias-label-secondary)}',
+  '.dsh-cg-conflict-ref{color:var(--dsw-alias-label-tertiary)}',
+
+  // An unchanged run, folded to three lines either side. The control sits in the
+  // gutter's shadow — its label starts where the code's text starts — so it reads
+  // as a gap in the file rather than as another row of it.
+  '.dsh-cg-conflict-fold{display:flex}',
+  '.dsh-cg-conflict-fold-btn{flex:1 1 auto;display:block;padding:2px 12px 2px 50px;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;line-height:16px;text-align:left;cursor:pointer}',
+  '.dsh-cg-conflict-fold-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+
   '.dsh-cg-conflict-choose{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}',
 
   // 4. Wallpaper.

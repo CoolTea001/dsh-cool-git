@@ -288,7 +288,7 @@ export function parseConflict(bytes: Uint8Array): ParsedConflict {
 
     const context = lines.slice(contextStart, index)
     if (context.length > 0) {
-      blocks.push({ kind: 'context', lines: linesOf(bytes, context) })
+      blocks.push({ kind: 'context', line: contextStart + 1, lines: linesOf(bytes, context) })
     }
 
     const oursLines = lines.slice(index + 1, baseLine >= 0 ? baseLine : separatorLine)
@@ -311,6 +311,7 @@ export function parseConflict(bytes: Uint8Array): ParsedConflict {
 
     const region: ConflictRegion = {
       key,
+      line: index + 1,
       ours: linesOf(bytes, oursLines),
       theirs: linesOf(bytes, theirsLines),
       ...(baseLines.length === 0 ? {} : { base: linesOf(bytes, baseLines) }),
@@ -326,7 +327,7 @@ export function parseConflict(bytes: Uint8Array): ParsedConflict {
 
   const trailing = lines.slice(contextStart)
   if (trailing.length > 0) {
-    blocks.push({ kind: 'context', lines: linesOf(bytes, trailing) })
+    blocks.push({ kind: 'context', line: contextStart + 1, lines: linesOf(bytes, trailing) })
   }
 
   return { blocks, regions, style }

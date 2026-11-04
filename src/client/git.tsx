@@ -177,6 +177,15 @@ const LOG_LIMIT = 60
 /** Body lines the diff pane will draw before it stops and says how many are left. */
 const MAX_DIFF_ROWS = 6000
 
+/**
+ * Unchanged lines a conflict pane keeps on each side of a folded run.
+ *
+ * Three is the amount Git itself puts around a hunk, and matching it is the
+ * point: the conflict pane and the diff pane then leave the same amount of code
+ * around the part that matters.
+ */
+const CONFLICT_CONTEXT_EDGE = 3
+
 /** How long the copy button reports success before returning to its idle label. */
 const COPY_FEEDBACK_MS = 1200
 
@@ -6121,6 +6130,11 @@ function ConflictPane(props: {
             ? <Note text={t('diff.failed')} />
             : (
               <ConflictBody
+                // A different path, or a different number of blocks, is a
+                // different file to read: the folds the reader opened are dropped
+                // with it, which is also what a resolution deserves, since it
+                // renumbers every line below the one it settled.
+                key={`${conflict.path}:${conflict.regions}`}
                 t={t}
                 doc={conflict}
                 resolving={resolving}
@@ -6134,7 +6148,18 @@ function ConflictPane(props: {
 }
 
 /**
- * One conflicted file's blocks, as the pane scrolls them.
+ * One conflicted file, drawn as the file itself.
+ *
+ * The pane is a diff-shaped view rather than a report about a diff: every line of
+ * the working-tree file is drawn once, in order, with the number it has on disk,
+ * so the markers Git left in it appear where they are. A block's choice lives in
+ * a bar above the block — the same place the diff pane puts a hunk's `@@` scope —
+ * and the sides are tinted the way an addition and a deletion are tinted, because
+ * that is what a reader of this page already knows how to read.
+ *
+ * The unchanged runs between blocks are folded the way Git folds the code around
+ * a hunk: three lines either side, the rest one click away. A whole unchanged
+ * file would otherwise sit between two conflicts and bury them.
  *
  * Three states other than the ordinary one, each answered in place rather than
  * by a refusal: a binary or missing path can only take a whole version, and a
@@ -6146,7 +6171,7 @@ function ConflictPane(props: {
  * @param props.resolving - the write in flight, as its keys or `whole`.
  * @param props.busy - an operation is already in flight elsewhere on the page.
  * @param props.onResolve - applies a choice to this path.
- * @returns the blocks.
+ * @returns the file.
  */
 function ConflictBody(props: {
   readonly t: Translate
@@ -6156,6 +6181,20 @@ function ConflictBody(props: {
   readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
 }): ReactElement {
   const { t, doc, resolving, busy, onResolve } = props
+
+  // Which unchanged runs the reader has opened, by block index. Kept here rather
+  // than in each run so a re-read of the answer does not hand back the same file
+  // with every fold closed — the fresh document arrives as a new element (`key`
+  // on this component), which is what clears it.
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set())
+  const toggleContext = useCallback((index: number): void => {
+    setExpanded(previous => {
+      const next = new Set(previous)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
+  }, [])
 
   // Where each block sits in the file's conflict order, for the "2 / 5" label.
   // Computed rather than counted during the walk so a block's number does not
@@ -6212,14 +6251,17 @@ function ConflictBody(props: {
   }
 
   return (
-    <div className="dsh-cg-conflict-list">
+    <div className="dsh-cg-conflict-stream">
       {doc.blocks.map((block, index) => (block.kind === 'context'
         ? (
-          <div key={`context:${index}`} className="dsh-cg-conflict-context">
-            {block.lines.map((line, lineIndex) => (
-              <div key={lineIndex} className="dsh-cg-conflict-line">{line}</div>
-            ))}
-          </div>
+          <ConflictContext
+            key={`context:${index}`}
+            t={t}
+            block={block}
+            index={index}
+            expanded={expanded.has(index)}
+            onToggle={toggleContext}
+          />
         )
         : (
           <ConflictRegionView
@@ -6238,13 +6280,14 @@ function ConflictBody(props: {
 }
 
 /**
- * One block of a conflicted file, and the four ways it can be settled.
+ * One block of a conflicted file: its bar, its markers, and its three versions.
  *
- * The two sides are drawn as columns under the labels Git itself wrote after the
- * markers — `HEAD` and the branch that was merged in, or during a rebase the two
- * commits involved. Those words are read from the file rather than assumed,
- * because "ours" and "theirs" swap roles across a rebase and a label that says
- * "current" when the file says otherwise is a label that lies.
+ * The sides are labelled with the words the reader chooses by — "current" and
+ * "incoming" — beside the labels Git itself wrote after the markers (`HEAD` and
+ * the branch that was merged in, or during a rebase the two commits involved).
+ * Those labels are read from the file rather than assumed, because "ours" and
+ * "theirs" swap roles across a rebase, and a tag that says "current" when the
+ * file says otherwise is a tag that lies.
  *
  * "Keep both" is offered beside the two sides because it is the answer for the
  * most common conflict of all — both sides added something, and the reader wants
@@ -6258,7 +6301,7 @@ function ConflictBody(props: {
  * @param props.resolving - the write in flight, as its keys or `whole`.
  * @param props.busy - an operation is already in flight elsewhere on the page.
  * @param props.onResolve - applies a choice to this block.
- * @returns the block.
+ * @returns the block's rows.
  */
 function ConflictRegionView(props: {
   readonly t: Translate
@@ -6273,9 +6316,23 @@ function ConflictRegionView(props: {
   const mine = resolving === region.key
   const choose = (choice: ResolveChoice): (() => void) => () => onResolve(choice, [region.key])
 
+  // Where each row sits in the file. Only the opener's number is read from the
+  // Host; the rest follow from the side lengths, because a block is drawn exactly
+  // as it is written — opener, ours, an optional base section, separator, theirs,
+  // closer — and a number counted here cannot drift from the row it is drawn on.
+  const oursLine = region.line + 1
+  const baseLine = oursLine + region.ours.length
+  const separatorLine = baseLine + (region.base === undefined ? 0 : region.base.length + 1)
+  const theirsLine = separatorLine + 1
+  const closeLine = theirsLine + region.theirs.length
+
   return (
-    <section className="dsh-cg-conflict" data-busy={mine || undefined}>
-      <header className="dsh-cg-conflict-head">
+    <>
+      {/* The block's own container line, above the code it decides: the whole
+          file's decision is the pane header's, and this is where one block's is.
+          Drawn as a band with a rule along each edge rather than as a box, so the
+          code around it still reads as one continuous file. */}
+      <div className="dsh-cg-conflict-bar" data-busy={mine || undefined}>
         <span className="dsh-cg-conflict-index">
           {t('conflict.block', { index: ordinal, total })}
         </span>
@@ -6284,6 +6341,7 @@ function ConflictRegionView(props: {
           <button
             type="button"
             className="dsh-cg-conflict-btn"
+            data-variant="ghost"
             disabled={busy}
             onClick={choose('ours')}
           >
@@ -6292,6 +6350,7 @@ function ConflictRegionView(props: {
           <button
             type="button"
             className="dsh-cg-conflict-btn"
+            data-variant="ghost"
             disabled={busy}
             onClick={choose('theirs')}
           >
@@ -6300,6 +6359,7 @@ function ConflictRegionView(props: {
           <button
             type="button"
             className="dsh-cg-conflict-btn"
+            data-variant="ghost"
             disabled={busy}
             onClick={choose('both')}
           >
@@ -6311,6 +6371,7 @@ function ConflictRegionView(props: {
               <button
                 type="button"
                 className="dsh-cg-conflict-btn"
+                data-variant="ghost"
                 disabled={busy}
                 onClick={choose('base')}
               >
@@ -6318,58 +6379,212 @@ function ConflictRegionView(props: {
               </button>
             )}
         </span>
-      </header>
-      <div className="dsh-cg-conflict-grid">
-        <div className="dsh-cg-conflict-side" data-side="ours">
-          <div className="dsh-cg-conflict-tag">
-            {t('conflict.current')}
-            {region.oursLabel === undefined ? null : ` · ${region.oursLabel}`}
-          </div>
-          <ConflictLines t={t} lines={region.ours} />
-        </div>
-        <div className="dsh-cg-conflict-side" data-side="theirs">
-          <div className="dsh-cg-conflict-tag">
-            {t('conflict.incoming')}
-            {region.theirsLabel === undefined ? null : ` · ${region.theirsLabel}`}
-          </div>
-          <ConflictLines t={t} lines={region.theirs} />
-        </div>
-        {region.base === undefined
-          ? null
-          : (
-            <div className="dsh-cg-conflict-side" data-side="base">
-              <div className="dsh-cg-conflict-tag">
-                {t('conflict.base')}
-                {region.baseLabel === undefined ? null : ` · ${region.baseLabel}`}
-              </div>
-              <ConflictLines t={t} lines={region.base} />
-            </div>
-          )}
       </div>
-    </section>
+      <ConflictMarker
+        line={region.line}
+        mark="<<<<<<<"
+        tag={t('conflict.current')}
+        gitLabel={region.oursLabel}
+      />
+      {region.ours.length === 0
+        ? <ConflictNoLines t={t} kind="add" />
+        : region.ours.map((text, index) => (
+          <ConflictRow key={`ours:${index}`} line={oursLine + index} kind="add" text={text} />
+        ))}
+      {region.base === undefined
+        ? null
+        : (
+          <>
+            <ConflictMarker
+              line={baseLine}
+              mark="|||||||"
+              tag={t('conflict.base')}
+              gitLabel={region.baseLabel}
+            />
+            {region.base.length === 0
+              ? <ConflictNoLines t={t} kind="base" />
+              : region.base.map((text, index) => (
+                <ConflictRow key={`base:${index}`} line={baseLine + 1 + index} kind="base" text={text} />
+              ))}
+          </>
+        )}
+      <ConflictMarker
+        line={separatorLine}
+        mark="======="
+        tag={t('conflict.incoming')}
+        gitLabel={region.theirsLabel}
+      />
+      {region.theirs.length === 0
+        ? <ConflictNoLines t={t} kind="del" />
+        : region.theirs.map((text, index) => (
+          <ConflictRow key={`theirs:${index}`} line={theirsLine + index} kind="del" text={text} />
+        ))}
+      <ConflictMarker line={closeLine} mark=">>>>>>>" />
+    </>
   )
 }
 
 /**
- * The lines of one side of a conflict block.
+ * One line of the file: its number, and the text Git left there.
  *
- * An empty side is drawn as a word rather than as nothing: "this side deleted the
- * lines" is a real answer to see, and a blank column beside content reads as a
- * rendering fault.
+ * The number is the single one the file has. A patch's two columns are two
+ * versions of it; a conflicted path has one version on disk, and printing the
+ * same number twice would suggest otherwise.
+ *
+ * @param props.line - the line's number in the file, from 1.
+ * @param props.kind - which side of the conflict the line belongs to, or that it
+ * belongs to neither.
+ * @param props.text - the line's text, its terminator already removed.
+ * @returns the row.
+ */
+function ConflictRow(props: {
+  readonly line: number
+  readonly kind: 'add' | 'del' | 'base' | 'context'
+  readonly text: string
+}): ReactElement {
+  return (
+    <div className="dsh-cg-conflict-row" data-kind={props.kind}>
+      <span className="dsh-cg-conflict-no">{props.line}</span>
+      <span className="dsh-cg-conflict-text">{props.text}</span>
+    </div>
+  )
+}
+
+/**
+ * One marker line, with the side it opens named in words.
+ *
+ * The run of marker characters is drawn as the file has it — that is what the
+ * reader will see in an editor — and the tag says which side begins there. The
+ * closer carries no tag of its own: the block has already been named by the
+ * separator, and a second "incoming" at the end would only say it again.
+ *
+ * @param props.line - the line's number in the file, from 1.
+ * @param props.mark - the marker run itself, `<<<<<<<` and its kin.
+ * @param props.tag - the side the marker opens, when it opens one.
+ * @param props.gitLabel - the label Git wrote after the marker, when it wrote one.
+ *   Named for the file's text rather than for React: a prop called `ref` is
+ *   claimed by the runtime, and a string in it is an error, not a label.
+ * @returns the row.
+ */
+function ConflictMarker(props: {
+  readonly line: number
+  readonly mark: string
+  readonly tag?: string
+  readonly gitLabel?: string
+}): ReactElement {
+  return (
+    <div className="dsh-cg-conflict-row" data-kind="meta">
+      <span className="dsh-cg-conflict-no">{props.line}</span>
+      <span className="dsh-cg-conflict-text">
+        {props.mark}
+        {props.tag === undefined ? null : <span className="dsh-cg-conflict-tag">{` ${props.tag}`}</span>}
+        {props.gitLabel === undefined
+          ? null
+          : <span className="dsh-cg-conflict-ref">{` · ${props.gitLabel}`}</span>}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * An empty side of a block, drawn as a word rather than as nothing.
+ *
+ * "This side deleted the lines" is a real answer to see, and a gap between two
+ * markers reads as a rendering fault.
  *
  * @param props.t - the page's translate seat.
- * @param props.lines - the side's lines, terminators already removed.
- * @returns the lines.
+ * @param props.kind - which side is empty, so the row keeps that side's tint.
+ * @returns the row.
  */
-function ConflictLines(props: { readonly t: Translate; readonly lines: readonly string[] }): ReactElement {
-  const { t, lines } = props
-  if (lines.length === 0) {
-    return <div className="dsh-cg-conflict-line" data-empty="true">{t('conflict.noLines')}</div>
+function ConflictNoLines(props: {
+  readonly t: Translate
+  readonly kind: 'add' | 'del' | 'base'
+}): ReactElement {
+  return (
+    <div className="dsh-cg-conflict-row" data-kind={props.kind} data-empty="true">
+      <span className="dsh-cg-conflict-no" />
+      <span className="dsh-cg-conflict-text">{props.t('conflict.noLines')}</span>
+    </div>
+  )
+}
+
+/**
+ * One unchanged run of a conflicted file, folded the way Git folds a hunk.
+ *
+ * A conflict pane shows the whole file, so the lines between two blocks can be
+ * hundreds; drawing all of them would bury the blocks the reader came for. Three
+ * lines either side is the same amount of context a patch would have shown, and
+ * the count in the fold is how much else is there.
+ *
+ * @param props.t - the page's translate seat.
+ * @param props.block - the run, with the line it starts at.
+ * @param props.index - its position among the file's blocks, which is what the
+ * fold is keyed by.
+ * @param props.expanded - whether the reader has opened this run.
+ * @param props.onToggle - asks the file to flip it.
+ * @returns the rows.
+ */
+function ConflictContext(props: {
+  readonly t: Translate
+  readonly block: { readonly line: number; readonly lines: readonly string[] }
+  readonly index: number
+  readonly expanded: boolean
+  readonly onToggle: (index: number) => void
+}): ReactElement {
+  const { t, block, index, expanded, onToggle } = props
+  const { lines } = block
+
+  if (lines.length <= CONFLICT_CONTEXT_EDGE * 2 + 1) {
+    return (
+      <>
+        {lines.map((text, offset) => (
+          <ConflictRow key={offset} line={block.line + offset} kind="context" text={text} />
+        ))}
+      </>
+    )
   }
+
+  const hidden = lines.length - CONFLICT_CONTEXT_EDGE * 2
+  const fold = (
+    <div key="fold" className="dsh-cg-conflict-fold">
+      <button
+        type="button"
+        className="dsh-cg-conflict-fold-btn"
+        // The count is spelled out because it is the only thing that says this
+        // row stands for the lines that are not drawn.
+        onClick={() => onToggle(index)}
+      >
+        {`⋯ ${t(expanded ? 'conflict.hideContext' : 'conflict.showContext', { count: hidden })}`}
+      </button>
+    </div>
+  )
+
+  if (expanded) {
+    return (
+      <>
+        {fold}
+        {lines.map((text, offset) => (
+          <ConflictRow key={offset} line={block.line + offset} kind="context" text={text} />
+        ))}
+      </>
+    )
+  }
+
+  const head = lines.slice(0, CONFLICT_CONTEXT_EDGE)
+  const tail = lines.slice(lines.length - CONFLICT_CONTEXT_EDGE)
   return (
     <>
-      {lines.map((line, index) => (
-        <div key={index} className="dsh-cg-conflict-line">{line}</div>
+      {head.map((text, offset) => (
+        <ConflictRow key={`head:${offset}`} line={block.line + offset} kind="context" text={text} />
+      ))}
+      {fold}
+      {tail.map((text, offset) => (
+        <ConflictRow
+          key={`tail:${offset}`}
+          line={block.line + lines.length - CONFLICT_CONTEXT_EDGE + offset}
+          kind="context"
+          text={text}
+        />
       ))}
     </>
   )
