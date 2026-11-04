@@ -6084,21 +6084,10 @@ function ConflictPane(props: {
     <>
       <header className="dsh-cg-main-head">
         <span className="dsh-cg-main-title" title={file.path}>{file.path}</span>
-        {/* The block count is the only state said here: the row in the list
-            already carries the letter and the group. And it is said only in the
-            states where a count means something: a file whose markers are gone
-            says so, and one that never had any — a binary path, or a path one
-            side deleted — says nothing rather than "0 conflicts", which reads as
-            a fault where there is none. */}
-        {conflict === undefined || (conflict.regions === 0 && conflict.state !== 'clean')
-          ? null
-          : (
-            <span className="dsh-cg-main-count">
-              {conflict.regions === 0
-                ? t('conflict.noRegions')
-                : t('conflict.regionCount', { count: conflict.regions })}
-            </span>
-          )}
+        {/* No count here: every block is numbered `1 / 3` where it is drawn, the
+            clean and whole-file states say themselves in the body, and the list's
+            group already counts the paths. The header states the file and what the
+            reader can do to all of it. */}
         <span className="dsh-cg-main-actions">
           {allBusy ? SPINNER_ICON : null}
           {keys.length === 0 ? null : (

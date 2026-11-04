@@ -912,7 +912,6 @@ const GIT_CSS = [
   // How many blocks a conflicted file still holds. It reads in the subtitle's
   // register — a quiet count beside the title — but as its own class, because
   // the subtitle slot is the kind tag's and two elements cannot share it.
-  '.dsh-cg-main-count{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}',
   // Which half of a path the patch is: a pill because it is a state of the pane
   // rather than a second title, and quiet enough to sit beside the kind tag.
   '.dsh-cg-stats{flex:none;display:flex;gap:6px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',

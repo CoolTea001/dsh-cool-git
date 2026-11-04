@@ -259,8 +259,6 @@ type UiKey =
   | 'commit.operationBlocked'
   /** The conflict pane: its header, its per-block choices, and its states. */
   | 'conflict.block'
-  | 'conflict.regionCount'
-  | 'conflict.noRegions'
   | 'conflict.current'
   | 'conflict.incoming'
   | 'conflict.base'
@@ -520,8 +518,6 @@ export const en = {
   'commit.operationBlocked': '{operation} in progress: finish or abort it in a terminal first',
 
   'conflict.block': 'Conflict {index} / {total}',
-  'conflict.regionCount': '{count} conflict(s)',
-  'conflict.noRegions': 'No conflicts left',
   'conflict.current': 'Current',
   'conflict.incoming': 'Incoming',
   'conflict.base': 'Base',
@@ -847,8 +843,6 @@ export const zh: typeof en = {
   'commit.operationBlocked': '{operation}进行中：请先在终端完成或中止',
 
   'conflict.block': '冲突 {index} / {total}',
-  'conflict.regionCount': '{count} 处冲突',
-  'conflict.noRegions': '没有冲突',
   'conflict.current': '当前',
   'conflict.incoming': '传入',
   'conflict.base': '共同祖先',
