@@ -38,7 +38,7 @@ type UiKey =
 /** What that line says when the answer gave no reason at all. */
  | 'fallback.status' | 'fallback.log' | 'fallback.diff' | 'fallback.branches' | 'fallback.message' | 'fallback.settings' | 'fallback.settingsRead'
 /** The heading over each failure the page can report. */
- | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.stageAll' | 'title.unstageAll' | 'title.discardAll' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead' | 'title.resolve' | 'title.resolveDone' | 'title.abortOperation' | 'title.completeMerge'
+ | 'title.switchBranch' | 'title.refresh' | 'title.fetch' | 'title.mergeFrom' | 'title.pull' | 'title.push' | 'title.publish' | 'title.commit' | 'title.stage' | 'title.unstage' | 'title.stageFolder' | 'title.unstageFolder' | 'title.stageAll' | 'title.unstageAll' | 'title.discardAll' | 'title.discard' | 'title.diff' | 'title.branches' | 'title.branchCreate' | 'title.branchDelete' | 'title.message' | 'title.settings' | 'title.settingsRead' | 'title.resolve' | 'title.resolveDone' | 'title.completeMerge'
 /** The error dialog's own two controls. */
  | 'dialog.close' | 'dialog.ok'
 /** The sidebar's first row. */
@@ -97,8 +97,8 @@ type UiKey =
  | 'commit.noMessage' | 'commit.merge'
 /** The diff pane. */
  | 'diff.pane' | 'diff.notRepo' | 'diff.repoFailed' | 'diff.emptyHint' | 'diff.loading' | 'diff.failed' | 'diff.noTextTitle' | 'diff.noTextUntracked' | 'diff.noTextOther' | 'diff.mergeNote' | 'diff.hiddenRows' | 'diff.truncated' | 'diff.copy' | 'diff.copied' | 'diff.expand' | 'diff.collapse'
-/** The banner for an operation that stopped mid-flight. */
- | 'operation.merge' | 'operation.rebase' | 'operation.cherryPick' | 'operation.pending' | 'operation.ready' | 'operation.clean' | 'operation.abort' | 'operation.complete'
+/** The operations this page cannot finish, and the merge the form can. */
+ | 'operation.rebase' | 'operation.cherryPick' | 'commit.finishMerge' | 'commit.mergePending' | 'commit.mergeReady' | 'commit.operationBlocked'
 /** The conflict pane: its header, its per-block choices, and its states. */
  | 'conflict.block' | 'conflict.regionCount' | 'conflict.noRegions' | 'conflict.current' | 'conflict.incoming' | 'conflict.base' | 'conflict.takeOurs' | 'conflict.takeTheirs' | 'conflict.takeBoth' | 'conflict.takeBase' | 'conflict.takeAllOurs' | 'conflict.takeAllTheirs' | 'conflict.markResolved' | 'conflict.noLines' | 'conflict.binaryTitle' | 'conflict.binaryText' | 'conflict.missingTitle' | 'conflict.missingText' | 'conflict.keepOurs' | 'conflict.keepTheirs' | 'conflict.keepOursGone' | 'conflict.keepTheirsGone' | 'conflict.cleanTitle' | 'conflict.cleanText';
 /** Every key in the namespace: the page's own, and one sentence per refusal. */
@@ -168,7 +168,6 @@ export declare const en: {
     'title.settingsRead': string;
     'title.resolve': string;
     'title.resolveDone': string;
-    'title.abortOperation': string;
     'title.completeMerge': string;
     'dialog.close': string;
     'dialog.ok': string;
@@ -299,14 +298,12 @@ export declare const en: {
     'diff.copied': string;
     'diff.expand': string;
     'diff.collapse': string;
-    'operation.merge': string;
     'operation.rebase': string;
     'operation.cherryPick': string;
-    'operation.pending': string;
-    'operation.ready': string;
-    'operation.clean': string;
-    'operation.abort': string;
-    'operation.complete': string;
+    'commit.finishMerge': string;
+    'commit.mergePending': string;
+    'commit.mergeReady': string;
+    'commit.operationBlocked': string;
     'conflict.block': string;
     'conflict.regionCount': string;
     'conflict.noRegions': string;

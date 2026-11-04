@@ -339,27 +339,18 @@ export declare function resolveConflict(sessionId: string | undefined, path: str
  */
 export declare function markResolved(sessionId: string | undefined, path: string): Promise<ResolveDonePayload>;
 /**
- * Ask the Host to abandon the operation a merge or a pull left in progress.
- *
- * Nothing crosses but the session: which command to run — `merge --abort`,
- * `rebase --abort`, `cherry-pick --abort` — is read from the repository, and the
- * page cannot name an operation it is not looking at.
- *
- * @param sessionId - the session whose directory Git runs in, when known.
- * @returns the operation payload.
- */
-export declare function abortOperation(sessionId: string | undefined): Promise<OperationPayload>;
-/**
  * Ask the Host to finish a merge.
  *
- * Every conflict must be resolved and staged first; the message is Git's own
- * `MERGE_MSG` — the one it wrote when the merge started — which is why nothing
- * but the session crosses here.
+ * Every conflict must be resolved and staged first. The message is the one the
+ * form held, or none at all — and none is the normal case, because the merge
+ * already has Git's own `MERGE_MSG` — so an empty field records the merge with
+ * the words Git wrote when it started.
  *
  * @param sessionId - the session whose directory Git runs in, when known.
+ * @param message - the reader's message, or nothing to keep Git's.
  * @returns the operation payload, carrying the merge commit once it is made.
  */
-export declare function completeMerge(sessionId: string | undefined): Promise<OperationPayload>;
+export declare function completeMerge(sessionId: string | undefined, message?: string): Promise<OperationPayload>;
 /**
  * Ask the Host to refresh every remote-tracking ref.
  *

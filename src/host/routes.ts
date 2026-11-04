@@ -20,7 +20,6 @@
  */
 
 import {
-  abortOperation,
   commitAll,
   commitStaged,
   completeMerge,
@@ -894,16 +893,12 @@ export function registerRoutes(ctx: any): () => void {
       return markResolved(target, path)
     })),
 
-    // Abandon whatever a conflicted merge, pull, rebase, or cherry-pick left in
-    // the tree. It names nothing: the repository is what says which operation is
-    // in progress, and the Host runs the one command that undoes it.
-    route(ROUTES.mergeAbort, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
-      abortOperation(target))),
-
-    // Finish a merge: every conflict is resolved and staged, and Git's own
-    // MERGE_MSG is the message, which is why this route takes no body either.
-    route(ROUTES.mergeCommit, (req, res) => handle(ctx, req, res, 'write', (_body, target) =>
-      completeMerge(target))),
+    // Finish a merge: every conflict is resolved and staged, and the body may
+    // carry the reader's own message. An empty one asks for Git's `MERGE_MSG`,
+    // which is the message a merge commit has by default, so the two shapes are
+    // one request and the form decides which it is.
+    route(ROUTES.mergeCommit, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      completeMerge(target, readMessage(body)))),
 
     // The fetch is the remote operation with the fewest arguments of all: it
     // names nothing, because it refreshes every remote the repository has. It is

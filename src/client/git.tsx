@@ -75,7 +75,6 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  abortOperation,
   checkoutBranch,
   commitAll,
   commitStaged,
@@ -1077,8 +1076,10 @@ export function GitView(props: {
    * one at a time and shows the wait on the block that was clicked.
    */
   const [resolving, setResolving] = useState<string | null>(null)
-  /** Whether a merge abort or completion is in flight. */
+  /** Whether the conflict pane's "mark resolved" write is in flight. */
   const [finishing, setFinishing] = useState(false)
+  /** Whether the merge the commit form records is in flight. */
+  const [ending, setEnding] = useState(false)
   /** The row or folder the discard dialog is asking about, or null while none is open. */
   const [discardTarget, setDiscardTarget] = useState<DiscardRequest | null>(null)
   const [selection, setSelection] = useState<Selection | null>(() => remembered.selection)
@@ -1878,6 +1879,7 @@ export function GitView(props: {
   // lock the branch pill or More.
   const busy = switching !== null || merging !== null || syncing !== null || committing
     || fetching || creating || deleting || staging !== null || resolving !== null || finishing
+    || ending
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
@@ -1959,45 +1961,32 @@ export function GitView(props: {
   }, [selection, busy, sessionId, reportError, t, refresh, log])
 
   /**
-   * Abandon whatever operation left conflicts in the tree.
+   * Record the merge the commit form is finishing.
    *
-   * A merge, a pull, a rebase, or a cherry-pick — the Host reads which one from
-   * the repository and runs the one command that undoes it. Everything on screen
-   * is stale afterwards, because the working tree and possibly HEAD moved, so it
-   * takes the switch's path rather than a plain re-read.
-   */
-  const handleAbortOperation = useCallback((): void => {
-    if (busy) return
-    setFinishing(true)
-    void abortOperation(sessionId).then(result => {
-      setFinishing(false)
-      if (result?.ok !== true) {
-        reportError(failureOf(t, 'title.abortOperation', result))
-        handleSynced()
-        return
-      }
-      handleSwitched()
-    })
-  }, [busy, sessionId, reportError, t, handleSynced, handleSwitched])
-
-  /**
-   * Record a finished merge.
+   * A merge in progress is a state, not a mode: the changed-path list already
+   * shows the conflicted paths beside every other change, so the only thing left
+   * to offer is the commit that ends it. The form's field holds the message — the
+   * reader's own, or nothing to keep the one Git wrote into `MERGE_MSG` when the
+   * merge started — which is why this takes the words rather than reading them.
    *
-   * Every conflict must be resolved and staged; the message is the one Git wrote
-   * into `MERGE_MSG` when the merge started, which is why the page sends none. The
-   * history moved, so this takes the switch's path too.
+   * The history moved, so a success takes the switch's path: every diff on screen
+   * was written against the index the merge has just replaced.
+   *
+   * @param message - the field's text, or nothing to keep Git's message.
+   * @returns whether the merge commit was made, which is what clears the field.
    */
-  const handleCompleteMerge = useCallback((): void => {
-    if (busy) return
-    setFinishing(true)
-    void completeMerge(sessionId).then(result => {
-      setFinishing(false)
+  const handleFinishMerge = useCallback((message: string): Promise<boolean> => {
+    if (busy) return Promise.resolve(false)
+    setEnding(true)
+    return completeMerge(sessionId, message.trim() === '' ? undefined : message).then(result => {
+      setEnding(false)
       if (result?.ok !== true) {
         reportError(failureOf(t, 'title.completeMerge', result))
         handleSynced()
-        return
+        return false
       }
       handleSwitched()
+      return true
     })
   }, [busy, sessionId, reportError, t, handleSynced, handleSwitched])
 
@@ -2133,31 +2122,19 @@ export function GitView(props: {
           onDelete={handleDelete}
           onError={reportError}
         />
-        {/* A merge, a pull, a rebase, or a cherry-pick that is still in flight.
-            It sits between the toolbar and the commit form because it is the one
-            fact that governs both: the form cannot record anything until the
-            unmerged paths are resolved, and the branch controls will refuse a
-            switch until the operation is finished or abandoned. */}
-        {status?.ok === true && status.operation !== undefined
-          ? (
-            <OperationBar
-              t={t}
-              operation={status.operation}
-              conflicts={conflictCount}
-              busy={busy}
-              finishing={finishing}
-              onAbort={handleAbortOperation}
-              onComplete={handleCompleteMerge}
-            />
-          )
-          : null}
         {/* The commit form is the sidebar's own third row, under the toolbar and
             above both panes: what it commits is the changed-path pane's list, but
             its scope belongs to the form as a whole, so it belongs to the column
             rather than to either pane. The form is `flex:none` so it keeps its
             rows whatever height the panes are dragged to, and it draws no rule
             under itself: the toolbar, the form, and the changed-path rows beneath
-            it read as one block, with nothing cutting the column between them. */}
+            it read as one block, with nothing cutting the column between them.
+
+            A merge in progress is told by the form rather than by a banner of its
+            own: the conflicted paths are already the first group of the list
+            below, and the commit that ends the merge is the form's own button —
+            the same two facts VSCode's source-control view shows, in the same
+            place. */}
         <CommitBar
           t={t}
           disabled={status?.ok !== true || busy || refreshing}
@@ -2165,8 +2142,12 @@ export function GitView(props: {
           scope={commitScope}
           stagedCount={stagedCount}
           allCount={files.length}
+          operation={status?.ok === true ? status.operation ?? null : null}
+          conflicts={conflictCount}
+          ending={ending}
           onScopeChange={handleScopeChange}
           onCommit={handleCommit}
+          onFinishMerge={handleFinishMerge}
           onGenerate={handleGenerateMessage}
         />
         {/* The upper pane owns the divider under it: the boundary is what its own
@@ -3169,90 +3150,6 @@ function SettingsDialog(props: {
         )}
     </Modal>
   )
-}
-
-/**
- * The banner for an operation that is still in flight.
- *
- * A merge, a pull, a rebase, or a cherry-pick that stopped on a conflict leaves
- * the repository in a state the reader has to get out of before anything else
- * works — a commit refuses, a branch switch refuses, and the conflict list is
- * what has to be emptied first. The banner is that statement, in one row above
- * the commit form, with the two ways out beside it.
- *
- * The word for the operation is the dictionary's one per kind, and the count
- * says what is left. The finish button appears only for a merge with no conflicts
- * left, because that is the only case this page knows how to conclude: a rebase
- * and a cherry-pick continue by applying the next commit, which is a different
- * question from recording a resolution, and this row offers their abort instead.
- *
- * @param props.t - the page's translate seat.
- * @param props.operation - which operation is in progress.
- * @param props.conflicts - how many paths are still unmerged.
- * @param props.busy - whether any repository operation is in flight.
- * @param props.finishing - whether this row's own request is in flight.
- * @param props.onAbort - abandons the operation.
- * @param props.onComplete - records the finished merge.
- * @returns the banner.
- */
-function OperationBar(props: {
-  readonly t: Translate
-  readonly operation: ConflictOperation
-  readonly conflicts: number
-  readonly busy: boolean
-  readonly finishing: boolean
-  readonly onAbort: () => void
-  readonly onComplete: () => void
-}): ReactElement {
-  const { t, operation, conflicts, busy, finishing, onAbort, onComplete } = props
-  const ready = conflicts === 0
-  // Only a merge is finished here, so only a merge's clean state says there is
-  // a button to press. A rebase or a cherry-pick with no conflicts left is still
-  // the reader's to continue, and the sentence must not promise otherwise.
-  const note = ready
-    ? t(operation === 'merge' ? 'operation.ready' : 'operation.clean')
-    : t('operation.pending', { count: conflicts })
-
-  return (
-    <div className="dsh-cg-operation" data-ready={ready}>
-      <span className="dsh-cg-operation-icon" aria-hidden="true"><IconAlert /></span>
-      <span className="dsh-cg-operation-text">
-        <span className="dsh-cg-operation-title">{t(OPERATION_KEY[operation])}</span>
-        <span className="dsh-cg-operation-note">{note}</span>
-      </span>
-      <span className="dsh-cg-operation-actions">
-        {finishing ? SPINNER_ICON : null}
-        <button
-          type="button"
-          className="dsh-cg-conflict-btn"
-          disabled={busy}
-          onClick={onAbort}
-        >
-          {t('operation.abort')}
-        </button>
-        {operation === 'merge' && ready
-          ? (
-            <button
-              type="button"
-              className="dsh-cg-conflict-btn"
-              data-variant="primary"
-              disabled={busy}
-              onClick={onComplete}
-            >
-              {t('operation.complete')}
-            </button>
-          )
-          : null}
-      </span>
-    </div>
-  )
-}
-
-/** The dictionary entry each in-flight operation is named by. */
-const OPERATION_KEY: Readonly<Record<ConflictOperation, MessageKey>> = {
-  merge: 'operation.merge',
-  rebase: 'operation.rebase',
-  'cherry-pick': 'operation.cherryPick',
 }
 
 /**
@@ -4754,8 +4651,12 @@ interface GeneratedMessage {
  * @param props.scope - the half the commit button is set to.
  * @param props.stagedCount - how many rows the index holds.
  * @param props.allCount - how many changed paths the whole list holds.
+ * @param props.operation - the merge, rebase, or cherry-pick in progress, if any.
+ * @param props.conflicts - how many paths are still unmerged.
+ * @param props.ending - the merge this form is recording is in flight.
  * @param props.onScopeChange - switches the commit's scope.
  * @param props.onCommit - runs the commit; resolves true when one was made.
+ * @param props.onFinishMerge - records the merge the repository is holding.
  * @param props.onGenerate - asks the Host for a message; resolves null when the
  * request failed and the page has already reported it, in which case the field is
  * left exactly as it was.
@@ -4768,17 +4669,38 @@ function CommitBar(props: {
   readonly scope: CommitScope
   readonly stagedCount: number
   readonly allCount: number
+  readonly operation: ConflictOperation | null
+  readonly conflicts: number
+  readonly ending: boolean
   readonly onScopeChange: (scope: CommitScope) => void
   readonly onCommit: (message: string) => Promise<boolean>
+  readonly onFinishMerge: (message: string) => Promise<boolean>
   readonly onGenerate: () => Promise<GeneratedMessage | null>
 }): ReactElement {
-  const { t, disabled, committing, scope, stagedCount, allCount, onScopeChange, onCommit, onGenerate } = props
+  const {
+    t, disabled, committing, scope, stagedCount, allCount, operation, conflicts, ending,
+    onScopeChange, onCommit, onFinishMerge, onGenerate,
+  } = props
   const [message, setMessage] = useState('')
   const [generating, setGenerating] = useState(false)
   const [warning, setWarning] = useState('')
   /** Whether the scope menu is showing. */
   const [scopeOpen, setScopeOpen] = useState(false)
   const field = useRef<HTMLTextAreaElement | null>(null)
+
+  /** Whether this form is the one that records a merge in progress. */
+  const merging = operation === 'merge'
+  /**
+   * Whether the merge is ready to be recorded: it is a merge, and no path is
+   * unmerged any more. That is the only state in which this button ends one.
+   */
+  const finishing = merging && conflicts === 0
+  /**
+   * Whether a repository operation stands between the form and an ordinary
+   * commit: a merge with paths still unmerged, or a rebase or a cherry-pick,
+   * which this page can neither continue nor record.
+   */
+  const blocked = operation !== null && !finishing
 
   /** How many rows the current scope would commit. */
   const count = scope === 'staged' ? stagedCount : allCount
@@ -4814,7 +4736,20 @@ function CommitBar(props: {
    */
   const submit = useCallback((): void => {
     const trimmed = message.trim()
-    if (trimmed === '' || disabled || committing || generating || nothingToCommit) return
+    if (disabled || committing || ending || generating || blocked) return
+    // The merge's own button: the field is optional here, because a merge commit
+    // already has Git's `MERGE_MSG` and an empty field asks for exactly that.
+    if (finishing) {
+      void onFinishMerge(trimmed).then(made => {
+        if (!made) return
+        // The merge is recorded, so the words that did not override its message
+        // are as spent as a commit's are.
+        setMessage('')
+        setWarning('')
+      })
+      return
+    }
+    if (trimmed === '' || nothingToCommit) return
     void onCommit(trimmed).then(made => {
       if (!made) return
       // The findings belonged to the changes this commit just recorded, so they
@@ -4822,7 +4757,7 @@ function CommitBar(props: {
       setMessage('')
       setWarning('')
     })
-  }, [message, disabled, committing, generating, nothingToCommit, onCommit])
+  }, [message, disabled, committing, ending, generating, blocked, finishing, nothingToCommit, onCommit, onFinishMerge])
 
   /**
    * Switch the commit's scope, and drop a generated finding with the old one.
@@ -4866,6 +4801,26 @@ function CommitBar(props: {
     })
   }, [disabled, committing, generating, nothingToGenerate, onGenerate])
 
+  /**
+   * What the field says while it holds no text of the reader's.
+   *
+   * The empty field is the form's own status line, which is why it carries the
+   * two states a merge puts the form in: how many paths are left to resolve, or
+   * that the field may stay empty because Git already wrote the message. That is
+   * the whole of the merge's on-screen statement — there is no banner above the
+   * form — and it sits inside the control the reader would use next.
+   */
+  const pendingOperation = operation === null
+    ? ''
+    : t(operation === 'rebase' ? 'operation.rebase' : 'operation.cherryPick')
+  const placeholder = blocked
+    ? merging
+      ? t('commit.mergePending', { count: conflicts })
+      : t('commit.operationBlocked', { operation: pendingOperation })
+    : finishing
+      ? t('commit.mergeReady')
+      : t('commit.placeholder')
+
   return (
     <div className="dsh-cg-commit-bar">
       {/* The frame is the textarea's border and fill, the way the platform's own
@@ -4888,10 +4843,10 @@ function CommitBar(props: {
           ref={field}
           className="dsh-cg-commit-input"
           value={message}
-          placeholder={t('commit.placeholder')}
-          aria-label={t('commit.placeholder')}
+          placeholder={placeholder}
+          aria-label={placeholder}
           rows={1}
-          disabled={committing || generating}
+          disabled={committing || generating || ending || blocked}
           onChange={event => {
             setMessage(event.target.value)
             // The findings belonged to the message that was generated; the moment
@@ -4918,7 +4873,7 @@ function CommitBar(props: {
           className="dsh-cg-commit-generate"
           aria-label={generating ? t('commit.generating') : t('commit.generate')}
           data-busy={generating}
-          disabled={disabled || committing || generating || nothingToGenerate}
+          disabled={disabled || committing || generating || nothingToGenerate || operation !== null}
           onClick={generate}
         >
           {generating ? SPINNER_ICON : <IconGenerate />}
@@ -4936,49 +4891,59 @@ function CommitBar(props: {
           button with a mark inside it — a caret that is not a control of its own
           could not be reached from the keyboard, and one that is could not live
           inside the button it would have to sit in. The menu marks the current
-          scope, so the label and the checked row always agree. */}
-      <div className="dsh-cg-commit-actions">
+          scope, so the label and the checked row always agree.
+
+          While a repository operation is in progress neither half is drawn: a
+          merge records the index Git already built, so there is no scope for the
+          reader to choose and no menu to open, and the label takes the row's
+          whole width as the one action the form has. */}
+      <div className="dsh-cg-commit-actions" data-solo={operation !== null}>
         <button
           type="button"
           className="dsh-cg-commit-send"
-          disabled={disabled || committing || generating || message.trim() === '' || nothingToCommit}
+          disabled={disabled || committing || ending || generating || blocked
+            || (!finishing && (message.trim() === '' || nothingToCommit))}
           onClick={submit}
         >
           {/* The label is its own span so a narrow sidebar elides it instead of
               wrapping it: the button is the platform's 28px tall, and a second
               line of text would spill out of a box that cannot grow. */}
           <span className="dsh-cg-commit-label">
-            {committing
+            {ending || committing
               ? t('commit.busy')
-              : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll')}
+              : finishing
+                ? t('commit.finishMerge')
+                : t(scope === 'staged' ? 'commit.buttonStaged' : 'commit.buttonAll')}
           </span>
         </button>
-        <Menu
-          open={scopeOpen}
-          anchor={(
-            <button
-              type="button"
-              className="dsh-cg-commit-scope"
-              aria-label={t('commit.scope')}
-              aria-haspopup="menu"
-              aria-expanded={scopeOpen}
-              disabled={committing || generating}
-              onClick={() => setScopeOpen(value => !value)}
-            >
-              {/* No bubble of its own: the menu is one click away and states the
-                  same two scopes itself, so a tooltip here would repeat the list
-                  it opens. The accessible name still says what it does. */}
-              <span className="dsh-cg-commit-scope-caret" aria-hidden="true"><IconChevronDown /></span>
-            </button>
-          )}
-          items={scopeItems}
-          selectedId={scope}
-          onSelect={id => chooseScope(id === 'all' ? 'all' : 'staged')}
-          onClose={() => setScopeOpen(false)}
-          align="end"
-          side="bottom"
-          className="dsh-cg-commit-scope-anchor"
-        />
+        {operation === null ? (
+          <Menu
+            open={scopeOpen}
+            anchor={(
+              <button
+                type="button"
+                className="dsh-cg-commit-scope"
+                aria-label={t('commit.scope')}
+                aria-haspopup="menu"
+                aria-expanded={scopeOpen}
+                disabled={committing || generating}
+                onClick={() => setScopeOpen(value => !value)}
+              >
+                {/* No bubble of its own: the menu is one click away and states the
+                    same two scopes itself, so a tooltip here would repeat the list
+                    it opens. The accessible name still says what it does. */}
+                <span className="dsh-cg-commit-scope-caret" aria-hidden="true"><IconChevronDown /></span>
+              </button>
+            )}
+            items={scopeItems}
+            selectedId={scope}
+            onSelect={id => chooseScope(id === 'all' ? 'all' : 'staged')}
+            onClose={() => setScopeOpen(false)}
+            align="end"
+            side="bottom"
+            className="dsh-cg-commit-scope-anchor"
+          />
+        ) : null}
       </div>
     </div>
   )

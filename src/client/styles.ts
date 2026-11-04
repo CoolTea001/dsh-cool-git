@@ -695,6 +695,7 @@ const GIT_CSS = [
   // because each is a click of its own — and because the caret must stay live
   // exactly while the label cannot act. (See the caret's rule below.)
   '.dsh-cg-commit-actions{display:flex;align-items:stretch;width:100%}',
+  '.dsh-cg-commit-actions[data-solo=true] .dsh-cg-commit-send{border-radius:var(--dsw-radius-sm)}',
   '.dsh-cg-commit-send{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:12px;line-height:18px;cursor:pointer;transition:background-color .12s ease,opacity .12s ease}',
   '.dsh-cg-commit-send:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}',
   // The platform's own disabled weight, so a busy or empty form dims the label
@@ -1070,20 +1071,6 @@ const GIT_CSS = [
   '.dsh-cg-conflict-context{padding:2px 0;border-radius:var(--dsw-radius-sm,6px)}',
   '.dsh-cg-conflict-context .dsh-cg-conflict-line{color:var(--dsw-alias-label-secondary)}',
   '.dsh-cg-conflict-choose{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}',
-
-  // The banner above the commit form. It is tinted with the error token because
-  // the state it names blocks every other action on the page, and `data-ready`
-  // lifts the tint once the last conflict is gone — the same row, saying the
-  // opposite thing.
-  '.dsh-cg-operation{flex:none;display:flex;align-items:center;gap:8px;padding:5px 8px 5px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}',
-  '.dsh-cg-operation[data-ready=true]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent)}',
-  '.dsh-cg-operation-icon{flex:none;display:inline-flex;align-items:center;color:var(--dsw-alias-state-error-primary)}',
-  '.dsh-cg-operation[data-ready=true] .dsh-cg-operation-icon{color:var(--dsw-alias-state-success-primary)}',
-  '.dsh-cg-operation-icon svg{width:13px;height:13px;display:block}',
-  '.dsh-cg-operation-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}',
-  '.dsh-cg-operation-title{font-size:11.5px;line-height:15px;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.dsh-cg-operation-note{font-size:10.5px;line-height:14px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-  '.dsh-cg-operation-actions{flex:none;display:flex;align-items:center;gap:4px}',
 
   // 4. Wallpaper.
   //

@@ -15,9 +15,9 @@
  *
  * Reading is the bulk of this module. The writes are the branch switch, the
  * merge, the fetch, the merge pull, the push, and the commit — each of which
- * reports Git's own refusal — plus the conflict resolver's own four: the index
+ * reports Git's own refusal — plus the conflict resolver's own three: the index
  * write that stages a resolved path, the byte-level rewrite of one file's
- * conflict blocks, and the abort and completion of an operation left in flight.
+ * conflict blocks, and the merge commit that records them once none is left.
  * The commit is the one that writes the index as well as the history, which is
  * why it is a single call rather than a stage the page could leave half-finished.
  *
@@ -416,34 +416,24 @@ export declare function resolveConflict(target: GitTarget, path: string, choice:
  */
 export declare function markResolved(target: GitTarget, path: string): Promise<ResolveDonePayload>;
 /**
- * Abandon the operation a merge or a pull left in progress.
- *
- * Git words the three commands differently but they mean one thing to the page,
- * and each is the only command that can undo its own operation — `merge --abort`
- * restores the pre-merge tree, `rebase --abort` returns to the branch that was
- * being rebased, `cherry-pick --abort` drops the sequencer state.
- *
- * @param target - the process substrate and the session's directory.
- * @returns the fresh status, or the refusal.
- */
-export declare function abortOperation(target: GitTarget): Promise<OperationPayload>;
-/**
  * Finish the merge a conflicted merge or pull left in progress.
  *
- * `--no-edit` is what makes it non-interactive: Git already wrote the message a
- * merge commit should carry into `MERGE_MSG` — `Merge branch 'feat' into main`
- * and the conflict note — and this page has no editor to offer, so that message
- * is the one the commit takes. The reader who wants their own words commits from
- * the form instead, which is why this is a convenience and not the only way out.
+ * Git already wrote the message a merge commit should carry into `MERGE_MSG` —
+ * `Merge branch 'feat' into main`, and the conflict note under it — so the form
+ * that finishes a merge has two honest states: the reader emptied it, and
+ * `--no-edit` records Git's words unchanged; or the reader wrote their own, and
+ * `-m` records those. Neither opens an editor, which matters because there is
+ * none behind this seam.
  *
  * Only a merge is finished here. A rebase and a cherry-pick continue by applying
  * the next commit, which is a different question from "record the resolution",
- * and the page does not offer a button for either: it offers the abort.
+ * so they are refused rather than half-finished.
  *
  * @param target - the process substrate and the session's directory.
+ * @param message - the reader's own message, or nothing to keep Git's.
  * @returns the commit that was made, or the refusal.
  */
-export declare function completeMerge(target: GitTarget): Promise<OperationPayload>;
+export declare function completeMerge(target: GitTarget, message?: string): Promise<OperationPayload>;
 /**
  * Refresh every remote-tracking ref from its remote.
  *

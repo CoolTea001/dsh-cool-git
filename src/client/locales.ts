@@ -89,7 +89,6 @@ type UiKey =
   | 'title.settingsRead'
   | 'title.resolve'
   | 'title.resolveDone'
-  | 'title.abortOperation'
   | 'title.completeMerge'
   /** The error dialog's own two controls. */
   | 'dialog.close'
@@ -250,15 +249,13 @@ type UiKey =
   | 'diff.copied'
   | 'diff.expand'
   | 'diff.collapse'
-  /** The banner for an operation that stopped mid-flight. */
-  | 'operation.merge'
+  /** The operations this page cannot finish, and the merge the form can. */
   | 'operation.rebase'
   | 'operation.cherryPick'
-  | 'operation.pending'
-  | 'operation.ready'
-  | 'operation.clean'
-  | 'operation.abort'
-  | 'operation.complete'
+  | 'commit.finishMerge'
+  | 'commit.mergePending'
+  | 'commit.mergeReady'
+  | 'commit.operationBlocked'
   /** The conflict pane: its header, its per-block choices, and its states. */
   | 'conflict.block'
   | 'conflict.regionCount'
@@ -363,7 +360,6 @@ export const en = {
   'title.settingsRead': 'Could not read the settings',
   'title.resolve': 'Could not resolve the conflict',
   'title.resolveDone': 'Could not mark the file resolved',
-  'title.abortOperation': 'Could not abandon the operation',
   'title.completeMerge': 'Could not finish the merge',
 
   'dialog.close': 'Close',
@@ -516,14 +512,12 @@ export const en = {
   'diff.expand': 'Expand this file\'s diff',
   'diff.collapse': 'Collapse this file\'s diff',
 
-  'operation.merge': 'Merge in progress',
-  'operation.rebase': 'Rebase in progress',
-  'operation.cherryPick': 'Cherry-pick in progress',
-  'operation.pending': '{count} conflicting path(s) to resolve',
-  'operation.ready': 'All conflicts resolved: finish the merge',
-  'operation.clean': 'All conflicts resolved',
-  'operation.abort': 'Abort',
-  'operation.complete': 'Finish merge',
+  'operation.rebase': 'Rebase',
+  'operation.cherryPick': 'Cherry-pick',
+  'commit.finishMerge': 'Finish merge',
+  'commit.mergePending': 'Merge in progress: {count} conflict(s) left',
+  'commit.mergeReady': 'Leave empty to keep Git\'s merge message',
+  'commit.operationBlocked': '{operation} in progress: finish or abort it in a terminal first',
 
   'conflict.block': 'Conflict {index} / {total}',
   'conflict.regionCount': '{count} conflict(s)',
@@ -584,7 +578,7 @@ export const en = {
   'error.stale-conflict': '{path} changed since it was read, so nothing was written; the pane was re-read',
   'error.resolve-unsafe': '{path} is not a file this plugin may write; resolve it in a terminal',
   'error.bad-choice': 'That choice does not apply to this conflict',
-  'error.no-operation': 'No merge, rebase, or cherry-pick is in progress',
+  'error.no-operation': 'No merge is in progress, so there is nothing to finish',
   'error.complete-conflict': 'Some conflicts are still unresolved; resolve and stage every path first',
 
   'error.pull-no-commits': 'This branch has no commits yet, so there is nothing to pull',
@@ -678,7 +672,6 @@ export const zh: typeof en = {
   'title.settingsRead': '读取设置失败',
   'title.resolve': '解决冲突失败',
   'title.resolveDone': '标记冲突已解决失败',
-  'title.abortOperation': '中止操作失败',
   'title.completeMerge': '完成合并失败',
 
   'dialog.close': '关闭',
@@ -847,14 +840,12 @@ export const zh: typeof en = {
   'diff.expand': '展开此文件的差异',
   'diff.collapse': '折叠此文件的差异',
 
-  'operation.merge': '合并进行中',
-  'operation.rebase': '变基进行中',
-  'operation.cherryPick': '拣选进行中',
-  'operation.pending': '还有 {count} 个冲突文件待解决',
-  'operation.ready': '冲突已全部解决，可以完成合并',
-  'operation.clean': '冲突已全部解决',
-  'operation.abort': '中止',
-  'operation.complete': '完成合并',
+  'operation.rebase': '变基',
+  'operation.cherryPick': '拣选',
+  'commit.finishMerge': '完成合并',
+  'commit.mergePending': '合并进行中：还有 {count} 个冲突待解决',
+  'commit.mergeReady': '留空则沿用 Git 生成的合并信息',
+  'commit.operationBlocked': '{operation}进行中：请先在终端完成或中止',
 
   'conflict.block': '冲突 {index} / {total}',
   'conflict.regionCount': '{count} 处冲突',
@@ -915,7 +906,7 @@ export const zh: typeof en = {
   'error.stale-conflict': '{path} 在被读取后已被修改，因此没有写入；面板已重新读取',
   'error.resolve-unsafe': '{path} 不是本插件可以写入的文件，请在终端中解决',
   'error.bad-choice': '该选择不适用于这个冲突',
-  'error.no-operation': '当前没有进行中的合并、变基或拣选',
+  'error.no-operation': '当前没有进行中的合并，没有可以完成的操作',
   'error.complete-conflict': '仍有未解决的冲突，请先解决并暂存所有冲突文件',
 
   'error.pull-no-commits': '当前分支还没有任何提交，无法 Pull',

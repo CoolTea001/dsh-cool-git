@@ -186,9 +186,9 @@ export interface StatusPayload {
    *
    * A merge that conflicts, and a pull that merges into a conflict, both leave
    * the working tree unfinished on purpose — that is the state the conflict list
-   * resolves. This is how the page knows to offer finishing or abandoning it, and
-   * to keep the commit form from recording a half-merge. Absent at rest, which
-   * is the ordinary case.
+   * resolves. This is how the page knows to turn its commit form into the merge's
+   * own commit, and to keep that form from recording a half-merge. Absent at
+   * rest, which is the ordinary case.
    */
   readonly operation?: ConflictOperation
 }
@@ -725,11 +725,10 @@ export interface ResolveDonePayload {
 }
 
 /**
- * `POST /merge-abort` and `POST /merge-commit`: finishing or abandoning the
- * operation a merge or a pull left in progress.
+ * `POST /merge-commit`: finishing the merge a merge or a pull left in progress.
  *
- * Both are answered with the re-read status, because both move the branch and the
- * working tree at once and the page has no other way to learn what they did.
+ * It is answered with the re-read status, because the commit moves the branch and
+ * the working tree at once and the page has no other way to learn what it did.
  */
 export interface OperationPayload {
   readonly ok: boolean
@@ -1064,7 +1063,6 @@ export const ROUTES = {
   conflict: '/dsh-cool-git/api/conflict',
   resolve: '/dsh-cool-git/api/resolve',
   resolveDone: '/dsh-cool-git/api/resolve-done',
-  mergeAbort: '/dsh-cool-git/api/merge-abort',
   mergeCommit: '/dsh-cool-git/api/merge-commit',
   fetch: '/dsh-cool-git/api/fetch',
   fetchUpstream: '/dsh-cool-git/api/fetch-upstream',
