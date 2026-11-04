@@ -915,8 +915,6 @@ const GIT_CSS = [
   '.dsh-cg-main-count{flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}',
   // Which half of a path the patch is: a pill because it is a state of the pane
   // rather than a second title, and quiet enough to sit beside the kind tag.
-  '.dsh-cg-main-side{flex:none;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:16px}',
-  '.dsh-cg-main-side[data-side=conflict]{color:var(--dsw-alias-state-error-primary)}',
   '.dsh-cg-stats{flex:none;display:flex;gap:6px;font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px}',
   '.dsh-cg-added{color:var(--dsw-alias-state-success-primary)}',
   '.dsh-cg-deleted{color:var(--dsw-alias-state-error-primary)}',

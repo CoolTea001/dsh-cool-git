@@ -270,7 +270,6 @@ type UiKey =
   | 'conflict.takeBase'
   | 'conflict.takeAllOurs'
   | 'conflict.takeAllTheirs'
-  | 'conflict.markResolved'
   | 'conflict.noLines'
   | 'conflict.binaryTitle'
   | 'conflict.binaryText'
@@ -468,8 +467,8 @@ export const en = {
   'stage.unstage': 'Unstage',
   'stage.stageFile': 'Stage {path}',
   'stage.unstageFile': 'Unstage {path}',
-  'stage.markResolved': 'Mark resolved (stages the file)',
-  'stage.markResolvedFile': 'Mark {path} resolved and stage it',
+  'stage.markResolved': 'Mark resolved',
+  'stage.markResolvedFile': 'Mark {path} resolved',
   'stage.discard': 'Discard changes',
   'stage.discardFile': 'Discard changes in {path}',
   'stage.stageFolder': 'Stage changes under {path}',
@@ -532,7 +531,6 @@ export const en = {
   'conflict.takeBase': 'Take base',
   'conflict.takeAllOurs': 'Take current everywhere',
   'conflict.takeAllTheirs': 'Take incoming everywhere',
-  'conflict.markResolved': 'Mark resolved',
   'conflict.noLines': 'no lines',
   'conflict.binaryTitle': 'This conflict has no text to choose between',
   'conflict.binaryText': 'The file is binary (or too large to read as text), so it has to be settled as a whole. Pick the version to keep.',
@@ -543,7 +541,7 @@ export const en = {
   'conflict.keepOursGone': 'Keep the deletion (current)',
   'conflict.keepTheirsGone': 'Keep the deletion (incoming)',
   'conflict.cleanTitle': 'No conflict markers left',
-  'conflict.cleanText': 'The file has no conflict blocks. Mark it resolved when it reads the way you want it to.',
+  'conflict.cleanText': 'The file has no conflict blocks. When it reads the way you want, tick the check at the end of its row to mark it resolved.',
 
   'error.not-ready': 'The session is not ready yet; try again in a moment',
   'error.no-workdir': 'Could not determine the session\'s working directory',
@@ -796,8 +794,8 @@ export const zh: typeof en = {
   'stage.unstage': '取消暂存',
   'stage.stageFile': '暂存 {path}',
   'stage.unstageFile': '取消暂存 {path}',
-  'stage.markResolved': '标记为已解决（暂存该文件）',
-  'stage.markResolvedFile': '标记 {path} 为已解决并暂存',
+  'stage.markResolved': '标记为已解决',
+  'stage.markResolvedFile': '标记 {path} 为已解决',
   'stage.discard': '放弃变更',
   'stage.discardFile': '放弃 {path} 的变更',
   'stage.stageFolder': '暂存 {path} 下的变更',
@@ -860,7 +858,6 @@ export const zh: typeof en = {
   'conflict.takeBase': '采用共同祖先',
   'conflict.takeAllOurs': '全部采用当前',
   'conflict.takeAllTheirs': '全部采用传入',
-  'conflict.markResolved': '标记已解决',
   'conflict.noLines': '无内容',
   'conflict.binaryTitle': '该冲突没有可逐块选择的文本',
   'conflict.binaryText': '这是二进制文件（或过大无法按文本读取），只能整体取舍：请选择要保留的版本。',
@@ -871,7 +868,7 @@ export const zh: typeof en = {
   'conflict.keepOursGone': '保留删除（当前侧已删除）',
   'conflict.keepTheirsGone': '保留删除（传入侧已删除）',
   'conflict.cleanTitle': '文件中已无冲突标记',
-  'conflict.cleanText': '该文件已没有冲突块。确认内容无误后，点「标记已解决」即可。',
+  'conflict.cleanText': '该文件已没有冲突块。确认内容无误后，点该文件行末的 ✓ 标记为已解决。',
 
   'error.not-ready': '会话尚未就绪，请稍后重试',
   'error.no-workdir': '无法确定该会话的工作目录',

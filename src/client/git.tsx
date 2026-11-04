@@ -1945,12 +1945,11 @@ export function GitView(props: {
   /**
    * Tell Git one conflicted path is resolved, without writing it.
    *
-   * The one write behind both places the page offers it: the conflict pane's
-   * header, for the reader who resolved the blocks on screen, and the check on
-   * the row itself, for the reader who fixed the file in their editor and never
-   * opened the pane. The answer carries the fresh status, and the selection
-   * follows the path out of the conflict list and into the index on the repaint
-   * that follows.
+   * The write behind a conflict row's check, which is the page's one place for
+   * it: the reader who resolved the file in their own editor never opens the
+   * pane, and the reader who resolved the blocks is looking at the same row in
+   * the list. The answer carries the fresh status, and the selection follows the
+   * path out of the conflict list and into the index on the repaint that follows.
    *
    * @param path - the repository-relative path to stage as resolved.
    */
@@ -1970,13 +1969,7 @@ export function GitView(props: {
     })
   }, [busy, sessionId, reportError, t, refresh, log])
 
-  /** The conflict pane's header: the path it is showing, if it is showing one. */
-  const handleMarkResolved = useCallback((): void => {
-    if (selection?.kind !== 'file' || selection.side !== 'conflict') return
-    markResolvedPath(selection.file.path)
-  }, [selection, markResolvedPath])
-
-  /** A conflict row's own check: the file is staged from the list alone. */
+  /** A conflict row's own check: the one place the page marks a path resolved. */
   const handleMarkResolvedRow = useCallback((file: ChangedFile): void => {
     markResolvedPath(file.path)
   }, [markResolvedPath])
@@ -2257,13 +2250,8 @@ export function GitView(props: {
           selection={selection}
           current={current}
           resolving={resolving}
-          marking={markingPath !== null
-            && selection?.kind === 'file'
-            && selection.side === 'conflict'
-            && selection.file.path === markingPath}
           busy={busy}
           onResolve={handleResolve}
-          onMarkResolved={handleMarkResolved}
         />
       </main>
 
@@ -5942,12 +5930,10 @@ function DiffPane(props: {
   readonly selection: Selection | null
   readonly current: DocState | null
   readonly resolving: string | null
-  readonly marking: boolean
   readonly busy: boolean
   readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
-  readonly onMarkResolved: () => void
 }): ReactElement {
-  const { t, status, selection, current, resolving, marking, busy, onResolve, onMarkResolved } = props
+  const { t, status, selection, current, resolving, busy, onResolve } = props
 
   // Which files are closed lives here, above the body's loading line, rather than
   // in the sections themselves. A re-read of the answer on screen — the refresh
@@ -6008,10 +5994,8 @@ function DiffPane(props: {
         file={selection.file}
         current={current}
         resolving={resolving}
-        marking={marking}
         busy={busy}
         onResolve={onResolve}
-        onMarkResolved={onMarkResolved}
       />
     )
   }
@@ -6019,14 +6003,11 @@ function DiffPane(props: {
   return (
     <>
       <header className="dsh-cg-main-head">
+        {/* The path alone. Its state is the changed-path list's: the row it was
+            opened from carries the letter and the group, and the two halves of a
+            half-staged path are two rows there as well. Repeating either badge
+            here would say a second time what the reader just clicked. */}
         <span className="dsh-cg-main-title" title={title}>{title}</span>
-        {selection.kind === 'file' ? <KindTag t={t} kind={selection.file.kind} /> : null}
-        {/* Which half this patch is: the same path can be open as its index
-            version and as its worktree version, and the header is where a reader
-            can tell the two apart. */}
-        {selection.kind === 'file'
-          ? <span className="dsh-cg-main-side" data-side={selection.side}>{t(GROUP_KEY[selection.side])}</span>
-          : null}
         {current?.commit === undefined ? null : (
           <span className="dsh-cg-main-subtitle">
             {current.commit.short} · {current.commit.author} · {relativeTime(t, current.commit.date)}
@@ -6063,18 +6044,18 @@ function DiffPane(props: {
  * agrees on and the blocks it does not, with a way to say which side each block
  * keeps. That is what this draws.
  *
- * The header is the whole file's decisions — take one side everywhere, or tell
- * Git the file is done — and each block carries its own, because a file with
- * five conflicts is five decisions far more often than it is one.
+ * The header is the whole file's decision — take one side everywhere — and each
+ * block carries its own, because a file with five conflicts is five decisions far
+ * more often than it is one. Marking the file done is not among them: that is the
+ * conflict row's own check, in the list the reader already reads, so the pane
+ * does not repeat it.
  *
  * @param props.t - the page's translate seat.
  * @param props.file - the changed path, for its state letter and its name.
  * @param props.current - the conflict answer, or the fact that it is loading.
  * @param props.resolving - the write in flight, as its keys or `whole`.
- * @param props.marking - the "mark resolved" write is in flight.
  * @param props.busy - an operation is already in flight elsewhere on the page.
  * @param props.onResolve - applies a choice to this path.
- * @param props.onMarkResolved - tells Git this path is resolved.
  * @returns the pane.
  */
 function ConflictPane(props: {
@@ -6082,12 +6063,10 @@ function ConflictPane(props: {
   readonly file: ChangedFile
   readonly current: DocState | null
   readonly resolving: string | null
-  readonly marking: boolean
   readonly busy: boolean
   readonly onResolve: (choice: ResolveChoice, keys: readonly string[] | undefined) => void
-  readonly onMarkResolved: () => void
 }): ReactElement {
-  const { t, file, current, resolving, marking, busy, onResolve, onMarkResolved } = props
+  const { t, file, current, resolving, busy, onResolve } = props
   const conflict = current?.conflict
   const loading = current === null || current.loading
 
@@ -6105,13 +6084,12 @@ function ConflictPane(props: {
     <>
       <header className="dsh-cg-main-head">
         <span className="dsh-cg-main-title" title={file.path}>{file.path}</span>
-        {/* No kind tag here: the side pill below already says "Conflicts", and
-            two badges reading the same word on one row is one too many. */}
-        <span className="dsh-cg-main-side" data-side="conflict">{t('stage.conflict')}</span>
-        {/* The block count, in the states where a block count means something: a
-            file whose markers are gone says so, and one that never had any — a
-            binary path, or a path one side deleted — says nothing rather than
-            "0 conflicts", which reads as a fault where there is none. */}
+        {/* The block count is the only state said here: the row in the list
+            already carries the letter and the group. And it is said only in the
+            states where a count means something: a file whose markers are gone
+            says so, and one that never had any — a binary path, or a path one
+            side deleted — says nothing rather than "0 conflicts", which reads as
+            a fault where there is none. */}
         {conflict === undefined || (conflict.regions === 0 && conflict.state !== 'clean')
           ? null
           : (
@@ -6143,15 +6121,6 @@ function ConflictPane(props: {
               </button>
             </>
           )}
-          <button
-            type="button"
-            className="dsh-cg-conflict-btn"
-            data-variant="primary"
-            disabled={busy || conflict === undefined}
-            onClick={onMarkResolved}
-          >
-            {marking ? SPINNER_ICON : t('conflict.markResolved')}
-          </button>
         </span>
       </header>
       <div className="dsh-cg-diff">
@@ -6463,17 +6432,6 @@ function renderPatch(doc: DiffDoc | undefined): string {
     }
   }
   return out.join('\n')
-}
-
-/**
- * The change-kind tag beside the diff title.
- *
- * @param props.t - the page's translate seat.
- * @param props.kind - the selected path's change kind.
- * @returns the tag element.
- */
-function KindTag({ t, kind }: { readonly t: Translate; readonly kind: ChangeKind }): ReactElement {
-  return <span className="dsh-cg-main-subtitle">{t(KIND_KEY[kind])}</span>
 }
 
 /**

@@ -1,4 +1,4 @@
-hahaha
+lalala
 
 # AGENTS.zh.md
 
@@ -16,4 +16,4 @@ hahaha
 2. 同时添加 `.zh.md` 作为中文补充。
 3. `.md` 和 `.zh.md` 需要同步更新。
 
-hahaha
+lalala
