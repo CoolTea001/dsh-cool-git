@@ -285,6 +285,21 @@ type UiKey =
   | 'conflict.cleanText'
   | 'conflict.showContext'
   | 'conflict.hideContext'
+  /** The plugin page's update row: the published version, and installing it. */
+  | 'update.published'
+  | 'update.upgrade'
+  | 'update.confirm'
+  | 'update.confirmLink'
+  | 'update.confirmYes'
+  | 'update.cancel'
+  | 'update.applying'
+  | 'update.done'
+  | 'update.restart'
+  | 'update.failed'
+  | 'update.unavailable'
+  | 'update.retry'
+  | 'update.npm'
+  | 'update.github'
 
 /** Every key in the namespace: the page's own, and one sentence per refusal. */
 export type MessageKey = UiKey | `error.${FailureCode}`
@@ -549,6 +564,25 @@ export const en = {
   'conflict.showContext': 'Show {count} unchanged lines',
   'conflict.hideContext': 'Hide {count} unchanged lines',
 
+  // The update row on this bundle's own page in the Plugins panel. The value is
+  // the registry's answer and never this plugin's own guess; `{version}` is what
+  // the install will put in the profile, which is why the confirm sentence names
+  // it and the result sentences repeat it.
+  'update.published': 'New version {version} is available',
+  'update.upgrade': 'Update now',
+  'update.confirm': 'Install {version}?',
+  'update.confirmLink': 'Install {version} from npm instead of the local checkout?',
+  'update.confirmYes': 'Install',
+  'update.cancel': 'Cancel',
+  'update.applying': 'Updating…',
+  'update.done': 'Updated to {version}',
+  'update.restart': 'Installed {version}; restart DSH to use it',
+  'update.failed': 'Update failed',
+  'update.unavailable': 'Could not read the published version',
+  'update.retry': 'Retry',
+  'update.npm': 'npm package page',
+  'update.github': 'GitHub repository',
+
   'error.not-ready': 'The session is not ready yet; try again in a moment',
   'error.no-workdir': 'Could not determine the session\'s working directory',
   'error.no-subprocess': 'The subprocess service is unavailable, so Git cannot run',
@@ -614,6 +648,9 @@ export const en = {
   'error.model-timeout': 'The model did not answer in time',
   'error.model-truncated': 'The model used its whole output budget on reasoning before writing the message; try again, or lower the default reasoning effort',
   'error.empty-message': 'The model returned no commit message',
+
+  'error.no-plugin-manager': 'The plugin manager is unavailable, so this bundle cannot be installed from here',
+  'error.bad-version': 'That version cannot be installed',
 } satisfies Record<MessageKey, string>
 
 /** The Chinese copy, key for key the same page. */
@@ -881,6 +918,21 @@ export const zh: typeof en = {
   'conflict.showContext': '展开 {count} 行未修改内容',
   'conflict.hideContext': '收起 {count} 行未修改内容',
 
+  'update.published': '新版本 {version} 已发布',
+  'update.upgrade': '立即升级',
+  'update.confirm': '安装 {version}？',
+  'update.confirmLink': '改为从 npm 安装 {version}？',
+  'update.confirmYes': '安装',
+  'update.cancel': '取消',
+  'update.applying': '正在升级…',
+  'update.done': '已升级到 {version}',
+  'update.restart': '已安装 {version}，重启 DSH 后生效',
+  'update.failed': '升级失败',
+  'update.unavailable': '无法获取已发布的版本',
+  'update.retry': '重试',
+  'update.npm': 'npm 页面',
+  'update.github': 'GitHub 仓库',
+
   'error.not-ready': '会话尚未就绪，请稍后重试',
   'error.no-workdir': '无法确定该会话的工作目录',
   'error.no-subprocess': 'subprocess 服务不可用，无法执行 Git 命令',
@@ -946,4 +998,7 @@ export const zh: typeof en = {
   'error.model-timeout': '模型未在限定时间内返回结果',
   'error.model-truncated': '模型在写出提交信息前就把输出预算用在了思考上，请重试或降低默认推理强度',
   'error.empty-message': '模型未返回提交信息',
+
+  'error.no-plugin-manager': '插件管理器不可用，无法从这里安装该插件',
+  'error.bad-version': '该版本无法安装',
 }

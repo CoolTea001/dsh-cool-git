@@ -1128,6 +1128,31 @@ const GIT_CSS = [
   // matches the selector, so the tab draws its own opaque surfaces exactly as it
   // did before.
   `html.ct-bg-on .${GIT_ROOT_CLASS}{--dsw-alias-bg-base:transparent;--dsw-alias-bg-layer-1:transparent}`,
+
+  // 5. The plugin page's update row.
+  //
+  // This sheet is inserted from the plugin's `apply`, which runs wherever the
+  // browser half does — including on the Plugins page, where none of the page
+  // styles above are mounted. The classes here are therefore their own subtree,
+  // not descendants of the Git root. The row is one line under the page's Source
+  // facts: the two links that say where the plugin lives on the left, and — only
+  // when there is news — a capsule on the right. The capsule is the page's own
+  // pill vocabulary (a hairline border on layer-2, 999px radius) so it reads as a
+  // note about the page rather than as a second primary control, and the action
+  // inside it is a text button in the brand color. Every color is a theme alias,
+  // so the row follows the light and dark appearances.
+  '.dsh-cg-update-footer{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;margin-top:14px}',
+  '.dsh-cg-update-links{display:flex;align-items:center;gap:8px}',
+  '.dsh-cg-update-link{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);text-decoration:none}',
+  '.dsh-cg-update-link:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-update-link svg{display:block;width:16px;height:16px}',
+  '.dsh-cg-update-pill{display:inline-flex;align-items:center;gap:8px;max-width:min(100%,560px);padding:4px 12px;border:.5px solid var(--dsw-alias-border-l3);border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6}',
+  '.dsh-cg-update-pill[data-tone="accent"]{color:var(--dsw-alias-label-primary)}',
+  '.dsh-cg-update-pill[data-tone="error"]{color:var(--dsw-alias-state-error-primary)}',
+  '.dsh-cg-update-pill-text{overflow-wrap:anywhere}',
+  '.dsh-cg-update-action{flex:none;appearance:none;border:0;background:none;padding:0;font:inherit;color:var(--dsw-alias-brand-primary);cursor:pointer}',
+  '.dsh-cg-update-action:hover{text-decoration:underline}',
+  '.dsh-cg-update-quiet{display:inline-flex;align-items:center;gap:8px;color:var(--dsw-alias-label-tertiary);font-size:12px}',
 ].join('\n')
 
 /**

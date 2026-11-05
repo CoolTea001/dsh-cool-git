@@ -36,6 +36,8 @@ import {
   type SettingsPayload,
   type StatusPayload,
   type SyncPayload,
+  type UpdateApplyPayload,
+  type UpdateCheckPayload,
   type UndoCommitPayload,
 } from '../shared/contract.js'
 import { errorMessage } from '../shared/error.js'
@@ -645,4 +647,34 @@ export function pullBranch(sessionId: string | undefined): Promise<SyncPayload> 
  */
 export function pushBranch(sessionId: string | undefined): Promise<SyncPayload> {
   return postJson(ROUTES.push, { sessionId })
+}
+
+/**
+ * Ask the Host which version of this plugin is published.
+ *
+ * The question belongs to the plugin's own page rather than to any session: the
+ * registry and the profile are the Host's to read, and neither has anything to
+ * do with the repository a Git tab is showing, so no session id travels with the
+ * request. An answer that could not reach the registry is `ok: false` with text,
+ * which the row states quietly under itself.
+ *
+ * @returns the version payload.
+ */
+export function checkUpdate(): Promise<UpdateCheckPayload> {
+  return postJson(ROUTES.update, {})
+}
+
+/**
+ * Ask the Host to install one published version of this plugin.
+ *
+ * The version is the one the row was shown, never one the reader typed; the Host
+ * refuses anything that is not a plain release version before the manager is
+ * asked, and the manager itself performs the same install the Plugins panel
+ * performs.
+ *
+ * @param version - the version to install.
+ * @returns the install payload, carrying how the manager applied it.
+ */
+export function applyUpdate(version: string): Promise<UpdateApplyPayload> {
+  return postJson(ROUTES.updateApply, { version })
 }
