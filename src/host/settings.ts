@@ -49,7 +49,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
-import { MAX_PROMPT_LENGTH, type MessageModel } from '../shared/contract.js'
+import { MAX_MODEL_ID_LENGTH, MAX_PROMPT_LENGTH, type MessageModel } from '../shared/contract.js'
 
 /** One Workspace's stored overrides; an absent member means "use the default". */
 export interface WorkspaceMessageSettings {
@@ -154,8 +154,8 @@ function parseModel(value: unknown): MessageModel | undefined {
   if (!isRecord(value)) return undefined
   const provider = value.provider
   const model = value.model
-  if (typeof provider !== 'string' || provider === '' || provider.length > 200) return undefined
-  if (typeof model !== 'string' || model === '' || model.length > 200) return undefined
+  if (typeof provider !== 'string' || provider === '' || provider.length > MAX_MODEL_ID_LENGTH) return undefined
+  if (typeof model !== 'string' || model === '' || model.length > MAX_MODEL_ID_LENGTH) return undefined
   const effort = value.reasoningEffort
   return {
     provider,

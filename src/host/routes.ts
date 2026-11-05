@@ -56,6 +56,7 @@ import {
   type GitTarget,
 } from './git.js'
 import {
+  MAX_MODEL_ID_LENGTH,
   ROUTES,
   type BranchDeleteTarget,
   type CommitScope,
@@ -75,7 +76,7 @@ import {
   readWorkspaceSettings,
   saveWorkspaceSettings,
 } from './settings.js'
-import { resolveWorkspace } from './workspace.js'
+import { resolveWorkspace, workspaceSettingsKey } from './workspace.js'
 
 // Re-exported so the Host entry keeps its `ROUTES` export; the table itself
 // lives in the shared contract, beside the payloads it addresses.
@@ -168,21 +169,6 @@ function sameOrigin(req: any): boolean {
  * has not resumed yet is allowed to answer.
  */
 type RouteEffect = 'read' | 'write'
-
-/**
- * The directory one request runs Git in, and the substrate it runs on.
- *
- * There is one execution path: Git is spawned on the Host's `subprocess`
- * service, as an argv, with no shell and no sandbox in between. The session's
- * file policy therefore does not reach Git — a deliberate, documented trade for
- * the several hundred milliseconds a sandboxed invocation costs on Windows.
- * Every path a command carries comes from Git's own output, and every command
- * runs inside the repository this layer resolved.
- */
-interface ResolvedTarget {
-  readonly workdir: string
-  readonly subprocess: unknown
-}
 
 /**
  * The Host's process substrate, or the reason Git cannot run at all.
@@ -319,7 +305,7 @@ async function resolveSettingsTarget(
   const workspace = await resolveWorkspace(ctx, sessionId, root.root)
   return {
     ok: true,
-    key: workspace?.path === undefined || workspace.path === '' ? root.root : workspace.path,
+    key: workspaceSettingsKey(workspace, root.root),
     ...(workspace === undefined ? {} : { workspace }),
   }
 }
@@ -343,7 +329,7 @@ async function handle(
   req: any,
   res: any,
   effect: RouteEffect,
-  run: (body: Record<string, unknown>, target: GitTarget) => Promise<unknown>,
+  run: (body: Record<string, unknown>, target: GitTarget) => unknown | Promise<unknown>,
 ): Promise<void> {
   if (!methodAllowed(req, res, ['POST'])) return
 
@@ -384,6 +370,24 @@ function readPath(body: Record<string, unknown>): string | undefined {
   const path = body.path
   if (typeof path !== 'string' || path === '' || path.includes('\0')) return undefined
   return path
+}
+
+/**
+ * Run one route's work with the path the request named, or refuse it.
+ *
+ * Ten routes name exactly one path, and every one of them refuses a body that
+ * does not carry a usable path the same way, so the check is stated once here
+ * rather than repeated at each route. The refusal is an answer the page draws,
+ * not an HTTP error, exactly as Git's own refusals are.
+ *
+ * @param body - the parsed request body.
+ * @param run - the route's work, given the path the body named.
+ * @returns the route's answer, or the missing-path refusal.
+ */
+function withPath(body: Record<string, unknown>, run: (path: string) => unknown): unknown {
+  const path = readPath(body)
+  if (path === undefined) return { ok: false, ...coded('missing-path') }
+  return run(path)
 }
 
 /**
@@ -445,6 +449,16 @@ function readChoice(
 }
 
 /**
+ * How many conflict blocks one resolution may name.
+ *
+ * A bound rather than a rule about the file: a resolution is one request, and one
+ * request is one round trip, so the number of blocks it may carry is the number
+ * this half is willing to make it. A file with more conflicts than this is
+ * resolved in more than one click.
+ */
+const MAX_CONFLICT_KEYS = 500
+
+/**
  * Read the conflict blocks one resolution applies to.
  *
  * The two shapes of a resolution are told apart by whether the body carries the
@@ -466,16 +480,6 @@ function readKeys(value: unknown): readonly string[] | undefined {
   }
   return out
 }
-
-/**
- * How many conflict blocks one resolution may name.
- *
- * A bound rather than a rule about the file: a resolution is one request, and one
- * request is one round trip, so the number of blocks it may carry is the number
- * this half is willing to make it. A file with more conflicts than this is
- * resolved in more than one click.
- */
-const MAX_CONFLICT_KEYS = 500
 
 /**
  * Read the scope a commit or a generated message covers.
@@ -511,7 +515,7 @@ function readHash(body: Record<string, unknown>): string | undefined {
  * @returns the identifier, or undefined when the body does not name one.
  */
 function readIdentifier(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value === '' || value.length > 200) return undefined
+  if (typeof value !== 'string' || value === '' || value.length > MAX_MODEL_ID_LENGTH) return undefined
   if (value.includes('\0')) return undefined
   return value
 }
@@ -639,19 +643,16 @@ export function registerRoutes(ctx: any): () => void {
     route(ROUTES.log, (req, res) => handle(ctx, req, res, 'read', (body, target) =>
       readLog(target, typeof body.limit === 'number' ? body.limit : DEFAULT_LOG_LIMIT))),
 
-    route(ROUTES.diff, (req, res) => handle(ctx, req, res, 'read', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return readDiff(target, {
+    route(ROUTES.diff, (req, res) => handle(ctx, req, res, 'read', (body, target) =>
+      withPath(body, path => readDiff(target, {
         path,
         side: readSide(body),
         untracked: body.untracked === true,
-      })
-    })),
+      })))),
 
     route(ROUTES.commit, (req, res) => handle(ctx, req, res, 'read', (body, target) => {
       const hash = readHash(body)
-      if (hash === undefined) return Promise.resolve({ ok: false, ...coded('bad-hash') })
+      if (hash === undefined) return { ok: false, ...coded('bad-hash') }
       return readCommit(target, hash)
     })),
 
@@ -661,48 +662,30 @@ export function registerRoutes(ctx: any): () => void {
     // One path into the index. A write, so it is refused before Git runs for a
     // session the Host has not resumed; the answer carries the fresh status, so
     // the page repaints both lists from the state this write produced.
-    route(ROUTES.stage, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return stagePath(target, path)
-    })),
+    route(ROUTES.stage, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => stagePath(target, path)))),
 
     // One path out of the index, with the rename source when the row has one:
     // both halves of a staged rename are restored in one request.
-    route(ROUTES.unstage, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return unstagePath(target, path, readOrigPath(body))
-    })),
+    route(ROUTES.unstage, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => unstagePath(target, path, readOrigPath(body))))),
 
     // One path's unstaged change discarded. The `untracked` flag is the row's
     // own answer to whether there is an index entry to restore: an untracked
     // path has none, so the Host deletes the file itself instead.
-    route(ROUTES.discard, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return discardPath(target, path, body.untracked === true)
-    })),
+    route(ROUTES.discard, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => discardPath(target, path, body.untracked === true)))),
 
     // The folder siblings: one directory, and every changed path under it that
     // the Host reads inside the write queue. Conflicted paths are left alone.
-    route(ROUTES.stageFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return stageFolder(target, path)
-    })),
+    route(ROUTES.stageFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => stageFolder(target, path)))),
 
-    route(ROUTES.unstageFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return unstageFolder(target, path)
-    })),
+    route(ROUTES.unstageFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => unstageFolder(target, path)))),
 
-    route(ROUTES.discardFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return discardFolder(target, path)
-    })),
+    route(ROUTES.discardFolder, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => discardFolder(target, path)))),
 
     // The header's whole-list siblings: no path in the body, because the scope
     // is every changed path the repository lists on the side the action belongs
@@ -724,7 +707,7 @@ export function registerRoutes(ctx: any): () => void {
     // the page's own stage actions put in the index.
     route(ROUTES.commitAll, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const message = readMessage(body)
-      if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
+      if (message === undefined) return { ok: false, ...coded('missing-message') }
       return commitAll(target, message)
     })),
 
@@ -733,7 +716,7 @@ export function registerRoutes(ctx: any): () => void {
     // meaningless.
     route(ROUTES.commitStaged, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const message = readMessage(body)
-      if (message === undefined) return Promise.resolve({ ok: false, ...coded('missing-message') })
+      if (message === undefined) return { ok: false, ...coded('missing-message') }
       return commitStaged(target, message)
     })),
 
@@ -826,7 +809,7 @@ export function registerRoutes(ctx: any): () => void {
 
     route(ROUTES.checkout, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const branch = readBranch(body)
-      if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      if (branch === undefined) return { ok: false, ...coded('missing-branch') }
       return switchBranch(target, branch)
     })),
 
@@ -843,9 +826,9 @@ export function registerRoutes(ctx: any): () => void {
     // shape checked here.
     route(ROUTES.branchCreate, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const name = readRefName(body.name)
-      if (name === undefined) return Promise.resolve({ ok: false, ...coded('missing-name') })
+      if (name === undefined) return { ok: false, ...coded('missing-name') }
       const start = readRefName(body.start)
-      if (start === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      if (start === undefined) return { ok: false, ...coded('missing-branch') }
       return createBranch(target, name, start)
     })),
 
@@ -854,7 +837,7 @@ export function registerRoutes(ctx: any): () => void {
     // was about, and the page reads that list back line by line.
     route(ROUTES.branchDelete, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const targets = readTargets(body)
-      if (targets === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      if (targets === undefined) return { ok: false, ...coded('missing-branch') }
       return deleteBranches(target, targets)
     })),
 
@@ -863,17 +846,14 @@ export function registerRoutes(ctx: any): () => void {
     // and not a shape a request body can be trusted to know.
     route(ROUTES.merge, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
       const branch = readBranch(body)
-      if (branch === undefined) return Promise.resolve({ ok: false, ...coded('missing-branch') })
+      if (branch === undefined) return { ok: false, ...coded('missing-branch') }
       return mergeBranch(target, branch)
     })),
 
     // One unmerged path, as the resolver draws it. A read: opening a conflict
     // writes nothing, and the pane re-reads it after every choice.
-    route(ROUTES.conflict, (req, res) => handle(ctx, req, res, 'read', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return readConflict(target, path)
-    })),
+    route(ROUTES.conflict, (req, res) => handle(ctx, req, res, 'read', (body, target) =>
+      withPath(body, path => readConflict(target, path)))),
 
     // One choice for one path. Whether it is a block choice or a whole-file one
     // is read from the request: a body carrying `keys` replaces those blocks and
@@ -882,24 +862,20 @@ export function registerRoutes(ctx: any): () => void {
     // refused rather than reinterpreted, because there is no whole file it could
     // mean — and a `keys` field that is present but unusable is refused too,
     // rather than quietly becoming the whole-file request it was not.
-    route(ROUTES.resolve, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      const wholeFile = body.keys === undefined
-      const keys = wholeFile ? undefined : readKeys(body.keys)
-      if (!wholeFile && keys === undefined) return Promise.resolve({ ok: false, ...coded('bad-choice') })
-      const choice = readChoice(body, wholeFile)
-      if (choice === undefined) return Promise.resolve({ ok: false, ...coded('bad-choice') })
-      return resolveConflict(target, path, choice, keys)
-    })),
+    route(ROUTES.resolve, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => {
+        const wholeFile = body.keys === undefined
+        const keys = wholeFile ? undefined : readKeys(body.keys)
+        if (!wholeFile && keys === undefined) return { ok: false, ...coded('bad-choice') }
+        const choice = readChoice(body, wholeFile)
+        if (choice === undefined) return { ok: false, ...coded('bad-choice') }
+        return resolveConflict(target, path, choice, keys)
+      }))),
 
     // One path marked resolved without anything being written: the reader edited
     // it themselves, and the index is the only thing that has to agree.
-    route(ROUTES.resolveDone, (req, res) => handle(ctx, req, res, 'write', (body, target) => {
-      const path = readPath(body)
-      if (path === undefined) return Promise.resolve({ ok: false, ...coded('missing-path') })
-      return markResolved(target, path)
-    })),
+    route(ROUTES.resolveDone, (req, res) => handle(ctx, req, res, 'write', (body, target) =>
+      withPath(body, path => markResolved(target, path)))),
 
     // Finish a merge: every conflict is resolved and staged, and the body may
     // carry the reader's own message. An empty one asks for Git's `MERGE_MSG`,

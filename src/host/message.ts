@@ -46,7 +46,7 @@ import { readChangeDigest, type ChangeDigest, type GitTarget } from './git.js'
 import { defaultSelection } from './model.js'
 import { coded, type Refusal } from './refusal.js'
 import { readWorkspaceSettings } from './settings.js'
-import { resolveWorkspace } from './workspace.js'
+import { resolveWorkspace, workspaceSettingsKey } from './workspace.js'
 
 /**
  * Longest answer the model may write.
@@ -355,10 +355,7 @@ export async function generateCommitMessage(
   }
 
   const workspace = await resolveWorkspace(ctx, sessionId, digest.root)
-  const workspacePath = workspace?.path === undefined || workspace.path === ''
-    ? digest.root
-    : workspace.path
-  const settings = await readWorkspaceSettings(ctx, workspacePath)
+  const settings = await readWorkspaceSettings(ctx, workspaceSettingsKey(workspace, digest.root))
 
   const llm = ctx.get('llm')
   if (llm === undefined || typeof llm.stream !== 'function') return { ok: false, ...coded('no-llm') }

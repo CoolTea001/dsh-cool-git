@@ -1016,6 +1016,15 @@ export interface SettingsPayload {
  */
 export const MAX_PROMPT_LENGTH = 20_000
 
+/**
+ * Longest provider or model identifier either half accepts.
+ *
+ * A route may store only what the settings reader would hand back, so the two
+ * checks share the one bound: a longer identifier the route accepted would be
+ * dropped by the next read instead of being written and reported as saved.
+ */
+export const MAX_MODEL_ID_LENGTH = 200
+
 /** `POST /settings-save`: the outcome of storing one Workspace's choices. */
 export interface SaveSettingsPayload {
   readonly ok: boolean

@@ -51,6 +51,24 @@ export async function resolveWorkspace(
 }
 
 /**
+ * The key one Workspace's saved choices are stored under.
+ *
+ * The registry's canonical path when it can name a Workspace — that is the path
+ * every session attached to it resolves to, a session opened from a subdirectory
+ * included — and the repository root otherwise, because a deployment without the
+ * registry still has a directory to key by. The Settings route and the message
+ * writer both call this: a save under one key and a read under another would
+ * leave the dialog looking like it never stored anything.
+ *
+ * @param workspace - the Workspace, when the registry named one.
+ * @param root - the repository root, as the fallback identity.
+ * @returns the settings key.
+ */
+export function workspaceSettingsKey(workspace: WorkspaceInfo | undefined, root: string): string {
+  return workspace?.path === undefined || workspace.path === '' ? root : workspace.path
+}
+
+/**
  * Find the Workspace whose session account contains this id.
  *
  * @param registry - the Workspace registry service.

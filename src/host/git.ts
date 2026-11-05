@@ -280,6 +280,14 @@ const DETAIL_FORMAT = `${LOG_FORMAT}%x1f%b%x1e`
  */
 const STATUS_ARGS = ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all'] as const
 
+/**
+ * The same read for the write routes, without the branch header.
+ *
+ * The folder and commit writers read the changed paths and nothing about the
+ * branch, so the record `--branch` adds would only be parsed and dropped.
+ */
+const STATUS_PATH_ARGS = ['status', '--porcelain=v1', '-z', '--untracked-files=all'] as const
+
 /** One Git invocation's outcome, resolved rather than thrown. */
 interface GitRun {
   /** The process exit code, or null when it was killed by a signal. */
@@ -681,15 +689,27 @@ async function readOperation(root: GitTarget): Promise<ConflictOperation | undef
   if (paths.code !== 0) return undefined
 
   const [merge, rebaseMerge, rebaseApply, cherryPick] = paths.stdout.split('\n')
-  if (merge !== undefined && merge !== '' && existsSync(resolve(root.workdir, merge))) return 'merge'
-  if (
-    (rebaseMerge !== undefined && rebaseMerge !== '' && existsSync(resolve(root.workdir, rebaseMerge)))
-    || (rebaseApply !== undefined && rebaseApply !== '' && existsSync(resolve(root.workdir, rebaseApply)))
-  ) return 'rebase'
-  if (cherryPick !== undefined && cherryPick !== '' && existsSync(resolve(root.workdir, cherryPick))) {
-    return 'cherry-pick'
-  }
+  if (markerExists(root, merge)) return 'merge'
+  if (markerExists(root, rebaseMerge) || markerExists(root, rebaseApply)) return 'rebase'
+  if (markerExists(root, cherryPick)) return 'cherry-pick'
   return undefined
+}
+
+/**
+ * Whether one `--git-path` answer names a marker that exists in this worktree.
+ *
+ * `--git-path` answers with the path Git itself would read, relative to the
+ * worktree root (or absolute, when the worktree lives elsewhere), and an absent
+ * marker is an empty answer rather than an error. The existence check is the
+ * only question asked: the marker's content never matters, only that Git wrote
+ * one.
+ *
+ * @param root - the repository root and the process substrate.
+ * @param path - the path `--git-path` answered with, when it answered.
+ * @returns true when that path exists.
+ */
+function markerExists(root: GitTarget, path: string | undefined): boolean {
+  return path !== undefined && path !== '' && existsSync(resolve(root.workdir, path))
 }
 
 /**
@@ -2205,6 +2225,7 @@ function mergeFailure(run: GitRun): MergePayload {
  *
  * Git says which of the three things happened in its own words —the two sides
  * were already equal, one moved up to the other, or a commit joined them —and
+ * the page states that outcome as one line beside the branch it names.
  *
  * @param run - the successful merge invocation.
  * @param source - the branch that was merged in.
@@ -2375,7 +2396,7 @@ export async function resolveConflict(
       return { ok: false, ...coded('not-conflicted', { path }), reason: 'not-conflicted' }
     }
     if (keys === undefined) return resolveWholeFile(target, root, absolute, path, choice, stages)
-    return resolveRegions(target, root, absolute, path, choice, keys)
+    return resolveRegions(root, absolute, path, choice, keys)
   })
 }
 
@@ -2435,7 +2456,6 @@ async function resolveWholeFile(
 /**
  * Replace the named blocks of one file with the chosen side's bytes.
  *
- * @param target - the process substrate and the session's directory.
  * @param root - the repository root and the process substrate.
  * @param absolute - the worktree path, already checked to be inside the root.
  * @param path - the repository-relative path.
@@ -2444,7 +2464,6 @@ async function resolveWholeFile(
  * @returns the file after the write, or the refusal.
  */
 async function resolveRegions(
-  target: GitTarget,
   root: GitTarget,
   absolute: string,
   path: string,
@@ -3029,9 +3048,7 @@ export async function stagePath(target: GitTarget, path: string): Promise<IndexP
 
   return withRepoWrite(repo.root, async () => {
     const add = await runGit(root, ['add', '-A', '--', literalPath(path)])
-    if (add.failure !== undefined) return { ok: false, error: add.failure, reason: 'error' }
-    if (add.code !== 0) return { ok: false, ...refusalOf(add), reason: 'error' }
-    return indexAnswer(target)
+    return writeFailure(add) ?? indexAnswer(target)
   })
 }
 
@@ -3066,9 +3083,7 @@ export async function unstagePath(
     const restore = repo.hasHead
       ? await runGit(root, ['restore', '--staged', '--', ...paths])
       : await runGit(root, ['rm', '--cached', '--', ...paths])
-    if (restore.failure !== undefined) return { ok: false, error: restore.failure, reason: 'error' }
-    if (restore.code !== 0) return { ok: false, ...refusalOf(restore), reason: 'error' }
-    return indexAnswer(target)
+    return writeFailure(restore) ?? indexAnswer(target)
   })
 }
 
@@ -3099,9 +3114,7 @@ export async function discardPath(
     const discard = untracked
       ? await runGit(root, ['clean', '-f', '--', literalPath(path)])
       : await runGit(root, ['restore', '--worktree', '--', literalPath(path)])
-    if (discard.failure !== undefined) return { ok: false, error: discard.failure, reason: 'error' }
-    if (discard.code !== 0) return { ok: false, ...refusalOf(discard), reason: 'error' }
-    return indexAnswer(target)
+    return writeFailure(discard) ?? indexAnswer(target)
   })
 }
 
@@ -3136,7 +3149,7 @@ async function folderStatus(
   | { readonly ok: true; readonly files: readonly ChangedFile[] }
   | { readonly ok: false; readonly payload: IndexPayload }
 > {
-  const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+  const status = await runGit(root, STATUS_PATH_ARGS)
   if (status.failure !== undefined) {
     return { ok: false, payload: { ok: false, error: status.failure, reason: 'error' } }
   }
@@ -3151,10 +3164,11 @@ async function folderStatus(
 }
 
 /**
- * The failure one folder command amounts to, or null when it succeeded.
+ * The failure one write command amounts to, or null when it succeeded.
  *
- * Every folder write shares the same two checks — transport and Git's own
- * refusal — so the check lives here once.
+ * Every index and worktree write shares the same two checks — transport and
+ * Git's own refusal — so the check lives here once. A payload that words the
+ * failure its own way still reads this shape and adds what it knows.
  *
  * @param run - the command's outcome.
  * @returns the failure payload, or null when the command succeeded.
@@ -3368,7 +3382,7 @@ export async function commitAll(target: GitTarget, message: string): Promise<Com
   const root = inDir(target, repo.root)
 
   return withRepoWrite(repo.root, async () => {
-    const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    const status = await runGit(root, STATUS_PATH_ARGS)
     if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
     const files = parseStatus(status.stdout).files
@@ -3416,7 +3430,7 @@ export async function commitStaged(target: GitTarget, message: string): Promise<
   const root = inDir(target, repo.root)
 
   return withRepoWrite(repo.root, async () => {
-    const status = await runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    const status = await runGit(root, STATUS_PATH_ARGS)
     if (status.code !== 0) return { ok: false, ...refusalOf(status), reason: 'error' }
 
     const files = parseStatus(status.stdout).files

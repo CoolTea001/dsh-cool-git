@@ -330,6 +330,36 @@ function inList(file: ChangedFile, side: DiffSide): boolean {
   return sidesOf(file).includes(side)
 }
 
+/**
+ * The identity one row's write is tracked under: its half, then its path.
+ *
+ * A path can be listed twice — staged and unstaged — so the write in flight is
+ * keyed by the row rather than by the file. Both the handlers that set it and the
+ * rows that read it must spell the key the same way, which is why it is built
+ * here rather than by string concatenation at each site.
+ *
+ * @param side - the half of the change the row stands for.
+ * @param path - the repository-relative path.
+ * @returns the row's key.
+ */
+function rowKey(side: DiffSide, path: string): string {
+  return `${side}:${path}`
+}
+
+/**
+ * The identity one whole group's write is tracked under: a half and no path.
+ *
+ * A group header's action covers every row in that half, so it is keyed by the
+ * half alone; the trailing separator is what keeps it from colliding with a path
+ * that happens to be empty.
+ *
+ * @param side - the half the group stands for.
+ * @returns the group's key.
+ */
+function groupKey(side: DiffSide): string {
+  return `${side}:`
+}
+
 /** The diff pane's current answer, or the fact that it is still loading. */
 interface DocState {
   /** Identity of the selection this answer belongs to. */
@@ -338,7 +368,6 @@ interface DocState {
   readonly error?: string
   readonly doc?: DiffDoc
   readonly truncated?: boolean
-  readonly binary?: boolean
   readonly commit?: CommitSummary & { readonly body: string }
   readonly merge?: boolean
   /**
@@ -494,7 +523,6 @@ interface RouteOutcome {
 interface RouteAnswer extends RouteOutcome {
   readonly patch?: string
   readonly truncated?: boolean
-  readonly binary?: boolean
   readonly commit?: CommitSummary & { readonly body: string }
   readonly merge?: boolean
   /** The parsed conflict, on the route that answers one instead of a patch. */
@@ -559,7 +587,7 @@ function buildDoc(t: Translate, key: string, result: RouteAnswer | null | undefi
   if (result.commit !== undefined) {
     return { ...base, commit: result.commit, merge: result.merge === true }
   }
-  return { ...base, binary: result.binary === true }
+  return base
 }
 
 /**
@@ -1739,6 +1767,33 @@ export function GitView(props: {
   }, [])
 
   /**
+   * Adopt the answer one list write gave, or report its refusal.
+   *
+   * Every index and worktree write answers with the fresh status, and every one
+   * of them paints and caches that answer the same way: the lists then describe
+   * the state the write produced rather than a second read another writer could
+   * race. A refusal is the error dialog's, followed by a re-read, because a
+   * failed write can still have touched the index or the worktree and a stale
+   * row is worse than a slow one.
+   *
+   * @param result - the answer the route gave.
+   * @param title - the error dialog's heading when the write was refused.
+   */
+  const adoptWrite = useCallback((
+    result: (RouteOutcome & { readonly status?: StatusPayload }) | null | undefined,
+    title: MessageKey,
+  ): void => {
+    if (result?.ok !== true) {
+      reportError(failureOf(t, title, result ?? {}))
+      void refresh()
+      return
+    }
+    if (result.status === undefined) return
+    setStatus(result.status)
+    writeRepositorySnapshot(sessionId, result.status, log)
+  }, [sessionId, log, refresh, reportError, t])
+
+  /**
    * Move one row's path between the index and the worktree.
    *
    * The request answers with the fresh status, so the page paints the state the
@@ -1755,26 +1810,19 @@ export function GitView(props: {
    */
   const handleStageToggle = useCallback((file: ChangedFile, side: DiffSide): void => {
     if (side === 'conflict' || staging !== null || discarding !== null) return
-    const key = `${side}:${file.path}`
+    const key = rowKey(side, file.path)
     setStaging(key)
     const request = side === 'staged'
       ? unstagePath(sessionId, file.path, file.origPath)
       : stagePath(sessionId, file.path)
     void request.then(result => {
       setStaging(null)
-      if (result?.ok !== true) {
-        reportError(failureOf(t, side === 'staged' ? 'title.unstage' : 'title.stage', result))
-        void refresh()
-        return
-      }
-      if (result.status === undefined) return
-      setStatus(result.status)
-      writeRepositorySnapshot(sessionId, result.status, log)
+      adoptWrite(result, side === 'staged' ? 'title.unstage' : 'title.stage')
       // The selection is not moved here: both halves are drawn, and the effect
       // above follows the path to the half it still has — or closes the pane
       // when it is no longer in either list.
     })
-  }, [sessionId, staging, discarding, log, refresh, reportError, t])
+  }, [sessionId, staging, discarding, adoptWrite])
 
   /**
    * Move every changed path under one folder between the index and the worktree.
@@ -1789,24 +1837,13 @@ export function GitView(props: {
    */
   const handleStageFolder = useCallback((path: string, side: DiffSide): void => {
     if (side === 'conflict' || staging !== null || discarding !== null) return
-    setStaging(`${side}:${path}`)
+    setStaging(rowKey(side, path))
     const request = side === 'staged' ? unstageFolder(sessionId, path) : stageFolder(sessionId, path)
     void request.then(result => {
       setStaging(null)
-      if (result?.ok !== true) {
-        reportError(failureOf(
-          t,
-          side === 'staged' ? 'title.unstageFolder' : 'title.stageFolder',
-          result,
-        ))
-        void refresh()
-        return
-      }
-      if (result.status === undefined) return
-      setStatus(result.status)
-      writeRepositorySnapshot(sessionId, result.status, log)
+      adoptWrite(result, side === 'staged' ? 'title.unstageFolder' : 'title.stageFolder')
     })
-  }, [sessionId, staging, discarding, log, refresh, reportError, t])
+  }, [sessionId, staging, discarding, adoptWrite])
 
   /**
    * Move one whole half of the changed-path pane between the index and the
@@ -1821,20 +1858,13 @@ export function GitView(props: {
    */
   const handleStageAll = useCallback((side: StageableSide): void => {
     if (staging !== null || discarding !== null) return
-    setStaging(`${side}:`)
+    setStaging(groupKey(side))
     const request = side === 'staged' ? unstageAll(sessionId) : stageAll(sessionId)
     void request.then(result => {
       setStaging(null)
-      if (result?.ok !== true) {
-        reportError(failureOf(t, side === 'staged' ? 'title.unstageAll' : 'title.stageAll', result))
-        void refresh()
-        return
-      }
-      if (result.status === undefined) return
-      setStatus(result.status)
-      writeRepositorySnapshot(sessionId, result.status, log)
+      adoptWrite(result, side === 'staged' ? 'title.unstageAll' : 'title.stageAll')
     })
-  }, [sessionId, staging, discarding, log, refresh, reportError, t])
+  }, [sessionId, staging, discarding, adoptWrite])
 
   /**
    * Ask before discarding one row's worktree change.
@@ -1893,7 +1923,7 @@ export function GitView(props: {
     const path = target.kind === 'file'
       ? target.file.path
       : target.kind === 'folder' ? target.path : ''
-    setDiscarding(`unstaged:${path}`)
+    setDiscarding(rowKey('unstaged', path))
     const request = target.kind === 'file'
       ? discardPath(sessionId, target.file.path, target.file.untracked)
       : target.kind === 'folder'
@@ -1901,16 +1931,9 @@ export function GitView(props: {
         : discardAll(sessionId)
     void request.then(result => {
       setDiscarding(null)
-      if (result?.ok !== true) {
-        reportError(failureOf(t, target.kind === 'all' ? 'title.discardAll' : 'title.discard', result))
-        void refresh()
-        return
-      }
-      if (result.status === undefined) return
-      setStatus(result.status)
-      writeRepositorySnapshot(sessionId, result.status, log)
+      adoptWrite(result, target.kind === 'all' ? 'title.discardAll' : 'title.discard')
     })
-  }, [discardTarget, staging, discarding, sessionId, log, refresh, reportError, t])
+  }, [discardTarget, staging, discarding, sessionId, adoptWrite])
 
   /**
    * Ask the Host for a commit message written for the changes on disk.
@@ -1963,15 +1986,11 @@ export function GitView(props: {
 
   const files: readonly ChangedFile[] = status?.ok === true ? status.files ?? [] : []
   const commits: readonly CommitSummary[] = log?.ok === true ? log.commits ?? [] : []
-  // One count per half, for the commit form: whether its button can act at all,
-  // and whether Generate has anything to describe. A half-staged path is counted
-  // in both lists, which is what it is: the index holds one version and the
-  // worktree another, and each count names rows rather than distinct paths. A
-  // conflicted path is counted by neither, and the conflict list is drawn above
-  // the other two so the count that has to reach zero is the first one read.
+  // The commit form counts the index's rows: they are what a staged-scope commit
+  // would record, and what Generate has to describe in that scope. A half-staged
+  // path counts once, because the index holds one version of it; a conflicted
+  // path is never staged, so it is not counted here.
   const stagedCount = files.filter(file => file.staged && !file.conflicted).length
-  const unstagedCount = files.filter(file => !file.conflicted && (file.unstaged || file.untracked)).length
-  const conflictCount = files.filter(file => file.conflicted).length
 
   /**
    * Apply one choice to the conflict on screen.
@@ -2031,16 +2050,9 @@ export function GitView(props: {
     setMarkingPath(path)
     void markResolved(sessionId, path).then(result => {
       setMarkingPath(null)
-      if (result?.ok !== true) {
-        reportError(failureOf(t, 'title.resolveDone', result))
-        void refresh()
-        return
-      }
-      if (result.status === undefined) return
-      setStatus(result.status)
-      writeRepositorySnapshot(sessionId, result.status, log)
+      adoptWrite(result, 'title.resolveDone')
     })
-  }, [busy, sessionId, reportError, t, refresh, log])
+  }, [busy, sessionId, adoptWrite])
 
   /** A conflict row's own check: the one place the page marks a path resolved. */
   const handleMarkResolvedRow = useCallback((file: ChangedFile): void => {
@@ -2535,6 +2547,24 @@ const PICKER_HEIGHT = 370
 const PICKER_THUMB_MIN = 28
 
 /**
+ * The gap and margin the picker is placed with, in CSS pixels.
+ *
+ * The platform's position hook and this dialog's own side decision both read
+ * them: a disagreement would put the panel on the side the hook was not told
+ * about, so the two numbers are stated once.
+ */
+const PICKER_GAP = 6
+const PICKER_MARGIN = 12
+
+/** The width the panel opens at, and the narrowest a narrow field may shrink it to. */
+const PICKER_WIDTH_INITIAL = 320
+const PICKER_WIDTH_MIN = 280
+
+/** The layer the panel sits on, and how far above the field's own layer it starts. */
+const PICKER_Z_BASE = 1000
+const PICKER_Z_STEP = 10
+
+/**
  * The parts of the Settings picker's placement this plugin owns.
  *
  * The position itself is the platform's (`useAnchoredPosition`); this is the
@@ -2678,8 +2708,8 @@ function SettingsDialog(props: {
   const [effortFailures, setEffortFailures] = useState<readonly string[]>([])
   const [effortLoading, setEffortLoading] = useState<readonly string[]>([])
   const [pickerLayout, setPickerLayout] = useState<PickerLayout>({
-    width: 320,
-    zIndex: 1010,
+    width: PICKER_WIDTH_INITIAL,
+    zIndex: PICKER_Z_BASE + PICKER_Z_STEP,
     side: 'bottom',
   })
   const id = useId()
@@ -2802,11 +2832,9 @@ function SettingsDialog(props: {
       const trigger = modelField.current
       if (trigger === null) return
       const rect = trigger.getBoundingClientRect()
-      const margin = 12
-      const gap = 6
-      const width = Math.max(280, Math.min(rect.width, window.innerWidth - margin * 2))
-      const below = window.innerHeight - rect.bottom - gap - margin
-      const above = rect.top - gap - margin
+      const width = Math.max(PICKER_WIDTH_MIN, Math.min(rect.width, window.innerWidth - PICKER_MARGIN * 2))
+      const below = window.innerHeight - rect.bottom - PICKER_GAP - PICKER_MARGIN
+      const above = rect.top - PICKER_GAP - PICKER_MARGIN
       // The panel's height is fixed, so the only question the viewport answers
       // is which side of the field can hold it. Below is the reader's first
       // guess, so it is preferred unless it cannot fit the panel at all.
@@ -2818,7 +2846,7 @@ function SettingsDialog(props: {
       }
       const next: PickerLayout = {
         width,
-        zIndex: Math.max(layer + 10, 1000),
+        zIndex: Math.max(layer + PICKER_Z_STEP, PICKER_Z_BASE),
         side: openUp ? 'top' : 'bottom',
       }
       setPickerLayout(current => (
@@ -2854,8 +2882,8 @@ function SettingsDialog(props: {
     anchorRef: modelField,
     panelRef,
     side: pickerLayout.side,
-    gap: 6,
-    margin: 12,
+    gap: PICKER_GAP,
+    margin: PICKER_MARGIN,
   })
   useModalLayer(panelRef, pickerOpen, closePicker)
 
@@ -4875,10 +4903,8 @@ function CommitBar(props: {
 
   /** How many rows the current scope would commit. */
   const count = scope === 'staged' ? stagedCount : allCount
-  /** Whether the current scope has anything to commit at all. */
+  /** Whether the current scope has anything to commit, and so anything to describe. */
   const nothingToCommit = count === 0
-  /** Whether Generate's scope has anything to describe. */
-  const nothingToGenerate = scope === 'staged' ? stagedCount === 0 : allCount === 0
 
   /**
    * Measure the field to what it holds.
@@ -4914,9 +4940,10 @@ function CommitBar(props: {
       // is holding a message for a commit that no longer exists — the merge was
       // finished or abandoned elsewhere — so it goes with the state it described.
       // Text the reader typed is theirs either way and stays.
-      if (prefilled.current !== null) {
-        setMessage(current => (current === prefilled.current ? '' : current))
+      const previous = prefilled.current
+      if (previous !== null) {
         prefilled.current = null
+        setMessage(current => (current === previous ? '' : current))
       }
       return
     }
@@ -4979,7 +5006,7 @@ function CommitBar(props: {
    * the user typed would be this control taking a failure out on their work.
    */
   const generate = useCallback((): void => {
-    if (disabled || committing || generating || nothingToGenerate) return
+    if (disabled || committing || generating || nothingToCommit) return
     setGenerating(true)
     setWarning('')
     void onGenerate().then(result => {
@@ -4988,7 +5015,7 @@ function CommitBar(props: {
       setMessage(result.message)
       setWarning(result.warning ?? '')
     })
-  }, [disabled, committing, generating, nothingToGenerate, onGenerate])
+  }, [disabled, committing, generating, nothingToCommit, onGenerate])
 
   /**
    * What the field says while it holds no text of the reader's.
@@ -5058,7 +5085,7 @@ function CommitBar(props: {
           className="dsh-cg-commit-generate"
           aria-label={generating ? t('commit.generating') : t('commit.generate')}
           data-busy={generating}
-          disabled={disabled || committing || generating || nothingToGenerate || operation !== null}
+          disabled={disabled || committing || generating || nothingToCommit || operation !== null}
           onClick={generate}
         >
           {generating ? SPINNER_ICON : <IconGenerate />}
@@ -5296,6 +5323,54 @@ function ChangeList(props: {
  * @param props.onDiscardAll - opens the confirmation for the half's worktree changes.
  * @returns the group.
  */
+/**
+ * One trailing row action: a glyph button with this page's own bubble.
+ *
+ * Every row and group header ends in the controls that move its path, discard
+ * its change, or mark its conflict resolved, and those controls differ only in
+ * their glyph, their labels, and the write behind them. The bubble's pace and
+ * cap, the accessible name that is not always the bubble's text, and the spinner
+ * that stands in while the write is in flight are therefore stated once here
+ * rather than at each site.
+ *
+ * @param props.label - the bubble's text.
+ * @param props.ariaLabel - the control's accessible name, when it differs from the label.
+ * @param props.busy - whether this control's own write is in flight.
+ * @param props.disabled - whether any write on the page is in flight.
+ * @param props.onClick - the write to run.
+ * @param props.icon - the glyph to draw while idle.
+ * @returns the action element.
+ */
+function RowAction(props: {
+  readonly label: string
+  readonly ariaLabel?: string
+  readonly busy: boolean
+  readonly disabled: boolean
+  readonly onClick: () => void
+  readonly icon: ReactNode
+}): ReactElement {
+  return (
+    <Tooltip
+      label={props.label}
+      side="top"
+      delayMs={TOOLTIP_DELAY_MS}
+      portal
+      maxWidth={TOOLTIP_MAX_WIDTH}
+    >
+      <button
+        type="button"
+        className="dsh-cg-row-action"
+        aria-label={props.ariaLabel ?? props.label}
+        data-busy={props.busy}
+        disabled={props.disabled}
+        onClick={props.onClick}
+      >
+        {props.busy ? SPINNER_ICON : props.icon}
+      </button>
+    </Tooltip>
+  )
+}
+
 function ChangeGroup(props: {
   readonly t: Translate
   readonly side: DiffSide
@@ -5332,8 +5407,8 @@ function ChangeGroup(props: {
   const count = files.length
   const untracked = files.some(file => file.untracked)
   const actionsBusy = staging !== null || discarding !== null || marking !== null
-  const stageBusy = staging === `${side}:`
-  const discardBusy = discarding === 'unstaged:'
+  const stageBusy = staging === groupKey(side)
+  const discardBusy = discarding === groupKey('unstaged')
   // The trailing slot's width comes from this attribute, so a group with no
   // action must say so rather than draw an empty one that reserves the space.
   const actions = side === 'unstaged' ? 'both' : 'stage'
@@ -5353,69 +5428,36 @@ function ChangeGroup(props: {
         <span className="dsh-cg-row-actions">
           {side === 'conflict'
             ? (
-              <Tooltip
+              <RowAction
                 label={t('stage.markAllResolved')}
-                side="top"
-                delayMs={TOOLTIP_DELAY_MS}
-                portal
-                maxWidth={TOOLTIP_MAX_WIDTH}
-              >
-                <button
-                  type="button"
-                  className="dsh-cg-row-action"
-                  aria-label={t('stage.markAllResolved')}
-                  data-busy={markingAll}
-                  disabled={count === 0 || actionsBusy}
-                  onClick={onMarkAllResolved}
-                >
-                  {markingAll ? SPINNER_ICON : <IconCheck />}
-                </button>
-              </Tooltip>
+                busy={markingAll}
+                disabled={count === 0 || actionsBusy}
+                onClick={onMarkAllResolved}
+                icon={<IconCheck />}
+              />
             )
             : null}
           {side === 'unstaged'
             ? (
-              <Tooltip
+              <RowAction
                 label={t('stage.discardAll')}
-                side="top"
-                delayMs={TOOLTIP_DELAY_MS}
-                portal
-                maxWidth={TOOLTIP_MAX_WIDTH}
-              >
-                <button
-                  type="button"
-                  className="dsh-cg-row-action"
-                  aria-label={t('stage.discardAll')}
-                  data-busy={discardBusy}
-                  disabled={count === 0 || actionsBusy}
-                  onClick={() => onDiscardAll(count, untracked)}
-                >
-                  {discardBusy ? SPINNER_ICON : <IconDiscard />}
-                </button>
-              </Tooltip>
+                busy={discardBusy}
+                disabled={count === 0 || actionsBusy}
+                onClick={() => onDiscardAll(count, untracked)}
+                icon={<IconDiscard />}
+              />
             )
             : null}
           {onStageAll === undefined
             ? null
             : (
-              <Tooltip
+              <RowAction
                 label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
-                side="top"
-                delayMs={TOOLTIP_DELAY_MS}
-                portal
-                maxWidth={TOOLTIP_MAX_WIDTH}
-              >
-                <button
-                  type="button"
-                  className="dsh-cg-row-action"
-                  aria-label={t(side === 'staged' ? 'stage.unstageAll' : 'stage.stageAll')}
-                  data-busy={stageBusy}
-                  disabled={count === 0 || actionsBusy}
-                  onClick={onStageAll}
-                >
-                  {stageBusy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
-                </button>
-              </Tooltip>
+                busy={stageBusy}
+                disabled={count === 0 || actionsBusy}
+                onClick={onStageAll}
+                icon={side === 'staged' ? <IconMinus /> : <IconPlus />}
+              />
             )}
         </span>
       </div>
@@ -5557,11 +5599,11 @@ function FolderBranch(props: {
     t, folder, side, depth, collapsed, onToggle, selection, staging, discarding, marking, onSelect,
     onToggleStage, onDiscard, onMarkResolved, onToggleFolderStage, onDiscardFolder,
   } = props
-  const key = `${side}:${folder.path}`
+  const key = rowKey(side, folder.path)
   const open = !collapsed.has(key)
   const files = filesUnderFolder(folder)
-  const stageBusy = staging === `${side}:${folder.path}`
-  const discardBusy = discarding === `unstaged:${folder.path}`
+  const stageBusy = staging === rowKey(side, folder.path)
+  const discardBusy = discarding === rowKey('unstaged', folder.path)
   const actionsBusy = staging !== null || discarding !== null || marking !== null
   const untracked = files.some(file => file.untracked)
   const actions = side === 'conflict' ? 'mark' : side === 'unstaged' ? 'both' : 'stage'
@@ -5600,47 +5642,27 @@ function FolderBranch(props: {
             <span className="dsh-cg-row-actions">
               {side === 'unstaged'
                 ? (
-                  <Tooltip
+                  <RowAction
                     label={t('stage.discard')}
-                    side="top"
-                    delayMs={TOOLTIP_DELAY_MS}
-                    portal
-                    maxWidth={TOOLTIP_MAX_WIDTH}
-                  >
-                    <button
-                      type="button"
-                      className="dsh-cg-row-action"
-                      aria-label={t('stage.discardFolder', { path: folder.path })}
-                      data-busy={discardBusy}
-                      disabled={actionsBusy}
-                      onClick={() => onDiscardFolder(folder.path, files.length, untracked)}
-                    >
-                      {discardBusy ? SPINNER_ICON : <IconDiscard />}
-                    </button>
-                  </Tooltip>
+                    ariaLabel={t('stage.discardFolder', { path: folder.path })}
+                    busy={discardBusy}
+                    disabled={actionsBusy}
+                    onClick={() => onDiscardFolder(folder.path, files.length, untracked)}
+                    icon={<IconDiscard />}
+                  />
                 )
                 : null}
-              <Tooltip
+              <RowAction
                 label={t(side === 'staged' ? 'stage.unstage' : 'stage.stage')}
-                side="top"
-                delayMs={TOOLTIP_DELAY_MS}
-                portal
-                maxWidth={TOOLTIP_MAX_WIDTH}
-              >
-                <button
-                  type="button"
-                  className="dsh-cg-row-action"
-                  aria-label={t(
-                    side === 'staged' ? 'stage.unstageFolder' : 'stage.stageFolder',
-                    { path: folder.path },
-                  )}
-                  data-busy={stageBusy}
-                  disabled={actionsBusy}
-                  onClick={() => onToggleFolderStage(folder.path, side)}
-                >
-                  {stageBusy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
-                </button>
-              </Tooltip>
+                ariaLabel={t(
+                  side === 'staged' ? 'stage.unstageFolder' : 'stage.stageFolder',
+                  { path: folder.path },
+                )}
+                busy={stageBusy}
+                disabled={actionsBusy}
+                onClick={() => onToggleFolderStage(folder.path, side)}
+                icon={side === 'staged' ? <IconMinus /> : <IconPlus />}
+              />
             </span>
           )}
       </div>
@@ -5759,7 +5781,7 @@ function ChangeRow(props: {
     onDiscard, onMarkResolved,
   } = props
   const { name } = splitPath(file.path)
-  const key = `${side}:${file.path}`
+  const key = rowKey(side, file.path)
   const selected = selection?.kind === 'file'
     && selection.file.path === file.path
     && selection.side === side
@@ -5820,68 +5842,38 @@ function ChangeRow(props: {
       {side === 'conflict'
         ? (
           <span className="dsh-cg-row-actions">
-            <Tooltip
+            <RowAction
               label={t('stage.markResolved')}
-              side="top"
-              delayMs={TOOLTIP_DELAY_MS}
-              portal
-              maxWidth={TOOLTIP_MAX_WIDTH}
-            >
-              <button
-                type="button"
-                className="dsh-cg-row-action"
-                aria-label={t('stage.markResolvedFile', { path: name })}
-                data-busy={markBusy}
-                disabled={actionsBusy}
-                onClick={() => onMarkResolved(file)}
-              >
-                {markBusy ? SPINNER_ICON : <IconCheck />}
-              </button>
-            </Tooltip>
+              ariaLabel={t('stage.markResolvedFile', { path: name })}
+              busy={markBusy}
+              disabled={actionsBusy}
+              onClick={() => onMarkResolved(file)}
+              icon={<IconCheck />}
+            />
           </span>
         )
         : (
           <span className="dsh-cg-row-actions">
             {side === 'unstaged'
               ? (
-                <Tooltip
+                <RowAction
                   label={t('stage.discard')}
-                  side="top"
-                  delayMs={TOOLTIP_DELAY_MS}
-                  portal
-                  maxWidth={TOOLTIP_MAX_WIDTH}
-                >
-                  <button
-                    type="button"
-                    className="dsh-cg-row-action"
-                    aria-label={discardLabel}
-                    data-busy={discardBusy}
-                    disabled={actionsBusy}
-                    onClick={() => onDiscard(file)}
-                  >
-                    {discardBusy ? SPINNER_ICON : <IconDiscard />}
-                  </button>
-                </Tooltip>
+                  ariaLabel={discardLabel}
+                  busy={discardBusy}
+                  disabled={actionsBusy}
+                  onClick={() => onDiscard(file)}
+                  icon={<IconDiscard />}
+                />
               )
               : null}
-            <Tooltip
+            <RowAction
               label={actionTip}
-              side="top"
-              delayMs={TOOLTIP_DELAY_MS}
-              portal
-              maxWidth={TOOLTIP_MAX_WIDTH}
-            >
-              <button
-                type="button"
-                className="dsh-cg-row-action"
-                aria-label={actionLabel}
-                data-busy={busy}
-                disabled={actionsBusy}
-                onClick={() => onToggleStage(file, side)}
-              >
-                {busy ? SPINNER_ICON : side === 'staged' ? <IconMinus /> : <IconPlus />}
-              </button>
-            </Tooltip>
+              ariaLabel={actionLabel}
+              busy={busy}
+              disabled={actionsBusy}
+              onClick={() => onToggleStage(file, side)}
+              icon={side === 'staged' ? <IconMinus /> : <IconPlus />}
+            />
           </span>
         )}
     </div>
@@ -6041,6 +6033,33 @@ function RefRow(props: { readonly refs: readonly string[] }): ReactElement {
 }
 
 /**
+ * A pane's empty state: what it is, and why there is nothing to draw.
+ *
+ * Five states answer with the same two lines — the pane has no answer, or the
+ * answer it has is not a patch to draw — and one of them carries the whole-file
+ * choice that is the only action such a path can take. The shape is stated once
+ * here so those states cannot drift apart.
+ *
+ * @param props.title - the state's own heading.
+ * @param props.text - the sentence under it.
+ * @param props.children - the action the state offers, when it offers one.
+ * @returns the empty state.
+ */
+function EmptyPane(props: {
+  readonly title: string
+  readonly text: string
+  readonly children?: ReactNode
+}): ReactElement {
+  return (
+    <div className="dsh-cg-empty">
+      <span className="dsh-cg-empty-title">{props.title}</span>
+      <span className="dsh-cg-empty-text">{props.text}</span>
+      {props.children}
+    </div>
+  )
+}
+
+/**
  * The diff pane: its header, its body, and its empty and error states.
  *
  * One pane, two kinds of content. A changed path's patch and a conflicted path's
@@ -6054,10 +6073,8 @@ function RefRow(props: { readonly refs: readonly string[] }): ReactElement {
  * @param props.selection - what the user picked.
  * @param props.current - the answer that belongs to that selection, if it arrived.
  * @param props.resolving - the conflict write in flight, as its keys or `whole`.
- * @param props.marking - the "mark resolved" write is in flight.
  * @param props.busy - an operation is already in flight elsewhere on the page.
  * @param props.onResolve - applies a choice to the selected conflict.
- * @param props.onMarkResolved - tells Git the selected conflict is resolved.
  * @returns the pane.
  */
 function DiffPane(props: {
@@ -6100,21 +6117,16 @@ function DiffPane(props: {
 
   if (status !== null && status.ok !== true) {
     return (
-      <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">{t('diff.pane')}</span>
-        <span className="dsh-cg-empty-text">
-          {t(status.reason === 'no-repo' ? 'diff.notRepo' : 'diff.repoFailed')}
-        </span>
-      </div>
+      <EmptyPane
+        title={t('diff.pane')}
+        text={t(status.reason === 'no-repo' ? 'diff.notRepo' : 'diff.repoFailed')}
+      />
     )
   }
 
   if (selection === null) {
     return (
-      <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">{t('diff.pane')}</span>
-        <span className="dsh-cg-empty-text">{t('diff.emptyHint')}</span>
-      </div>
+      <EmptyPane title={t('diff.pane')} text={t('diff.emptyHint')} />
     )
   }
 
@@ -6228,24 +6240,18 @@ function ConflictPane(props: {
           {allBusy ? SPINNER_ICON : null}
           {keys.length === 0 ? null : (
             <>
-              <button
-                type="button"
-                className="dsh-cg-conflict-btn"
-                data-variant="ghost"
+              <ConflictButton
+                label={t('conflict.takeAllOurs')}
+                ghost
                 disabled={disabled}
                 onClick={() => onResolve('ours', keys)}
-              >
-                {t('conflict.takeAllOurs')}
-              </button>
-              <button
-                type="button"
-                className="dsh-cg-conflict-btn"
-                data-variant="ghost"
+              />
+              <ConflictButton
+                label={t('conflict.takeAllTheirs')}
+                ghost
                 disabled={disabled}
                 onClick={() => onResolve('theirs', keys)}
-              >
-                {t('conflict.takeAllTheirs')}
-              </button>
+              />
             </>
           )}
         </span>
@@ -6271,6 +6277,39 @@ function ConflictPane(props: {
             )}
       </div>
     </>
+  )
+}
+
+/**
+ * One conflict choice: the card's own button.
+ *
+ * The pane offers the same four choices twice — for the whole file and for one
+ * block — and the two differ only in their labels and what they resolve, so the
+ * element is stated once here. `ghost` is the lighter variant the pane header and
+ * a block's bar use; a whole-file choice with a heading of its own is drawn solid.
+ *
+ * @param props.label - the button's text, and its accessible name.
+ * @param props.ghost - whether to draw the lighter variant.
+ * @param props.disabled - whether a write is already in flight.
+ * @param props.onClick - the choice to apply.
+ * @returns the button.
+ */
+function ConflictButton(props: {
+  readonly label: string
+  readonly ghost?: boolean
+  readonly disabled: boolean
+  readonly onClick: () => void
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      className="dsh-cg-conflict-btn"
+      data-variant={props.ghost === true ? 'ghost' : undefined}
+      disabled={props.disabled}
+      onClick={props.onClick}
+    >
+      {props.label}
+    </button>
   )
 }
 
@@ -6373,41 +6412,29 @@ function ConflictBody(props: {
 
   if (doc.state === 'binary' || doc.state === 'missing') {
     return (
-      <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">
-          {t(doc.state === 'binary' ? 'conflict.binaryTitle' : 'conflict.missingTitle')}
-        </span>
-        <span className="dsh-cg-empty-text">
-          {t(doc.state === 'binary' ? 'conflict.binaryText' : 'conflict.missingText')}
-        </span>
+      <EmptyPane
+        title={t(doc.state === 'binary' ? 'conflict.binaryTitle' : 'conflict.missingTitle')}
+        text={t(doc.state === 'binary' ? 'conflict.binaryText' : 'conflict.missingText')}
+      >
         <div className="dsh-cg-conflict-choose">
-          <button
-            type="button"
-            className="dsh-cg-conflict-btn"
+          <ConflictButton
+            label={t(doc.stages.ours ? 'conflict.keepOurs' : 'conflict.keepOursGone')}
             disabled={busy}
             onClick={() => onResolve('ours', undefined)}
-          >
-            {t(doc.stages.ours ? 'conflict.keepOurs' : 'conflict.keepOursGone')}
-          </button>
-          <button
-            type="button"
-            className="dsh-cg-conflict-btn"
+          />
+          <ConflictButton
+            label={t(doc.stages.theirs ? 'conflict.keepTheirs' : 'conflict.keepTheirsGone')}
             disabled={busy}
             onClick={() => onResolve('theirs', undefined)}
-          >
-            {t(doc.stages.theirs ? 'conflict.keepTheirs' : 'conflict.keepTheirsGone')}
-          </button>
+          />
         </div>
-      </div>
+      </EmptyPane>
     )
   }
 
   if (doc.state === 'clean') {
     return (
-      <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">{t('conflict.cleanTitle')}</span>
-        <span className="dsh-cg-empty-text">{t('conflict.cleanText')}</span>
-      </div>
+      <EmptyPane title={t('conflict.cleanTitle')} text={t('conflict.cleanText')} />
     )
   }
 
@@ -6503,45 +6530,33 @@ function ConflictRegionView(props: {
         </span>
         <span className="dsh-cg-conflict-actions">
           {mine ? SPINNER_ICON : null}
-          <button
-            type="button"
-            className="dsh-cg-conflict-btn"
-            data-variant="ghost"
+          <ConflictButton
+            label={t('conflict.takeOurs')}
+            ghost
             disabled={busy}
             onClick={choose('ours')}
-          >
-            {t('conflict.takeOurs')}
-          </button>
-          <button
-            type="button"
-            className="dsh-cg-conflict-btn"
-            data-variant="ghost"
+          />
+          <ConflictButton
+            label={t('conflict.takeTheirs')}
+            ghost
             disabled={busy}
             onClick={choose('theirs')}
-          >
-            {t('conflict.takeTheirs')}
-          </button>
-          <button
-            type="button"
-            className="dsh-cg-conflict-btn"
-            data-variant="ghost"
+          />
+          <ConflictButton
+            label={t('conflict.takeBoth')}
+            ghost
             disabled={busy}
             onClick={choose('both')}
-          >
-            {t('conflict.takeBoth')}
-          </button>
+          />
           {region.base === undefined
             ? null
             : (
-              <button
-                type="button"
-                className="dsh-cg-conflict-btn"
-                data-variant="ghost"
+              <ConflictButton
+                label={t('conflict.takeBase')}
+                ghost
                 disabled={busy}
                 onClick={choose('base')}
-              >
-                {t('conflict.takeBase')}
-              </button>
+              />
             )}
         </span>
       </div>
@@ -6847,12 +6862,13 @@ function CopyButton({ t, text }: { readonly t: Translate; readonly text: string 
     })
   }, [text])
 
+  const label = t(copied ? 'diff.copied' : 'diff.copy')
   return (
     <button
       type="button"
       className="dsh-cg-icon"
-      title={t(copied ? 'diff.copied' : 'diff.copy')}
-      aria-label={t(copied ? 'diff.copied' : 'diff.copy')}
+      title={label}
+      aria-label={label}
       onClick={copy}
     >
       {copied ? <IconCheck /> : <IconCopy />}
@@ -6916,12 +6932,10 @@ function DiffBody(props: {
   const doc = current?.doc
   if (current === null || doc === undefined || doc.files.length === 0) {
     return (
-      <div className="dsh-cg-empty">
-        <span className="dsh-cg-empty-title">{t('diff.noTextTitle')}</span>
-        <span className="dsh-cg-empty-text">
-          {t(kind === 'untracked' ? 'diff.noTextUntracked' : 'diff.noTextOther')}
-        </span>
-      </div>
+      <EmptyPane
+        title={t('diff.noTextTitle')}
+        text={t(kind === 'untracked' ? 'diff.noTextUntracked' : 'diff.noTextOther')}
+      />
     )
   }
 
