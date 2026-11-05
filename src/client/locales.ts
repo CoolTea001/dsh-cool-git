@@ -863,7 +863,7 @@ export const zh: typeof en = {
   'conflict.base': '共同祖先',
   'conflict.takeOurs': '采用当前',
   'conflict.takeTheirs': '采用传入',
-  'conflict.takeBoth': '两者都保留',
+  'conflict.takeBoth': '保留两者',
   'conflict.takeBase': '采用共同祖先',
   'conflict.takeAllOurs': '全部采用当前',
   'conflict.takeAllTheirs': '全部采用传入',
