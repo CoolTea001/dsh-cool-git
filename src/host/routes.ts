@@ -77,6 +77,7 @@ import {
   saveWorkspaceSettings,
 } from './settings.js'
 import { resolveWorkspace, workspaceSettingsKey } from './workspace.js'
+import { checkPublishedVersion, installPublishedVersion } from './update.js'
 
 // Re-exported so the Host entry keeps its `ROUTES` export; the table itself
 // lives in the shared contract, beside the payloads it addresses.
@@ -805,6 +806,26 @@ export function registerRoutes(ctx: any): () => void {
         return
       }
       sendJson(res, 200, await readModelEfforts(ctx, provider, model))
+    }),
+
+    // The plugin page's own two routes (see `host/update.ts`). They answer for
+    // the profile and the public registry rather than for any repository, so
+    // they take no session and never reach `handle`: there is no working
+    // directory to resolve and no shell to run.
+    route(ROUTES.update, async (req, res) => {
+      if (!methodAllowed(req, res, ['POST'])) return
+      if (await readJsonBody(req, res) === undefined) return
+      sendJson(res, 200, await checkPublishedVersion(ctx))
+    }),
+
+    // The install itself. A body naming no version the contract allows is
+    // refused before the manager is asked, so a request that reached this route
+    // can only install this package at a version the page was shown.
+    route(ROUTES.updateApply, async (req, res) => {
+      if (!methodAllowed(req, res, ['POST'])) return
+      const body = await readJsonBody(req, res)
+      if (body === undefined) return
+      sendJson(res, 200, await installPublishedVersion(ctx, body.version))
     }),
 
     route(ROUTES.checkout, (req, res) => handle(ctx, req, res, 'write', (body, target) => {

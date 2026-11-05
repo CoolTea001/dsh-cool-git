@@ -1,6 +1,6 @@
 {
   "name": "dsh-cool-git",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "DeepSeek Harness Git plugin — adds a Git panel to the session tab bar: changes, commits, history, branches, remote sync, and merge-conflict resolution in one place, with AI-written commit messages.",
   "type": "module",
   "license": "MIT",

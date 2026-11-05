@@ -183,3 +183,21 @@ export const IconDiscard = svgIcon('discard')
  * is open or closed.
  */
 export const IconChevronDown = svgIcon('chevron-down')
+
+/**
+ * The GitHub mark (assets/github.svg).
+ *
+ * Drawn in the platform's own 24-unit set and riding `currentColor`, so it tints
+ * with the link that carries it. It is the repository's own brand rather than a
+ * generic "external link" arrow: on the plugin page the two marks beside it and
+ * this one are the plugin's paper trail, and each names a place by its mark.
+ */
+export const IconGithub = svgIcon('github')
+
+/**
+ * The npm mark (assets/npm.svg).
+ *
+ * The one asset here that keeps its own color: npm's red is the recognisable
+ * part of the mark, and a monochrome glyph at 16px would read as a generic box.
+ */
+export const IconNpm = svgIcon('npm')
