@@ -1005,6 +1005,14 @@ const GIT_CSS = [
   // editor, and each block opens with a bar that carries the four answers — the
   // place the diff pane puts a hunk's `@@` scope.
   //
+  // That block is drawn as a card rather than as a band across the file: a
+  // hairline, a radius and a soft shadow are what say "this run of lines is one
+  // decision", so two conflicts in one file read as two things to answer instead
+  // of one long tinted stretch. The stream around the cards keeps a margin, and
+  // the unchanged runs are drawn inside it, so the cards and the code between
+  // them keep the same left edge — the gutter still lines up with the rows above
+  // and below.
+  //
   // The two sides keep a wash of their own, in the diff pane's own colours: the
   // side the branch already holds is drawn as an addition and the side arriving as
   // a deletion, which is what a reader of this page has already been taught to
@@ -1038,16 +1046,28 @@ const GIT_CSS = [
   '.dsh-cg-conflict-btn[data-variant=ghost]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.dsh-cg-conflict-btn svg{width:12px;height:12px;display:block}',
 
-  // The file, as a column of rows. No padding: the rows are the pane's width, edge
-  // to edge, the way a patch's rows are.
-  '.dsh-cg-conflict-stream{display:flex;flex-direction:column}',
-  // A block's container line. It is a band with a dashed rule along each edge
-  // rather than a box, so the code above and below it still reads as one file, and
-  // it stays the width of the pane rather than the width of the widest line: the
-  // answers have to be reachable without scrolling sideways first.
-  '.dsh-cg-conflict-bar{display:flex;align-items:center;gap:8px;padding:3px 8px 3px 10px;border-top:1px dashed var(--dsw-alias-border-l3);border-bottom:1px dashed var(--dsw-alias-border-l3);background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 60%,transparent)}',
-  '.dsh-cg-conflict-bar[data-busy]{opacity:.6}',
-  '.dsh-cg-conflict-index{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+  // The file, as a column of rows. The inset is what the cards float in: the
+  // rows keep the pane's width and the cards sit inside it, so a conflict is a
+  // thing the reader can see the edges of — and the unchanged runs keep the same
+  // left edge as the cards, because they are inset with them.
+  '.dsh-cg-conflict-stream{display:flex;flex-direction:column;padding:8px 10px 14px}',
+  // One block, as a card: the header that carries its answers, then the marked
+  // lines it decides. The outline is `border-l4`, the token the platform's own
+  // cards are drawn with, because a card has to read as raised over the page
+  // even in a theme whose layers are all the same white. `overflow:hidden` is
+  // what lets the radius clip the tinted rows at the corners. It never shrinks:
+  // the pane scrolls instead.
+  '.dsh-cg-conflict-card{flex:none;display:flex;flex-direction:column;min-width:0;margin:6px 0;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md,10px);background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 30%,transparent);box-shadow:var(--dsw-shadow-lv1,0 1px 2px rgba(0,0,0,.06));overflow:hidden}',
+  '.dsh-cg-conflict-card[data-busy]{opacity:.6}',
+  // The card's header: a band with a rule under it rather than a box of its own,
+  // so the card keeps one outline and the answers read as its title bar.
+  '.dsh-cg-conflict-bar{display:flex;align-items:center;gap:8px;padding:4px 8px 4px 10px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 55%,transparent)}',
+  // The block's number, as plain text: the card's frame already says where the
+  // block begins, and a chip around the count would only be one more box in a
+  // header whose job is to hold the answers. It reads as the card's title — one
+  // step up from the marker text under it — and gives way with an ellipsis if a
+  // translation runs long.
+  '.dsh-cg-conflict-index{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;line-height:16px}',
   '.dsh-cg-conflict-actions{flex:none;display:flex;align-items:center;gap:2px}',
 
   // One line: its number, then its text. One number, not two — a patch has two
@@ -1061,7 +1081,10 @@ const GIT_CSS = [
   // The merge base is neither side, so it keeps a neutral wash rather than a third
   // state colour.
   '.dsh-cg-conflict-row[data-kind=base]{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 70%,transparent)}',
-  '.dsh-cg-conflict-row[data-kind=meta]{color:var(--dsw-alias-label-tertiary)}',
+  // A marker line is the seam between the sides, so inside a card it gets a wash
+  // of its own: the tinted runs then start and stop at a rule the reader can see
+  // rather than at whichever row happened to be first.
+  '.dsh-cg-conflict-row[data-kind=meta]{color:var(--dsw-alias-label-tertiary);background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1)) 45%,transparent)}',
   '.dsh-cg-conflict-no{padding-right:8px;text-align:right;color:var(--dsw-alias-label-tertiary);user-select:none;font-variant-numeric:tabular-nums}',
   // Lines wrap rather than scroll here, unlike a patch's. The pane is one column
   // whose rows carry a prose-length question above them, and a line that ran off

@@ -6296,10 +6296,12 @@ function blockLineCount(block: ConflictBlock): number {
  *
  * The pane is a diff-shaped view rather than a report about a diff: every line of
  * the working-tree file is drawn once, in order, with the number it has on disk,
- * so the markers Git left in it appear where they are. A block's choice lives in
- * a bar above the block — the same place the diff pane puts a hunk's `@@` scope —
- * and the sides are tinted the way an addition and a deletion are tinted, because
- * that is what a reader of this page already knows how to read.
+ * so the markers Git left in it appear where they are. Each block is drawn as a
+ * card: its choice lives in the header of that card — the same place the diff
+ * pane puts a hunk's `@@` scope — and the sides inside it are tinted the way an
+ * addition and a deletion are tinted, because that is what a reader of this page
+ * already knows how to read. The frame is what keeps two conflicts in one file
+ * from reading as one long tinted stretch.
  *
  * The unchanged runs between blocks are folded the way Git folds the code around
  * a hunk: three lines either side, the rest one click away. A whole unchanged
@@ -6441,7 +6443,7 @@ function ConflictBody(props: {
 }
 
 /**
- * One block of a conflicted file: its bar, its markers, and its three versions.
+ * One block of a conflicted file: its card, its markers, and its three versions.
  *
  * The sides are labelled with the words the reader chooses by — "current" and
  * "incoming" — beside the labels Git itself wrote after the markers (`HEAD` and
@@ -6490,12 +6492,12 @@ function ConflictRegionView(props: {
   const closeLine = theirsLine + region.theirs.length
 
   return (
-    <>
+    <div className="dsh-cg-conflict-card" data-busy={mine || undefined}>
       {/* The block's own container line, above the code it decides: the whole
           file's decision is the pane header's, and this is where one block's is.
-          Drawn as a band with a rule along each edge rather than as a box, so the
-          code around it still reads as one continuous file. */}
-      <div className="dsh-cg-conflict-bar" data-busy={mine || undefined}>
+          It heads the card rather than the file, so the code around it still
+          reads as one continuous file and the block reads as one decision. */}
+      <div className="dsh-cg-conflict-bar">
         <span className="dsh-cg-conflict-index">
           {t('conflict.block', { index: ordinal, total })}
         </span>
@@ -6583,7 +6585,7 @@ function ConflictRegionView(props: {
           <ConflictRow key={`theirs:${index}`} line={theirsLine + index} kind="del" text={text} />
         ))}
       <ConflictMarker line={closeLine} mark=">>>>>>>" />
-    </>
+    </div>
   )
 }
 
